@@ -1,0 +1,17 @@
+# Secrets
+.env
+*.env
+
+# Node
+node_modules/
+
+# Large media / sample clips
+test-video/
+*.mp4
+
+# Go
+/bin/
+*.exe
+
+# OS / editor
+.DS_Store
