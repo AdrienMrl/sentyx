@@ -56,6 +56,11 @@
       Verified in the VM gadget loop: 1s detection latency, streaming clip
       seen as ADDED → CHANGED → STABLE
 - [ ] Copy-out mode: extract stable clips to a local dir (feeds the collector)
+- [ ] Watcher efficiency for Pi-scale drives (cost grows with directory count;
+      metadata-only today but ~32KB/event-dir/poll): scope walk to TeslaCam,
+      skip descending into settled dirs whose parent entry is unchanged,
+      adaptive poll interval; endgame is LBA-write sniffing in the Phase-2
+      gadget agent (agent sees every SCSI write → reparse only touched dirs)
 
 ## 2. Fake Tesla writer (simulator) — needs a planning pass first
 
