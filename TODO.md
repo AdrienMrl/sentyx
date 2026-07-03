@@ -62,21 +62,25 @@
       adaptive poll interval; endgame is LBA-write sniffing in the Phase-2
       gadget agent (agent sees every SCSI write → reparse only touched dirs)
 
-## 2. Fake Tesla writer (simulator) — needs a planning pass first
+## 2. Fake Tesla writer (simulator)
 
-- [ ] **Research real TeslaCam write behavior** (docs, teslausb issues, our own
-      SentryClips samples): folder naming `YYYY-MM-DD_HH-MM-SS/`, per-camera
-      files (`-front.mp4`, `-back.mp4`, `-left_repeater.mp4`,
-      `-right_repeater.mp4`), 1-minute segments, `event.json`, `thumb.png`,
-      RecentClips rolling buffer, write pacing/order
-- [ ] Decide write mechanism: mount image via OS exFAT driver
-      (`hdiutil attach` on Mac / kernel exfat in VM) and write through it —
-      most realistic; the car also writes via a normal driver
-- [ ] Writer that streams realistic clips at realistic pace (append in chunks,
-      ~36 MB/min/camera), sets dirty bit while mounted, never cleanly unmounts
-- [ ] Scenario scripting: sentry event → burst of 4-camera segments + event.json
-- [ ] Integration harness: writer (mounted) + live-reader (raw image) running
-      concurrently; assert reader sees every event with correct content
+- [x] Research pass: 1-min segments × 4 cameras (~28MB/cam/min), rolling
+      ~60-min RecentClips buffer (oldest deleted), sentry alert copies last
+      ~10 min into `SentryClips/<ts>/` + event.json + thumb.png, in-progress
+      segments not closed cleanly on interruption
+- [x] Write mechanism: through the OS exFAT mount (like the car), no syncs,
+      no clean unmount
+- [x] `internal/sim` + `cmd/teslcam-sim`: chunked per-second streaming,
+      minute rotation, rolling cap deletion, sentry trigger (last ≤9 min +
+      one post-trigger minute), sha256 journal of every write as ground truth,
+      TimeScale compression for tests
+- [x] Integration harness (`integration/`, macOS): simulator through a real
+      hdiutil mount + watcher on the raw image at 150ms concurrently — sentry
+      event detected live, deletions observed, every journaled file verified
+      byte-for-byte on the still-mounted dirty volume
+- [ ] Harness variants: real-time pacing soak (timescale 1, ~28MB/cam/min),
+      power-cut mid-minute (kill -9 the writer, reader must still salvage),
+      run in the VM through the gadget loop
 
 ## 3. Later phases (unchanged, see CLAUDE.md)
 - Pi gadget agent · Collector + Gemini integration · Hardening
