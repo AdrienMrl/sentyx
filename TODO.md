@@ -3,9 +3,10 @@
 ## 1. exFAT live-reader (Go) — core component
 
 ### Scaffolding
-- [ ] Go module + repo layout (`go.mod`, `internal/exfat/`, `cmd/`)
-- [ ] Reproducible test fixture: script that creates a small exFAT image
-      (macOS `hdiutil`/`newfs_exfat`, Linux `mkfs.exfat`) with known contents
+- [x] Go module + repo layout (`go.mod`, `internal/exfat/`, `cmd/`)
+- [x] Reproducible test fixture: `testdata/scripts/make-fixture.sh` builds an
+      exFAT image with a TeslaCam layout + sha256 manifest for golden tests
+      (macOS `hdiutil`/`newfs_exfat` done; Linux `mkfs.exfat` branch untested)
 
 ### Static parsing (read a clean, unmounted image first)
 - [ ] Boot sector (VBR): validate `EXFAT` signature, extract bytes/sector,

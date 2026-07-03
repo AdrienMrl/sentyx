@@ -15,3 +15,6 @@ test-video/
 
 # OS / editor
 .DS_Store
+
+# generated exFAT fixture images (rebuild: testdata/scripts/make-fixture.sh)
+testdata/fixtures/*.img
