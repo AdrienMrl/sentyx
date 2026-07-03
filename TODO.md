@@ -13,7 +13,7 @@
       drive's allocation size
 
 ### Static parsing (read a clean, unmounted image first)
-- [ ] Boot sector (VBR): validate `EXFAT` signature, extract bytes/sector,
+- [x] Boot sector (VBR): validate `EXFAT` signature, extract bytes/sector,
       sectors/cluster, FAT offset, cluster-heap offset, root-dir first cluster
 - [ ] FAT reader + cluster-chain walker (incl. `NoFatChain` contiguous files,
       which the FAT doesn't describe)
