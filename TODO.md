@@ -17,7 +17,7 @@
       sectors/cluster, FAT offset, cluster-heap offset, root-dir first cluster
 - [x] FAT reader + cluster-chain walker (incl. `NoFatChain` contiguous files,
       which the FAT doesn't describe)
-- [ ] Directory-entry-set parsing: File (0x85) + Stream Extension (0xC0) +
+- [x] Directory-entry-set parsing: File (0x85) + Stream Extension (0xC0) +
       File Name (0xC1) entries, entry-set checksum, timestamps, file size
 - [ ] Path walking: resolve `TeslaCam/SentryClips/...`, list dirs, read file
       contents out to a local copy
