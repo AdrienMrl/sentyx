@@ -6,7 +6,8 @@
 - [x] Go module + repo layout (`go.mod`, `internal/exfat/`, `cmd/`)
 - [x] Reproducible test fixture: `testdata/scripts/make-fixture.sh` builds an
       exFAT image with a TeslaCam layout + sha256 manifest for golden tests
-      (macOS `hdiutil`/`newfs_exfat` done; Linux `mkfs.exfat` branch untested)
+      (macOS `hdiutil`/`newfs_exfat` and Linux `mkfs.exfat` branches both
+      verified working)
 - [ ] Add a larger fixture (or size param) with Tesla-realistic 32KB clusters —
       current 64MB fixture gets 4KB clusters from `newfs_exfat`'s defaults;
       verified spec-conformant but not representative of a real 32GB+ dashcam
@@ -26,27 +27,35 @@
       which the FAT doesn't describe)
 - [x] Directory-entry-set parsing: File (0x85) + Stream Extension (0xC0) +
       File Name (0xC1) entries, entry-set checksum, timestamps, file size
-- [ ] Path walking: resolve `TeslaCam/SentryClips/...`, list dirs, read file
-      contents out to a local copy
-- [ ] Golden tests against fixture images written by real OS drivers
-      (macOS and Linux produce different-but-valid layouts — test both)
+- [x] Path walking: `Lookup`/`ReadDirPath` (case-insensitive) + `Open` reader
+      over cluster chains capped at ValidDataLength
+- [x] Golden tests: every fixture manifest file resolved by path and
+      sha256-verified byte-for-byte (macOS fixture; Linux fixture exercised
+      live in the VM via the debug server + watcher)
 
 ### Dirty/live tolerance (the hard part)
-- [ ] Tolerate `VolumeDirty` flag set (never refuse to read)
-- [ ] Tolerate torn/in-flight directory entry sets: bad checksums, secondary
-      count mismatch, allocated-but-incomplete entries — skip, don't crash
-- [ ] Never trust the allocation bitmap or FAT for liveness; re-read
-      directory entries as source of truth
-- [ ] Handle file size growing between polls (stream-extension `ValidDataLength`
-      vs `DataLength`)
-- [ ] Torn-write tests: snapshot image mid-write (or fuzz truncated entry sets)
+- [x] Tolerate `VolumeDirty` flag set (never refuse to read; exposed as info)
+- [x] Tolerate torn/in-flight directory entry sets: structurally broken sets
+      skipped, checksum mismatches reported per-entry (`ChecksumOK`), torn
+      FAT chains return partial results, cycles bounded
+- [x] Directory entries as source of truth (allocation bitmap never consulted)
+- [x] `ValidDataLength` vs `DataLength` (parsed, surfaced in events, `Open`
+      never reads past VDL)
+- [ ] Torn-write tests: snapshot image mid-write (or fuzz truncated entry
+      sets) — unit-level corruption tests exist; no mid-write image snapshots
+      or fuzzing yet
 
 ### Live watcher
-- [ ] Poll loop over the raw image: diff directory state, emit events for
-      new `SentryClips/<timestamp>/` dirs and new/updated files
-- [ ] "File complete" heuristic: size stable across N polls (later: event.json
-      presence marks the event finalized)
-- [ ] CLI: `teslcam-watch <image>` — prints events, optionally copies out clips
+- [x] `internal/watch`: poll loop over the raw image, diff directory state,
+      events: DIR_ADDED / FILE_ADDED / FILE_CHANGED / FILE_STABLE / REMOVED;
+      checksum-failed entries deferred to next poll
+- [x] "File complete" heuristic: size stable across N polls (re-arms if the
+      file grows again). Later: treat event.json as event-finalized marker
+- [x] CLI daemon: `teslcam-watch -image ... -interval ... -stable-polls ...` —
+      logs events, flags `>>> NEW SENTRY EVENT` on new SentryClips dirs.
+      Verified in the VM gadget loop: 1s detection latency, streaming clip
+      seen as ADDED → CHANGED → STABLE
+- [ ] Copy-out mode: extract stable clips to a local dir (feeds the collector)
 
 ## 2. Fake Tesla writer (simulator) — needs a planning pass first
 
