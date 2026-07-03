@@ -12,6 +12,13 @@
       verified spec-conformant but not representative of a real 32GB+ dashcam
       drive's allocation size
 
+### Debug tooling
+- [x] `teslcam-debug` server + web UI (`cmd/teslcam-debug`): fake-Tesla write
+      actions via the OS mount, live tree/status views via our out-of-band
+      parser; poll-diff event log. Runs on Mac (hdiutil) or in the VM through
+      the full dummy_hcd/g_mass_storage gadget loop (`scripts/vm-debug.sh up`,
+      UI at http://localhost:8080)
+
 ### Static parsing (read a clean, unmounted image first)
 - [x] Boot sector (VBR): validate `EXFAT` signature, extract bytes/sector,
       sectors/cluster, FAT offset, cluster-heap offset, root-dir first cluster
