@@ -24,6 +24,14 @@ Must work on macOS and Linux for development; the in-car component requires Linu
 - For Mac-side testing without a Pi: use a Linux VM (UTM/QEMU) with the `dummy_hcd` kernel module, which emulates a full gadget+host USB loop entirely in software. This validates the configfs/gadget setup and the exFAT reader end-to-end, but not real dwc2/dwc3 hardware timing or actual Tesla MCU compatibility — final validation needs a real Pi Zero 2 W plugged into the car.
 - Reclaiming disk space on the backing image while the car may still be writing to it is the trickiest correctness problem (see teslausb's image-cycling approach for prior art).
 
+## Dev VM (gadget testing without hardware)
+
+A Lima VM defined in `teslcam-dev.yaml` (Debian 13 arm64, full kernel, Go, exfatprogs; ~3 GB on disk). Verified working: `dummy_hcd` + `g_mass_storage` emulate the full USB gadget loop in software — a backing image exposed as a gadget enumerates as `/dev/sda`, mounts, and its writes are readable out-of-band from the raw image.
+
+- `limactl start teslcam-dev` / `limactl shell teslcam-dev` / `limactl stop teslcam-dev`
+- The project dir is mounted read-write at the same path inside the VM.
+- The genericcloud image boots a "cloud" kernel that lacks gadget modules; provisioning installs `linux-image-arm64` and the cloud kernel has been removed. If recreating the VM from the yaml, stop/start once after first boot to enter the full kernel.
+
 ## Phased plan
 
 1. exFAT live-reader + Mac-side simulator (no hardware needed)

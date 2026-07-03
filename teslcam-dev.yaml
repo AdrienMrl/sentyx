@@ -1,0 +1,37 @@
+# Lima VM for teslcam development: USB gadget testing via dummy_hcd.
+# Usage:
+#   limactl start ./teslcam-dev.yaml   # first boot (downloads Debian image)
+#   limactl shell teslcam-dev          # enter the VM
+#   limactl stop teslcam-dev / limactl delete teslcam-dev
+#
+# NOTE: the Debian genericcloud image boots the "cloud" kernel, which lacks
+# USB gadget modules (dummy_hcd, g_mass_storage). Provisioning installs the
+# full linux-image-arm64 kernel; a stop/start after first boot is required
+# to switch into it.
+
+vmType: vz
+os: Linux
+arch: aarch64
+
+images:
+  - location: https://cloud.debian.org/images/cloud/trixie/latest/debian-13-genericcloud-arm64.qcow2
+    arch: aarch64
+
+cpus: 2
+memory: 4GiB
+disk: 15GiB
+
+mounts:
+  - location: "~/dev/teslcam-exp"
+    writable: true
+
+provision:
+  - mode: system
+    script: |
+      #!/bin/bash
+      set -eux
+      export DEBIAN_FRONTEND=noninteractive
+      apt-get update
+      # Full kernel: the cloud kernel omits USB gadget modules entirely.
+      apt-get install -y linux-image-arm64
+      apt-get install -y exfatprogs golang build-essential
