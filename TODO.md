@@ -15,7 +15,7 @@
 ### Static parsing (read a clean, unmounted image first)
 - [x] Boot sector (VBR): validate `EXFAT` signature, extract bytes/sector,
       sectors/cluster, FAT offset, cluster-heap offset, root-dir first cluster
-- [ ] FAT reader + cluster-chain walker (incl. `NoFatChain` contiguous files,
+- [x] FAT reader + cluster-chain walker (incl. `NoFatChain` contiguous files,
       which the FAT doesn't describe)
 - [ ] Directory-entry-set parsing: File (0x85) + Stream Extension (0xC0) +
       File Name (0xC1) entries, entry-set checksum, timestamps, file size
