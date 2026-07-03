@@ -7,6 +7,10 @@
 - [x] Reproducible test fixture: `testdata/scripts/make-fixture.sh` builds an
       exFAT image with a TeslaCam layout + sha256 manifest for golden tests
       (macOS `hdiutil`/`newfs_exfat` done; Linux `mkfs.exfat` branch untested)
+- [ ] Add a larger fixture (or size param) with Tesla-realistic 32KB clusters —
+      current 64MB fixture gets 4KB clusters from `newfs_exfat`'s defaults;
+      verified spec-conformant but not representative of a real 32GB+ dashcam
+      drive's allocation size
 
 ### Static parsing (read a clean, unmounted image first)
 - [ ] Boot sector (VBR): validate `EXFAT` signature, extract bytes/sector,
