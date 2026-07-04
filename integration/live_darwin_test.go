@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/AdrienMrl/teslcam/internal/copyout"
 	"github.com/AdrienMrl/teslcam/internal/exfat"
 	"github.com/AdrienMrl/teslcam/internal/sim"
 	"github.com/AdrienMrl/teslcam/internal/watch"
@@ -71,6 +72,25 @@ func TestLiveWriterReaderHarness(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Copier extracts stable SentryClips files while the run is still live.
+	copyDest := t.TempDir()
+	copier, err := copyout.New(copyout.Config{
+		ImagePath:  imgPath,
+		DestDir:    copyDest,
+		PathPrefix: "/TeslaCam/SentryClips",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cctx, ccancel := context.WithCancel(context.Background())
+	defer ccancel()
+	go copier.Run(cctx,
+		func(r copyout.Result) { t.Logf("copied %s (%d bytes, skipped=%v)", r.Path, r.Bytes, r.Skipped) },
+		func(path string, err error) {
+			t.Logf("copy error (tolerated, re-enqueued on restabilize): %s: %v", path, err)
+		},
+	)
+
 	var mu sync.Mutex
 	events := map[watch.EventType][]string{}
 	wctx, wcancel := context.WithCancel(context.Background())
@@ -82,6 +102,9 @@ func TestLiveWriterReaderHarness(t *testing.T) {
 				mu.Lock()
 				events[ev.Type] = append(events[ev.Type], ev.Path)
 				mu.Unlock()
+				if ev.Type == watch.FileStable {
+					copier.Enqueue(ev.Path)
+				}
 			},
 			func(err error) { t.Logf("poll error (tolerated): %v", err) },
 		)
@@ -178,5 +201,46 @@ func TestLiveWriterReaderHarness(t *testing.T) {
 	t.Logf("verified %d files byte-for-byte, %d deletions confirmed", verified, deleted)
 	if verified < 20 {
 		t.Errorf("only %d files verified — expected a full run's worth", verified)
+	}
+
+	// --- verify the copier extracted every sentry file, byte-for-byte ---
+	drainDeadline := time.Now().Add(10 * time.Second)
+	for copier.Pending() > 0 && time.Now().Before(drainDeadline) {
+		time.Sleep(50 * time.Millisecond)
+	}
+	if p := copier.Pending(); p > 0 {
+		t.Errorf("copier queue never drained: %d still pending", p)
+	}
+	ccancel()
+
+	var copied int
+	for _, rec := range journal {
+		// Journal paths are mount-relative with no leading slash.
+		rel := strings.TrimPrefix(rec.Path, "/")
+		if rec.Deleted || !strings.HasPrefix(rel, "TeslaCam/SentryClips/") {
+			continue
+		}
+		dst := filepath.Join(copyDest, filepath.FromSlash(rel))
+		f, err := os.Open(dst)
+		if err != nil {
+			t.Errorf("copy-out missing for %s: %v", rec.Path, err)
+			continue
+		}
+		h := sha256.New()
+		n, err := io.Copy(h, f)
+		f.Close()
+		if err != nil || n != rec.Size {
+			t.Errorf("copy-out %s: %d bytes (want %d), err=%v", rec.Path, n, rec.Size, err)
+			continue
+		}
+		if got := hex.EncodeToString(h.Sum(nil)); got != rec.SHA256 {
+			t.Errorf("copy-out %s: sha256 mismatch", rec.Path)
+			continue
+		}
+		copied++
+	}
+	t.Logf("copy-out: %d sentry files extracted and verified byte-for-byte", copied)
+	if copied == 0 {
+		t.Error("copy-out extracted no sentry files")
 	}
 }
