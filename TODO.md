@@ -113,9 +113,17 @@
       use). Live harness now runs the full loop — sim → watcher → copy-out →
       upload → collector → analyzer — and verifies every sentry file arrived
       byte-identical and the event was completed + analyzed
+- [x] VPS deployment (`scripts/deploy-collector.sh`): `setup` (service user,
+      dirs, /etc/teslcam/collect.env, systemd unit — analysis off until
+      GEMINI_API_KEY + ANALYZE_CMD are set), `deploy` (arch-detected static
+      cross-compile, binary + analyzer rsync, npm ci, restart, bounded
+      health check), `status`/`logs`. Target adri@vps, override TESLCAM_VPS.
+      Listen on a Tailscale IP — the ingest API has no auth yet. Not yet
+      run against the real VPS
 - [ ] Real end-to-end run with Gemini (needs GEMINI_API_KEY; harness uses a
       fake analyzer — sim clips aren't real video, so use a real TeslaCam
       clip via `teslcam-collect -analyze`)
+- [ ] Bearer-token auth on the ingest API (before any non-Tailscale exposure)
 - [ ] Push notification on high threat_level
 - [ ] Retention/cleanup of stored clips + analysis cost controls
 
