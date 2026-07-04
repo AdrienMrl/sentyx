@@ -92,5 +92,32 @@
 - [ ] Harness variants remaining: real-time pacing soak (timescale 1,
       ~28MB/cam/min), run in the VM through the gadget loop
 
-## 3. Later phases (unchanged, see CLAUDE.md)
-- Pi gadget agent · Collector + Gemini integration · Hardening
+## 3. Collector + analyzer wiring (Phase 3)
+
+- [x] Collector (`internal/collect`, `cmd/teslcam-collect`): HTTP ingest
+      (`PUT /files/TeslaCam/SentryClips/<event>/<file>`, atomic store on
+      disk, sha256 + metadata in SQLite via modernc.org/sqlite), event
+      metadata parsed from event.json, inspection API (`GET /events[/<id>]`)
+- [x] Event completion: complete once event.json received and no file for
+      QuietPeriod (covers the post-trigger minute); analysis triggered once,
+      re-enqueued on restart if the collector died mid-analysis
+- [x] Clip selection: trigger camera from event.json camera code (pillar
+      codes map to repeaters), latest clip at/before the event timestamp,
+      graceful fallbacks; AppleDouble junk ignored
+- [x] Analyzer trigger: AnalyzeCmd subprocess on the selected clip, JSON
+      verdict stored (threat_level extracted), failures recorded with stderr
+- [x] `analyze-video.ts --json`: Gemini structured output (responseSchema),
+      verdict JSON on stdout, progress on stderr — parseable by the collector
+- [x] Uploader (`internal/upload`): pushes copy-out results to the collector
+      with retry; `teslcam-watch -post-to` (same HTTP path the Pi agent will
+      use). Live harness now runs the full loop — sim → watcher → copy-out →
+      upload → collector → analyzer — and verifies every sentry file arrived
+      byte-identical and the event was completed + analyzed
+- [ ] Real end-to-end run with Gemini (needs GEMINI_API_KEY; harness uses a
+      fake analyzer — sim clips aren't real video, so use a real TeslaCam
+      clip via `teslcam-collect -analyze`)
+- [ ] Push notification on high threat_level
+- [ ] Retention/cleanup of stored clips + analysis cost controls
+
+## 4. Later phases (unchanged, see CLAUDE.md)
+- Pi gadget agent · Hardening

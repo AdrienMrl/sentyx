@@ -17,8 +17,10 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/AdrienMrl/teslcam/internal/copyout"
+	"github.com/AdrienMrl/teslcam/internal/upload"
 	"github.com/AdrienMrl/teslcam/internal/watch"
 )
 
@@ -28,12 +30,16 @@ func main() {
 	stablePolls := flag.Int("stable-polls", 0, "consecutive unchanged polls before a file is considered complete")
 	copyTo := flag.String("copy-to", "", "extract stable files into this local directory (requires -copy-prefix)")
 	copyPrefix := flag.String("copy-prefix", "", "only extract files under this image path, e.g. /TeslaCam/SentryClips (requires -copy-to)")
+	postTo := flag.String("post-to", "", "push extracted files to this collector base URL, e.g. http://127.0.0.1:8090 (requires -copy-to as the local spool)")
 	flag.Parse()
 	if *imagePath == "" || *interval <= 0 || *stablePolls <= 0 {
 		log.Fatal("all of -image, -interval, -stable-polls are required")
 	}
 	if (*copyTo == "") != (*copyPrefix == "") {
 		log.Fatal("-copy-to and -copy-prefix must be set together")
+	}
+	if *postTo != "" && *copyTo == "" {
+		log.Fatal("-post-to requires -copy-to (extracted files are the upload source)")
 	}
 
 	w, err := watch.New(watch.Config{
@@ -47,6 +53,19 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	var uploader *upload.Uploader
+	if *postTo != "" {
+		uploader, err = upload.New(upload.Config{BaseURL: *postTo, RetryDelay: 5 * time.Second})
+		if err != nil {
+			log.Fatal(err)
+		}
+		go uploader.Run(ctx,
+			func(it upload.Item) { log.Printf("upload: %s -> %s", it.ImagePath, *postTo) },
+			func(it upload.Item, err error) { log.Printf("upload error for %s (will retry): %v", it.ImagePath, err) },
+		)
+		log.Printf("pushing extracted files to %s", *postTo)
+	}
 
 	var copier *copyout.Copier
 	if *copyTo != "" {
@@ -62,9 +81,12 @@ func main() {
 			func(r copyout.Result) {
 				if r.Skipped {
 					log.Printf("copy: %s already up to date at %s", r.Path, r.Dest)
-					return
+				} else {
+					log.Printf("copy: %s -> %s (%d bytes)", r.Path, r.Dest, r.Bytes)
 				}
-				log.Printf("copy: %s -> %s (%d bytes)", r.Path, r.Dest, r.Bytes)
+				if uploader != nil {
+					uploader.Enqueue(upload.Item{LocalPath: r.Dest, ImagePath: r.Path})
+				}
 			},
 			func(path string, err error) {
 				log.Printf("copy error for %s (will retry on next stabilize): %v", path, err)

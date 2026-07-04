@@ -1,4 +1,4 @@
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenAI, Type } from "@google/genai";
 import "dotenv/config";
 
 const apiKey = process.env.GEMINI_API_KEY;
@@ -6,10 +6,16 @@ if (!apiKey) {
   throw new Error("GEMINI_API_KEY is not set");
 }
 
-const videoPath = process.argv[2];
+// Usage: tsx analyze-video.ts [--json] <video-path>
+// With --json, stdout carries exactly one JSON verdict object (progress goes
+// to stderr) so a caller like teslcam-collect can parse it.
+const args = process.argv.slice(2);
+const jsonMode = args.includes("--json");
+const videoPath = args.find((a) => a !== "--json");
 if (!videoPath) {
-  throw new Error("Usage: tsx analyze-video.ts <video-path>");
+  throw new Error("Usage: tsx analyze-video.ts [--json] <video-path>");
 }
+const log = jsonMode ? console.error : console.log;
 
 const ai = new GoogleGenAI({ apiKey });
 
@@ -34,17 +40,38 @@ Respond in structured form:
 
 Be precise and avoid speculation beyond what is visible.`;
 
+const VERDICT_SCHEMA = {
+  type: Type.OBJECT,
+  properties: {
+    concern_detected: { type: Type.BOOLEAN },
+    threat_level: {
+      type: Type.STRING,
+      enum: ["none", "low", "medium", "high"],
+    },
+    what_happened: { type: Type.STRING },
+    evidence: { type: Type.STRING },
+    recommended_action: { type: Type.STRING },
+  },
+  required: [
+    "concern_detected",
+    "threat_level",
+    "what_happened",
+    "evidence",
+    "recommended_action",
+  ],
+};
+
 async function main() {
-  console.log(`Uploading ${videoPath} ...`);
-  let file = await ai.files.upload({ file: videoPath });
-  console.log(`Uploaded: ${file.name} (state: ${file.state})`);
+  log(`Uploading ${videoPath} ...`);
+  let file = await ai.files.upload({ file: videoPath! });
+  log(`Uploaded: ${file.name} (state: ${file.state})`);
 
   // Wait for the file to finish processing before referencing it.
   while (file.state === "PROCESSING") {
     await new Promise((r) => setTimeout(r, 2000));
     if (!file.name) throw new Error("File has no name to poll");
     file = await ai.files.get({ name: file.name });
-    console.log(`  ...state: ${file.state}`);
+    log(`  ...state: ${file.state}`);
   }
 
   if (file.state === "FAILED") {
@@ -55,7 +82,7 @@ async function main() {
     throw new Error("Uploaded file is missing uri/mimeType");
   }
 
-  console.log("Analyzing with gemini-3.5-flash ...\n");
+  log("Analyzing with gemini-3.5-flash ...\n");
   const response = await ai.models.generateContent({
     model: "gemini-3.5-flash",
     contents: [
@@ -67,13 +94,25 @@ async function main() {
         ],
       },
     ],
+    ...(jsonMode && {
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: VERDICT_SCHEMA,
+      },
+    }),
   });
 
-  console.log("===== GEMINI ANALYSIS =====\n");
-  console.log(response.text);
+  if (jsonMode) {
+    if (!response.text) throw new Error("Empty response from Gemini");
+    JSON.parse(response.text); // fail loudly here rather than in the caller
+    console.log(response.text);
+  } else {
+    console.log("===== GEMINI ANALYSIS =====\n");
+    console.log(response.text);
+  }
 
-  console.log("\n===== TOKEN USAGE =====");
-  console.log(JSON.stringify(response.usageMetadata, null, 2));
+  log("\n===== TOKEN USAGE =====");
+  log(JSON.stringify(response.usageMetadata, null, 2));
 }
 
 main();

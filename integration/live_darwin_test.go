@@ -9,7 +9,11 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
+	"fmt"
 	"io"
+	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -19,11 +23,25 @@ import (
 	"testing"
 	"time"
 
+	"github.com/AdrienMrl/teslcam/internal/collect"
 	"github.com/AdrienMrl/teslcam/internal/copyout"
 	"github.com/AdrienMrl/teslcam/internal/exfat"
 	"github.com/AdrienMrl/teslcam/internal/sim"
+	"github.com/AdrienMrl/teslcam/internal/upload"
 	"github.com/AdrienMrl/teslcam/internal/watch"
 )
+
+// freePort reserves an ephemeral port and releases it for immediate reuse.
+func freePort(t *testing.T) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := ln.Addr().String()
+	ln.Close()
+	return addr
+}
 
 // attachRaw creates a fresh exFAT image and mounts it via the macOS driver.
 func attachRaw(t *testing.T, sizeMB int) (imgPath, mountPoint string) {
@@ -82,10 +100,41 @@ func TestLiveWriterReaderHarness(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Collector: the full backend, in-process, with a fake analyzer that
+	// emits a canned verdict.
+	analyzer := filepath.Join(t.TempDir(), "analyze.sh")
+	if err := os.WriteFile(analyzer, []byte("#!/bin/sh\ntest -r \"$1\" || exit 1\necho '{\"concern_detected\":true,\"threat_level\":\"high\",\"what_happened\":\"sim\",\"evidence\":\"sim\",\"recommended_action\":\"sim\"}'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	collectorAddr := freePort(t)
+	collector, err := collect.New(collect.Config{
+		DataDir:     t.TempDir(),
+		ListenAddr:  collectorAddr,
+		QuietPeriod: 2 * time.Second,
+		AnalyzeCmd:  []string{analyzer},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	cctx, ccancel := context.WithCancel(context.Background())
 	defer ccancel()
+	go collector.Run(cctx, t.Logf)
+
+	// Uploader pushes extracted files to the collector as they appear.
+	up, err := upload.New(upload.Config{BaseURL: "http://" + collectorAddr, RetryDelay: 500 * time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	go up.Run(cctx,
+		func(it upload.Item) {},
+		func(it upload.Item, err error) { t.Logf("upload error (will retry): %s: %v", it.ImagePath, err) },
+	)
+
 	go copier.Run(cctx,
-		func(r copyout.Result) { t.Logf("copied %s (%d bytes, skipped=%v)", r.Path, r.Bytes, r.Skipped) },
+		func(r copyout.Result) {
+			t.Logf("copied %s (%d bytes, skipped=%v)", r.Path, r.Bytes, r.Skipped)
+			up.Enqueue(upload.Item{LocalPath: r.Dest, ImagePath: r.Path})
+		},
 		func(path string, err error) {
 			t.Logf("copy error (tolerated, re-enqueued on restabilize): %s: %v", path, err)
 		},
@@ -211,7 +260,8 @@ func TestLiveWriterReaderHarness(t *testing.T) {
 	if p := copier.Pending(); p > 0 {
 		t.Errorf("copier queue never drained: %d still pending", p)
 	}
-	ccancel()
+	// cctx stays alive: the uploader and collector keep running until the
+	// collector verification at the end (deferred ccancel stops them).
 
 	var copied int
 	for _, rec := range journal {
@@ -242,5 +292,92 @@ func TestLiveWriterReaderHarness(t *testing.T) {
 	t.Logf("copy-out: %d sentry files extracted and verified byte-for-byte", copied)
 	if copied == 0 {
 		t.Error("copy-out extracted no sentry files")
+	}
+
+	// --- verify the collector received, completed, and analyzed the event ---
+	upDeadline := time.Now().Add(15 * time.Second)
+	for up.Pending() > 0 && time.Now().Before(upDeadline) {
+		time.Sleep(100 * time.Millisecond)
+	}
+	if p := up.Pending(); p > 0 {
+		t.Errorf("uploader never drained: %d still pending", p)
+	}
+
+	// Event completion needs QuietPeriod of silence, then analysis runs.
+	var ev struct {
+		collect.EventSummary
+		Files []collect.FileInfo `json:"files"`
+	}
+	eventID := ""
+	for _, rec := range journal {
+		parts := strings.Split(strings.TrimPrefix(rec.Path, "/"), "/")
+		if len(parts) == 4 && parts[1] == "SentryClips" && !rec.Deleted {
+			eventID = parts[2]
+			break
+		}
+	}
+	if eventID == "" {
+		t.Fatal("no sentry event in journal")
+	}
+	analysisDeadline := time.Now().Add(20 * time.Second)
+	for {
+		var lastErr error
+		resp, err := http.Get("http://" + collectorAddr + "/events/" + eventID)
+		if err != nil {
+			lastErr = err
+		} else {
+			if resp.StatusCode == http.StatusOK {
+				lastErr = json.NewDecoder(resp.Body).Decode(&ev)
+			} else {
+				lastErr = fmt.Errorf("GET /events/%s: %s", eventID, resp.Status)
+			}
+			resp.Body.Close()
+		}
+		if lastErr == nil && (ev.AnalysisState == "done" || ev.AnalysisState == "failed") {
+			break
+		}
+		if time.Now().After(analysisDeadline) {
+			t.Fatalf("collector never finished analysis (state %q, last err %v)", ev.AnalysisState, lastErr)
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	if ev.AnalysisState != "done" || ev.ThreatLevel != "high" {
+		t.Errorf("analysis: state=%s threat=%s err=%s", ev.AnalysisState, ev.ThreatLevel, ev.AnalysisError)
+	}
+	if ev.Camera == "" || ev.EventTS == "" {
+		t.Errorf("event.json metadata not parsed by collector: %+v", ev.EventSummary)
+	}
+	if ev.AnalyzedClip == "" || !strings.HasSuffix(ev.AnalyzedClip, ".mp4") {
+		t.Errorf("no clip selected for analysis: %q", ev.AnalyzedClip)
+	}
+
+	// Every journaled sentry file arrived at the collector byte-identical.
+	shaByName := map[string]collect.FileInfo{}
+	for _, f := range ev.Files {
+		shaByName[f.Name] = f
+	}
+	var collected int
+	for _, rec := range journal {
+		rel := strings.TrimPrefix(rec.Path, "/")
+		parts := strings.Split(rel, "/")
+		if rec.Deleted || len(parts) != 4 || parts[1] != "SentryClips" || parts[2] != eventID {
+			continue
+		}
+		f, ok := shaByName[parts[3]]
+		if !ok {
+			t.Errorf("collector missing %s", rec.Path)
+			continue
+		}
+		if f.SHA256 != rec.SHA256 || f.Size != rec.Size {
+			t.Errorf("collector has wrong bytes for %s: %d bytes sha %s (want %d, %s)",
+				rec.Path, f.Size, f.SHA256, rec.Size, rec.SHA256)
+			continue
+		}
+		collected++
+	}
+	t.Logf("collector: %d sentry files verified, event %s analyzed (clip %s, threat %s)",
+		collected, eventID, ev.AnalyzedClip, ev.ThreatLevel)
+	if collected == 0 {
+		t.Error("collector verified no sentry files")
 	}
 }
