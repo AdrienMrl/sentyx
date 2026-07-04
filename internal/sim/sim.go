@@ -27,13 +27,17 @@ import (
 
 var Cameras = []string{"front", "back", "left_repeater", "right_repeater"}
 
-// Config for the simulator. All fields are required.
+// Config for the simulator. All fields are required except OnRecord.
 type Config struct {
 	MountPath         string
 	BytesPerCamMinute int64   // ~28MiB on a real car
 	TimeScale         float64 // 1 = real time; 60 = one "minute" takes 1s
 	RecentCap         int     // minutes kept in RecentClips before oldest-first deletion
 	SentryAfterMinute int     // trigger a sentry event after this many minutes (0 = never)
+	// OnRecord, if set, is called with every journal update as it happens
+	// (a file's final record, or an existing record marked Deleted) — lets a
+	// caller stream ground truth that survives the writer being killed.
+	OnRecord func(FileRecord)
 }
 
 // FileRecord is the journal entry for one written file.
@@ -183,10 +187,16 @@ func (s *Simulator) finalizeMinute() error {
 				return err
 			}
 			s.mu.Lock()
+			var rec *FileRecord
 			if r := s.journal[rel]; r != nil {
 				r.Deleted = true
+				cp := *r
+				rec = &cp
 			}
 			s.mu.Unlock()
+			if rec != nil && s.cfg.OnRecord != nil {
+				s.cfg.OnRecord(*rec)
+			}
 		}
 	}
 	return nil
@@ -281,9 +291,14 @@ func (s *Simulator) writeSmall(rel string, data []byte) error {
 }
 
 func (s *Simulator) record(rel string, h hash.Hash, size int64) {
+	rec := FileRecord{Path: rel, SHA256: hex.EncodeToString(h.Sum(nil)), Size: size}
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.journal[rel] = &FileRecord{Path: rel, SHA256: hex.EncodeToString(h.Sum(nil)), Size: size}
+	s.journal[rel] = &rec
+	cp := rec
+	s.mu.Unlock()
+	if s.cfg.OnRecord != nil {
+		s.cfg.OnRecord(cp)
+	}
 }
 
 // nextStamp returns a strictly increasing wall-clock second for naming.

@@ -27,18 +27,33 @@ func main() {
 	recentCap := flag.Int("recent-cap", 0, "minutes kept in RecentClips before oldest-first deletion")
 	sentryAfter := flag.Int("sentry-after", -1, "trigger a sentry event after N minutes (0 = never)")
 	journalOut := flag.String("journal", "", "write the file journal (JSON) here on exit; empty = don't")
+	journalStream := flag.String("journal-stream", "", "append each journal record (JSONL) here as it happens — survives a kill -9; empty = don't")
 	flag.Parse()
 	if *mount == "" || *minutes <= 0 || *mbPerCamMin <= 0 || *timescale <= 0 || *recentCap <= 0 || *sentryAfter < 0 {
 		log.Fatal("all of -mount, -minutes, -mb-per-cam-min, -timescale, -recent-cap, -sentry-after are required")
 	}
 
-	s, err := sim.New(sim.Config{
+	cfg := sim.Config{
 		MountPath:         *mount,
 		BytesPerCamMinute: *mbPerCamMin * 1024 * 1024,
 		TimeScale:         *timescale,
 		RecentCap:         *recentCap,
 		SentryAfterMinute: *sentryAfter,
-	})
+	}
+	if *journalStream != "" {
+		f, err := os.Create(*journalStream)
+		if err != nil {
+			log.Fatal(err)
+		}
+		defer f.Close()
+		enc := json.NewEncoder(f) // unbuffered: each record is one write syscall
+		cfg.OnRecord = func(r sim.FileRecord) {
+			if err := enc.Encode(r); err != nil {
+				log.Fatalf("journal-stream: %v", err)
+			}
+		}
+	}
+	s, err := sim.New(cfg)
 	if err != nil {
 		log.Fatal(err)
 	}

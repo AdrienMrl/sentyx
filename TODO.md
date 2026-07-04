@@ -55,7 +55,12 @@
       logs events, flags `>>> NEW SENTRY EVENT` on new SentryClips dirs.
       Verified in the VM gadget loop: 1s detection latency, streaming clip
       seen as ADDED → CHANGED → STABLE
-- [ ] Copy-out mode: extract stable clips to a local dir (feeds the collector)
+- [x] Copy-out mode (`internal/copyout`): stable files under a path prefix
+      extracted to a local dir — queued off FILE_STABLE events, atomic
+      temp+rename, entry re-checked after copy (changed-mid-copy files are
+      dropped and retried on the next stabilize). Wired into `teslcam-watch`
+      via `-copy-to`/`-copy-prefix`; integration harness verifies every
+      extracted sentry file byte-for-byte against the simulator journal
 - [ ] Watcher efficiency for Pi-scale drives (cost grows with directory count;
       metadata-only today but ~32KB/event-dir/poll): scope walk to TeslaCam,
       skip descending into settled dirs whose parent entry is unchanged,
@@ -78,9 +83,14 @@
       hdiutil mount + watcher on the raw image at 150ms concurrently — sentry
       event detected live, deletions observed, every journaled file verified
       byte-for-byte on the still-mounted dirty volume
-- [ ] Harness variants: real-time pacing soak (timescale 1, ~28MB/cam/min),
-      power-cut mid-minute (kill -9 the writer, reader must still salvage),
-      run in the VM through the gadget loop
+- [x] Power-cut harness (`integration/powercut_darwin_test.go`): sim runs as
+      a subprocess streaming its journal (JSONL via new `-journal-stream` /
+      `sim.Config.OnRecord`), SIGKILLed mid-minute after the sentry event.
+      Verified: reader salvages the torn unflushed image (every checksummed
+      entry readable to ValidDataLength), and post-flush every completed
+      write matches the journal byte-for-byte
+- [ ] Harness variants remaining: real-time pacing soak (timescale 1,
+      ~28MB/cam/min), run in the VM through the gadget loop
 
 ## 3. Later phases (unchanged, see CLAUDE.md)
 - Pi gadget agent · Collector + Gemini integration · Hardening
