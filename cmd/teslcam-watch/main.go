@@ -3,7 +3,7 @@
 // filesystem events, flagging new Sentry events as they appear.
 //
 // With -copy-to and -copy-prefix, stable files under the prefix are extracted
-// to a local directory as they complete (the collector's input):
+// to a local directory as they complete (the server's input):
 //
 //	teslcam-watch -image /var/lib/teslcam/backing.img -interval 2s -stable-polls 3 \
 //	  -copy-to /var/lib/teslcam/clips -copy-prefix /TeslaCam/SentryClips
@@ -15,13 +15,13 @@ import (
 	"log"
 	"os"
 	"os/signal"
-	"strings"
+	"runtime"
 	"syscall"
 	"time"
 
-	"github.com/AdrienMrl/teslcam/internal/copyout"
-	"github.com/AdrienMrl/teslcam/internal/upload"
-	"github.com/AdrienMrl/teslcam/internal/watch"
+	"github.com/AdrienMrl/teslcam/internal/pipeline"
+	"github.com/AdrienMrl/teslcam/internal/tokenfile"
+	"github.com/AdrienMrl/teslcam/internal/videocompress"
 )
 
 func main() {
@@ -30,98 +30,63 @@ func main() {
 	stablePolls := flag.Int("stable-polls", 0, "consecutive unchanged polls before a file is considered complete")
 	copyTo := flag.String("copy-to", "", "extract stable files into this local directory (requires -copy-prefix)")
 	copyPrefix := flag.String("copy-prefix", "", "only extract files under this image path, e.g. /TeslaCam/SentryClips (requires -copy-to)")
-	postTo := flag.String("post-to", "", "push extracted files to this collector base URL, e.g. http://127.0.0.1:8090 (requires -copy-to as the local spool)")
+	postTo := flag.String("post-to", "", "push extracted files to this server base URL, e.g. http://127.0.0.1:8090 (requires -copy-to as the local spool)")
+	tokenFile := flag.String("token-file", "", "file holding the server's bearer token; empty = no auth")
+	compressVideo := flag.Bool("compress-video", true, "compress suitable H.264 MP4s before upload")
+	videoRatio := flag.Float64("video-target-ratio", videocompress.DefaultTargetRatio, "target fraction of the source video bitrate")
+	videoMinMB := flag.Int64("video-min-mb", videocompress.DefaultMinInputBytes>>20, "only compress videos at least this many MiB")
+	videoMinKbps := flag.Int64("video-min-kbps", videocompress.DefaultMinBitrate/1000, "minimum compressed video bitrate")
+	videoMaxKbps := flag.Int64("video-max-kbps", videocompress.DefaultMaxBitrate/1000, "maximum compressed video bitrate")
+	videoMinSavings := flag.Float64("video-min-savings", videocompress.DefaultMinSavings, "minimum fractional size reduction required to use a transcode")
+	videoEncoder := flag.String("video-encoder", defaultVideoEncoder(), "ffmpeg video encoder")
+	ffmpegPath := flag.String("ffmpeg", "ffmpeg", "ffmpeg executable used for video compression")
+	ffprobePath := flag.String("ffprobe", "ffprobe", "ffprobe executable used to inspect videos")
 	flag.Parse()
-	if *imagePath == "" || *interval <= 0 || *stablePolls <= 0 {
-		log.Fatal("all of -image, -interval, -stable-polls are required")
-	}
-	if (*copyTo == "") != (*copyPrefix == "") {
-		log.Fatal("-copy-to and -copy-prefix must be set together")
-	}
-	if *postTo != "" && *copyTo == "" {
-		log.Fatal("-post-to requires -copy-to (extracted files are the upload source)")
-	}
 
-	w, err := watch.New(watch.Config{
-		ImagePath:   *imagePath,
-		Interval:    *interval,
-		StablePolls: *stablePolls,
-	})
+	token, err := tokenfile.Read(*tokenFile)
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-
-	var uploader *upload.Uploader
-	if *postTo != "" {
-		uploader, err = upload.New(upload.Config{BaseURL: *postTo, RetryDelay: 5 * time.Second})
-		if err != nil {
-			log.Fatal(err)
-		}
-		go uploader.Run(ctx,
-			func(it upload.Item) { log.Printf("upload: %s -> %s", it.ImagePath, *postTo) },
-			func(it upload.Item, err error) { log.Printf("upload error for %s (will retry): %v", it.ImagePath, err) },
-		)
-		log.Printf("pushing extracted files to %s", *postTo)
+	var videoCompression *videocompress.Config
+	if *compressVideo && *postTo != "" {
+		cfg := videocompress.DefaultConfig(*videoEncoder)
+		cfg.FFmpegPath = *ffmpegPath
+		cfg.FFprobePath = *ffprobePath
+		cfg.MinInputBytes = *videoMinMB << 20
+		cfg.TargetRatio = *videoRatio
+		cfg.MinBitrate = *videoMinKbps * 1000
+		cfg.MaxBitrate = *videoMaxKbps * 1000
+		cfg.MinSavingsRatio = *videoMinSavings
+		videoCompression = &cfg
 	}
 
-	var copier *copyout.Copier
-	if *copyTo != "" {
-		copier, err = copyout.New(copyout.Config{
-			ImagePath:  *imagePath,
-			DestDir:    *copyTo,
-			PathPrefix: *copyPrefix,
-		})
-		if err != nil {
-			log.Fatal(err)
-		}
-		go copier.Run(ctx,
-			func(r copyout.Result) {
-				if r.Skipped {
-					log.Printf("copy: %s already up to date at %s", r.Path, r.Dest)
-				} else {
-					log.Printf("copy: %s -> %s (%d bytes)", r.Path, r.Dest, r.Bytes)
-				}
-				if uploader != nil {
-					uploader.Enqueue(upload.Item{LocalPath: r.Dest, ImagePath: r.Path})
-				}
-			},
-			func(path string, err error) {
-				log.Printf("copy error for %s (will retry on next stabilize): %v", path, err)
-			},
-		)
-		log.Printf("copying stable files under %s to %s", *copyPrefix, *copyTo)
-	}
-
-	log.Printf("watching %s every %s (stable after %d polls)", *imagePath, *interval, *stablePolls)
-	err = w.Run(ctx,
-		func(ev watch.Event) {
-			log.Print(ev)
-			if ev.Type == watch.DirAdded && isSentryEventDir(ev.Path) {
-				log.Printf(">>> NEW SENTRY EVENT: %s", ev.Path)
-			}
-			if copier != nil && ev.Type == watch.FileStable {
-				copier.Enqueue(ev.Path)
-			}
-		},
-		func(err error) {
-			log.Printf("poll error (will retry): %v", err)
-		},
-	)
+	err = pipeline.Run(ctx, pipeline.Config{
+		ImagePath:        *imagePath,
+		Interval:         *interval,
+		StablePolls:      *stablePolls,
+		CopyTo:           *copyTo,
+		CopyPrefix:       *copyPrefix,
+		PostTo:           *postTo,
+		PostToken:        token,
+		RetryDelay:       5 * time.Second,
+		VideoCompression: videoCompression,
+		Logf:             log.Printf,
+	})
 	if ctx.Err() != nil {
 		log.Print("shutting down")
 		return
 	}
-	log.Fatal(err)
+	if err != nil {
+		log.Fatal(err)
+	}
 }
 
-// isSentryEventDir matches /TeslaCam/SentryClips/<timestamp> exactly (a new
-// event folder, not SentryClips itself or files inside an event).
-func isSentryEventDir(path string) bool {
-	parts := strings.Split(strings.TrimPrefix(path, "/"), "/")
-	return len(parts) == 3 &&
-		strings.EqualFold(parts[0], "TeslaCam") &&
-		strings.EqualFold(parts[1], "SentryClips")
+func defaultVideoEncoder() string {
+	if runtime.GOOS == "linux" {
+		return "h264_v4l2m2m"
+	}
+	return "libx264"
 }

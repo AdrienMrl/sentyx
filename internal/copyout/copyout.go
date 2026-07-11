@@ -1,7 +1,7 @@
 // Package copyout extracts stable files from a live exFAT image to a local
 // directory. It consumes paths (typically from watch.FileStable events),
 // queues them, and copies each one out-of-band via the exfat reader — the
-// bridge between the watcher and the collector/analyzer.
+// bridge between the watcher and the server/analyzer.
 package copyout
 
 import (

@@ -92,40 +92,68 @@
 - [ ] Harness variants remaining: real-time pacing soak (timescale 1,
       ~28MB/cam/min), run in the VM through the gadget loop
 
-## 3. Collector + analyzer wiring (Phase 3)
+## 3. Pi gadget agent (Phase 2)
 
-- [x] Collector (`internal/collect`, `cmd/teslcam-collect`): HTTP ingest
+- [x] `internal/gadget`: configfs mass-storage gadget (setup/bind/teardown,
+      UDC auto-detect via /sys/class/udc); pure filesystem ops, unit-tested
+      against a fake configfs tree
+- [x] `internal/pipeline`: shared watcher → copy-out → upload wiring,
+      extracted from teslcam-watch (both daemons now use it)
+- [x] `cmd/teslcam-agent`: gadget up → pipeline → gadget teardown on exit;
+      replaces a leftover gadget from a crashed run on startup
+- [x] Automatic upload compression: serialized ffmpeg worker uses Pi hardware
+      H.264, targets 55% of source bitrate (1.2–2.5 Mbps), skips small/HEVC
+      clips, and falls back to originals unless at least 10% is saved; all
+      thresholds and tool/encoder paths are CLI-configurable
+- [x] systemd unit template (`scripts/teslcam-agent.service`; dwc2 overlay +
+      backing image are manual prereqs on the Pi)
+- [x] VM end-to-end test (`scripts/vm-agent-test.sh`): agent's configfs
+      gadget on dummy_hcd → /dev/sda mount → sim writes a sentry event →
+      agent detects/copies/uploads → server completes the event; every
+      journaled sentry file verified byte-for-byte, gadget teardown verified
+- [ ] Real Pi Zero 2 W bring-up (dwc2, real car): image provisioning script,
+      LTE/hotspot connectivity, then Phase-4 hardening (read-only rootfs,
+      space reclamation, LBA-write sniffing for watcher efficiency)
+
+## 4. Server + analyzer wiring (Phase 3)
+
+- [x] Server (`internal/server`, `cmd/teslcam-server`): HTTP ingest
       (`PUT /files/TeslaCam/SentryClips/<event>/<file>`, atomic store on
       disk, sha256 + metadata in SQLite via modernc.org/sqlite), event
       metadata parsed from event.json, inspection API (`GET /events[/<id>]`)
 - [x] Event completion: complete once event.json received and no file for
       QuietPeriod (covers the post-trigger minute); analysis triggered once,
-      re-enqueued on restart if the collector died mid-analysis
+      re-enqueued on restart if the server died mid-analysis
 - [x] Clip selection: trigger camera from event.json camera code (pillar
       codes map to repeaters), latest clip at/before the event timestamp,
       graceful fallbacks; AppleDouble junk ignored
 - [x] Analyzer trigger: AnalyzeCmd subprocess on the selected clip, JSON
       verdict stored (threat_level extracted), failures recorded with stderr
 - [x] `analyze-video.ts --json`: Gemini structured output (responseSchema),
-      verdict JSON on stdout, progress on stderr — parseable by the collector
-- [x] Uploader (`internal/upload`): pushes copy-out results to the collector
+      verdict JSON on stdout, progress on stderr — parseable by the server
+- [x] Uploader (`internal/upload`): pushes copy-out results to the server
       with retry; `teslcam-watch -post-to` (same HTTP path the Pi agent will
       use). Live harness now runs the full loop — sim → watcher → copy-out →
-      upload → collector → analyzer — and verifies every sentry file arrived
+      upload → server → analyzer — and verifies every sentry file arrived
       byte-identical and the event was completed + analyzed
-- [x] VPS deployment (`scripts/deploy-collector.sh`): `setup` (service user,
-      dirs, /etc/teslcam/collect.env, systemd unit — analysis off until
+- [x] VPS deployment (`scripts/deploy-server.sh`): `setup` (service user,
+      dirs, /etc/teslcam/server.env, systemd unit — analysis off until
       GEMINI_API_KEY + ANALYZE_CMD are set), `deploy` (arch-detected static
       cross-compile, binary + analyzer rsync, npm ci, restart, bounded
       health check), `status`/`logs`. Target adri@vps, override TESLCAM_VPS.
-      Listen on a Tailscale IP — the ingest API has no auth yet. Not yet
-      run against the real VPS
+      Server listens on 127.0.0.1 behind a TLS reverse proxy on a public
+      api.<domain> subdomain (TLS in transit + bearer token). Not yet run
+      against the real VPS
 - [ ] Real end-to-end run with Gemini (needs GEMINI_API_KEY; harness uses a
       fake analyzer — sim clips aren't real video, so use a real TeslaCam
-      clip via `teslcam-collect -analyze`)
-- [ ] Bearer-token auth on the ingest API (before any non-Tailscale exposure)
+      clip via `teslcam-server -analyze`)
+- [x] Bearer-token auth: server requires `Authorization: Bearer` on all
+      endpoints but /healthz (constant-time compare); uploader/pipeline send
+      it; all daemons take `-token-file` (no tokens in argv); deploy setup
+      generates /etc/teslcam/ingest.token; VM e2e test runs with auth on and
+      asserts 401s. Not yet deployed to the VPS
 - [ ] Push notification on high threat_level
 - [ ] Retention/cleanup of stored clips + analysis cost controls
 
-## 4. Later phases (unchanged, see CLAUDE.md)
-- Pi gadget agent · Hardening
+## 5. Later phases (unchanged, see CLAUDE.md)
+- Hardening

@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>teslcam-exp documentation</title>
+  <meta name="description" content="Technical notes for the teslcam-exp live TeslaCam reader and event pipeline.">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header>
+    <div class="shell topbar">
+      <a class="brand" href="index.html">teslcam-exp / docs</a>
+      <nav aria-label="Documentation">
+        <a aria-current="page" href="index.html">Overview</a>
+        <a href="teslacam-filesystem.html">TeslaCam filesystem</a>
+      </nav>
+    </div>
+  </header>
+  <main class="shell">
+    <section class="hero">
+      <div class="eyebrow">Technical documentation</div>
+      <h1>Understanding the bytes before building the pipeline.</h1>
+      <p>Notes about TeslaCam storage, live exFAT behavior, event boundaries, and the contracts used by this project.</p>
+    </section>
+    <section class="card-grid" aria-label="Documentation pages">
+      <article class="card">
+        <span class="tag">Filesystem</span>
+        <h2>TeslaCam and Sentry clips</h2>
+        <p>What the vehicle places on the USB volume: directories, event folders, camera segments, metadata, naming, and lifecycle.</p>
+        <p><a href="teslacam-filesystem.html">Read the filesystem guide →</a></p>
+      </article>
+      <article class="card">
+        <span class="tag">Coming next</span>
+        <h2>Event ingestion protocol</h2>
+        <p>The proposed event-oriented API, manifests, explicit finalization, idempotency, and durable analysis jobs.</p>
+      </article>
+    </section>
+  </main>
+  <footer><div class="shell">Project documentation. Observed behavior may vary by vehicle hardware and software release.</div></footer>
+</body>
+</html>

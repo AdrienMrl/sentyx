@@ -1,0 +1,32 @@
+# systemd unit for the in-car gadget agent (Pi Zero 2 W).
+# Install: copy to /etc/systemd/system/, create /etc/teslcam/agent.env with
+# SERVER_URL=https://api.example.com, put the server's bearer token
+# (from /etc/teslcam/ingest.token on the VPS) in /etc/teslcam/server.token,
+# then: systemctl enable --now teslcam-agent
+# Prereqs on the Pi: dtoverlay=dwc2 in config.txt, backing image at
+# /var/lib/teslcam/backing.img (see testdata/scripts/make-fixture.sh), and
+# ffmpeg/ffprobe with the h264_v4l2m2m encoder. Compression defaults can be
+# overridden with the teslcam-agent -video-* flags.
+[Unit]
+Description=teslcam gadget agent (USB mass storage + sentry clip uploader)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/teslcam/agent.env
+ExecStartPre=/sbin/modprobe libcomposite
+ExecStart=/usr/local/bin/teslcam-agent \
+  -image /var/lib/teslcam/backing.img \
+  -udc auto \
+  -interval 2s \
+  -stable-polls 3 \
+  -copy-to /var/lib/teslcam/clips \
+  -copy-prefix /TeslaCam/SentryClips \
+  -post-to ${SERVER_URL} \
+  -token-file /etc/teslcam/server.token
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

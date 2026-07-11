@@ -23,9 +23,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AdrienMrl/teslcam/internal/collect"
 	"github.com/AdrienMrl/teslcam/internal/copyout"
 	"github.com/AdrienMrl/teslcam/internal/exfat"
+	"github.com/AdrienMrl/teslcam/internal/server"
 	"github.com/AdrienMrl/teslcam/internal/sim"
 	"github.com/AdrienMrl/teslcam/internal/upload"
 	"github.com/AdrienMrl/teslcam/internal/watch"
@@ -100,16 +100,16 @@ func TestLiveWriterReaderHarness(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Collector: the full backend, in-process, with a fake analyzer that
+	// Server: the full backend, in-process, with a fake analyzer that
 	// emits a canned verdict.
 	analyzer := filepath.Join(t.TempDir(), "analyze.sh")
 	if err := os.WriteFile(analyzer, []byte("#!/bin/sh\ntest -r \"$1\" || exit 1\necho '{\"concern_detected\":true,\"threat_level\":\"high\",\"what_happened\":\"sim\",\"evidence\":\"sim\",\"recommended_action\":\"sim\"}'\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	collectorAddr := freePort(t)
-	collector, err := collect.New(collect.Config{
+	serverAddr := freePort(t)
+	srv, err := server.New(server.Config{
 		DataDir:     t.TempDir(),
-		ListenAddr:  collectorAddr,
+		ListenAddr:  serverAddr,
 		QuietPeriod: 2 * time.Second,
 		AnalyzeCmd:  []string{analyzer},
 	})
@@ -118,10 +118,10 @@ func TestLiveWriterReaderHarness(t *testing.T) {
 	}
 	cctx, ccancel := context.WithCancel(context.Background())
 	defer ccancel()
-	go collector.Run(cctx, t.Logf)
+	go srv.Run(cctx, t.Logf)
 
-	// Uploader pushes extracted files to the collector as they appear.
-	up, err := upload.New(upload.Config{BaseURL: "http://" + collectorAddr, RetryDelay: 500 * time.Millisecond})
+	// Uploader pushes extracted files to the server as they appear.
+	up, err := upload.New(upload.Config{BaseURL: "http://" + serverAddr, RetryDelay: 500 * time.Millisecond})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -260,8 +260,8 @@ func TestLiveWriterReaderHarness(t *testing.T) {
 	if p := copier.Pending(); p > 0 {
 		t.Errorf("copier queue never drained: %d still pending", p)
 	}
-	// cctx stays alive: the uploader and collector keep running until the
-	// collector verification at the end (deferred ccancel stops them).
+	// cctx stays alive: the uploader and server keep running until the
+	// server verification at the end (deferred ccancel stops them).
 
 	var copied int
 	for _, rec := range journal {
@@ -294,7 +294,7 @@ func TestLiveWriterReaderHarness(t *testing.T) {
 		t.Error("copy-out extracted no sentry files")
 	}
 
-	// --- verify the collector received, completed, and analyzed the event ---
+	// --- verify the server received, completed, and analyzed the event ---
 	upDeadline := time.Now().Add(15 * time.Second)
 	for up.Pending() > 0 && time.Now().Before(upDeadline) {
 		time.Sleep(100 * time.Millisecond)
@@ -305,8 +305,8 @@ func TestLiveWriterReaderHarness(t *testing.T) {
 
 	// Event completion needs QuietPeriod of silence, then analysis runs.
 	var ev struct {
-		collect.EventSummary
-		Files []collect.FileInfo `json:"files"`
+		server.EventSummary
+		Files []server.FileInfo `json:"files"`
 	}
 	eventID := ""
 	for _, rec := range journal {
@@ -322,7 +322,7 @@ func TestLiveWriterReaderHarness(t *testing.T) {
 	analysisDeadline := time.Now().Add(20 * time.Second)
 	for {
 		var lastErr error
-		resp, err := http.Get("http://" + collectorAddr + "/events/" + eventID)
+		resp, err := http.Get("http://" + serverAddr + "/events/" + eventID)
 		if err != nil {
 			lastErr = err
 		} else {
@@ -337,7 +337,7 @@ func TestLiveWriterReaderHarness(t *testing.T) {
 			break
 		}
 		if time.Now().After(analysisDeadline) {
-			t.Fatalf("collector never finished analysis (state %q, last err %v)", ev.AnalysisState, lastErr)
+			t.Fatalf("server never finished analysis (state %q, last err %v)", ev.AnalysisState, lastErr)
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
@@ -345,14 +345,14 @@ func TestLiveWriterReaderHarness(t *testing.T) {
 		t.Errorf("analysis: state=%s threat=%s err=%s", ev.AnalysisState, ev.ThreatLevel, ev.AnalysisError)
 	}
 	if ev.Camera == "" || ev.EventTS == "" {
-		t.Errorf("event.json metadata not parsed by collector: %+v", ev.EventSummary)
+		t.Errorf("event.json metadata not parsed by server: %+v", ev.EventSummary)
 	}
 	if ev.AnalyzedClip == "" || !strings.HasSuffix(ev.AnalyzedClip, ".mp4") {
 		t.Errorf("no clip selected for analysis: %q", ev.AnalyzedClip)
 	}
 
-	// Every journaled sentry file arrived at the collector byte-identical.
-	shaByName := map[string]collect.FileInfo{}
+	// Every journaled sentry file arrived at the server byte-identical.
+	shaByName := map[string]server.FileInfo{}
 	for _, f := range ev.Files {
 		shaByName[f.Name] = f
 	}
@@ -365,19 +365,19 @@ func TestLiveWriterReaderHarness(t *testing.T) {
 		}
 		f, ok := shaByName[parts[3]]
 		if !ok {
-			t.Errorf("collector missing %s", rec.Path)
+			t.Errorf("server missing %s", rec.Path)
 			continue
 		}
 		if f.SHA256 != rec.SHA256 || f.Size != rec.Size {
-			t.Errorf("collector has wrong bytes for %s: %d bytes sha %s (want %d, %s)",
+			t.Errorf("server has wrong bytes for %s: %d bytes sha %s (want %d, %s)",
 				rec.Path, f.Size, f.SHA256, rec.Size, rec.SHA256)
 			continue
 		}
 		collected++
 	}
-	t.Logf("collector: %d sentry files verified, event %s analyzed (clip %s, threat %s)",
+	t.Logf("server: %d sentry files verified, event %s analyzed (clip %s, threat %s)",
 		collected, eventID, ev.AnalyzedClip, ev.ThreatLevel)
 	if collected == 0 {
-		t.Error("collector verified no sentry files")
+		t.Error("server verified no sentry files")
 	}
 }

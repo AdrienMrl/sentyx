@@ -1,4 +1,4 @@
-package collect
+package server
 
 import (
 	"bytes"
@@ -14,7 +14,7 @@ import (
 // analyzeEvent selects the most relevant clip for a completed event, runs
 // AnalyzeCmd on it, and stores the verdict. All outcomes land in the store
 // (done/failed/skipped) so nothing is silently dropped.
-func (c *Collector) analyzeEvent(ctx context.Context, eventID string, logf func(string, ...any)) {
+func (c *Server) analyzeEvent(ctx context.Context, eventID string, logf func(string, ...any)) {
 	if len(c.cfg.AnalyzeCmd) == 0 {
 		c.store.setAnalysis(eventID, "skipped", "", "", "", "")
 		return

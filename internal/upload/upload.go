@@ -1,7 +1,7 @@
-// Package upload pushes extracted clip files to the collector's HTTP ingest
+// Package upload pushes extracted clip files to the server's HTTP ingest
 // API. It consumes local files (typically copyout results), queues them, and
 // PUTs each to <BaseURL>/files/<image path>, retrying on failure — the
-// collector may be briefly unreachable (WiFi/LTE later, restarts today).
+// server may be briefly unreachable (WiFi/LTE later, restarts today).
 package upload
 
 import (
@@ -15,17 +15,19 @@ import (
 	"time"
 )
 
-// Config for an Uploader. All fields are required.
+// Config for an Uploader. BaseURL and RetryDelay are required.
 type Config struct {
-	BaseURL    string        // collector base URL, e.g. http://127.0.0.1:8090
+	BaseURL    string        // server base URL, e.g. http://127.0.0.1:8090
 	RetryDelay time.Duration // wait before re-queueing a failed upload
+	Token      string        // bearer token sent with every request; empty = none
 }
 
 // Item is one file to push: the local copy and its path inside the image
-// (which becomes the collector's canonical path).
+// (which becomes the server's canonical path).
 type Item struct {
-	LocalPath string
-	ImagePath string
+	LocalPath         string
+	ImagePath         string
+	RemoveAfterUpload bool // remove LocalPath after a successful upload
 }
 
 type Uploader struct {
@@ -45,7 +47,7 @@ func New(cfg Config) (*Uploader, error) {
 		return nil, fmt.Errorf("upload: BaseURL and RetryDelay are both required")
 	}
 	return &Uploader{
-		cfg:    Config{BaseURL: strings.TrimSuffix(cfg.BaseURL, "/"), RetryDelay: cfg.RetryDelay},
+		cfg:    Config{BaseURL: strings.TrimSuffix(cfg.BaseURL, "/"), RetryDelay: cfg.RetryDelay, Token: cfg.Token},
 		client: &http.Client{Timeout: 5 * time.Minute},
 		queued: map[string]bool{},
 		wake:   make(chan struct{}, 1),
@@ -133,6 +135,9 @@ func (u *Uploader) put(ctx context.Context, it Item) error {
 		return err
 	}
 	req.ContentLength = st.Size()
+	if u.cfg.Token != "" {
+		req.Header.Set("Authorization", "Bearer "+u.cfg.Token)
+	}
 	resp, err := u.client.Do(req)
 	if err != nil {
 		return err

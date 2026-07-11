@@ -1,4 +1,4 @@
-package collect
+package server
 
 import (
 	"database/sql"
@@ -46,7 +46,7 @@ func openStore(path string) (*store, error) {
 	}
 	if _, err := db.Exec(schema); err != nil {
 		db.Close()
-		return nil, fmt.Errorf("collect: initializing schema: %w", err)
+		return nil, fmt.Errorf("server: initializing schema: %w", err)
 	}
 	return &store{db: db}, nil
 }
@@ -140,7 +140,7 @@ func (s *store) completeQuietEvents(quiet time.Duration) ([]string, error) {
 }
 
 // pendingAnalyses returns completed events whose analysis never ran to a
-// terminal state (e.g. the collector was stopped mid-analysis).
+// terminal state (e.g. the server was stopped mid-analysis).
 func (s *store) pendingAnalyses() ([]string, error) {
 	rows, err := s.db.Query(`
 		SELECT id FROM events

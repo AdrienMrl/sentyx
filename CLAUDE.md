@@ -9,14 +9,14 @@ Must work on macOS and Linux for development; the in-car component requires Linu
 ## Architecture
 
 ```
-[Tesla] --USB--> [Pi: gadget agent] --WiFi/LTE--> [Collector: Mac/Linux] --> [Gemini analyzer (TS)]
+[Tesla] --USB--> [Pi: gadget agent] --WiFi/LTE--> [Server: Mac/Linux] --> [Gemini analyzer (TS)]
 ```
 
 - **Gadget agent (Go, runs on Pi)** — exposes a sparse exFAT image as a USB mass-storage LUN via Linux configfs/gadget. The car writes `TeslaCam/SentryClips/...` to it as a normal drive.
 - **Live exFAT reader (Go, shared code)** — reads the backing image out-of-band while the car has it mounted; parses exFAT directly (read-only, tolerant of a dirty/in-flight filesystem) to detect new `SentryClips/<timestamp>/` folders as they're written. This is the core custom component — no existing library does live/dirty exFAT reads.
-- **Collector (Go, Mac/Linux)** — receives event notifications + files from the agent, stores them (SQLite), and triggers downstream analysis (webhook into the existing TS/Gemini pipeline).
+- **Server (Go, Mac/Linux)** — receives event notifications + files from the agent, stores them (SQLite), and triggers downstream analysis (webhook into the existing TS/Gemini pipeline).
 - **Simulator (Mac/Linux, dev-only)** — a fake "Tesla writer" that writes realistic SentryClips into a local exFAT image, exercising the same live-reader code without a Pi or car. Primary dev loop.
-- **Analyzer (existing TS/Gemini code)** — `analyze-video.ts` and friends; the collector feeds this rather than replacing it.
+- **Analyzer (existing TS/Gemini code)** — `analyze-video.ts` and friends; the server feeds this rather than replacing it.
 
 ## Key constraints
 
@@ -36,5 +36,5 @@ A Lima VM defined in `teslcam-dev.yaml` (Debian 13 arm64, full kernel, Go, exfat
 
 1. exFAT live-reader + Mac-side simulator (no hardware needed)
 2. Pi gadget agent (configfs mass storage, dwc2 overlay, systemd unit)
-3. Collector + Gemini integration (SQLite, webhook, push notification)
+3. Server + Gemini integration (SQLite, webhook, push notification)
 4. Hardening (power-cut resilience, read-only rootfs, space reclamation, LTE/hotspot connectivity)

@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TeslaCam filesystem anatomy · teslcam-exp</title>
+  <meta name="description" content="A filesystem-level description of TeslaCam RecentClips, SavedClips, and SentryClips recordings.">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header>
+    <div class="shell topbar">
+      <a class="brand" href="index.html">teslcam-exp / docs</a>
+      <nav aria-label="Documentation">
+        <a href="index.html">Overview</a>
+        <a aria-current="page" href="teslacam-filesystem.html">TeslaCam filesystem</a>
+      </nav>
+    </div>
+  </header>
+  <main class="shell">
+    <section class="hero">
+      <div class="eyebrow">Filesystem guide</div>
+      <h1>What is a TeslaCam Sentry clip?</h1>
+      <p>It is not one video file. It is a timestamped event directory containing short, synchronized camera segments plus optional event metadata and a thumbnail.</p>
+    </section>
+
+    <div class="layout">
+      <article>
+        <div class="callout">
+          <strong>Scope.</strong> Tesla does not publish a stable machine-readable filesystem specification. This page separates behavior documented by Tesla from file details observed by the project. Camera count and metadata can vary with vehicle hardware, market, and firmware.
+        </div>
+
+        <section id="volume">
+          <h2>The recording volume</h2>
+          <p>A vehicle-formatted recording drive uses <strong>exFAT</strong> and contains a top-level <code>TeslaCam</code> directory. Tesla documents three principal clip collections:</p>
+          <pre><code>/
+└── TeslaCam/
+    ├── RecentClips/
+    ├── SavedClips/
+    └── SentryClips/</code></pre>
+          <table>
+            <thead><tr><th>Directory</th><th>Meaning</th><th>Lifecycle</th></tr></thead>
+            <tbody>
+              <tr><td><code>RecentClips</code></td><td>Continuous rolling Dashcam footage.</td><td>Up to roughly 60 minutes; old footage is overwritten.</td></tr>
+              <tr><td><code>SavedClips</code></td><td>Footage explicitly saved by Dashcam actions such as manual save, honk, or automatic safety event.</td><td>Retained until deleted or storage management requires intervention.</td></tr>
+              <tr><td><code>SentryClips</code></td><td>Footage retained for Sentry Mode security events.</td><td>Older events can be deleted by the vehicle when space is needed.</td></tr>
+            </tbody>
+          </table>
+          <p>Some newer configurations can also contain <code>EncryptedClips</code>. This project does not currently parse or ingest encrypted recordings.</p>
+        </section>
+
+        <section id="event-directory">
+          <h2>A Sentry event directory</h2>
+          <p>Each observed event is represented by a directory whose name is a local wall-clock timestamp:</p>
+          <pre><code>TeslaCam/SentryClips/2026-07-11_14-32-08/</code></pre>
+          <p>The directory name follows <code>YYYY-MM-DD_HH-MM-SS</code>. It identifies the saved event, but should not be treated as a globally unique ID: clocks can change, time zones can change, and two devices can generate the same name.</p>
+
+          <h3>Representative four-camera event</h3>
+          <pre><code>TeslaCam/SentryClips/2026-07-11_14-32-08/
+├── 2026-07-11_14-23-00-front.mp4
+├── 2026-07-11_14-23-00-back.mp4
+├── 2026-07-11_14-23-00-left_repeater.mp4
+├── 2026-07-11_14-23-00-right_repeater.mp4
+├── 2026-07-11_14-24-00-front.mp4
+├── 2026-07-11_14-24-00-back.mp4
+├── … additional minute/camera segments …
+├── 2026-07-11_14-33-00-right_repeater.mp4
+├── event.json
+└── thumb.png</code></pre>
+          <p>The MP4 filename timestamp describes the segment start. The final suffix identifies the camera stream. Files sharing a timestamp are parallel views of approximately the same recording interval.</p>
+        </section>
+
+        <section id="segments">
+          <h2>Video segments</h2>
+          <p>TeslaCam footage is divided into short MP4 segments, commonly about one minute each. A saved event is therefore a time series of files per camera rather than a single movie.</p>
+          <pre><code>&lt;segment-start&gt;-&lt;camera&gt;.mp4
+
+2026-07-11_14-32-00-front.mp4
+└────── timestamp ──────┘ └camera┘</code></pre>
+          <table>
+            <thead><tr><th>Observed suffix</th><th>View</th><th>Current project handling</th></tr></thead>
+            <tbody>
+              <tr><td><code>front</code></td><td>Forward-facing camera</td><td>Supported</td></tr>
+              <tr><td><code>back</code></td><td>Rear-facing camera</td><td>Supported</td></tr>
+              <tr><td><code>left_repeater</code></td><td>Left side repeater</td><td>Supported</td></tr>
+              <tr><td><code>right_repeater</code></td><td>Right side repeater</td><td>Supported</td></tr>
+              <tr><td>Additional pillar streams</td><td>Left and right pillar cameras on supported newer vehicles</td><td>Not modeled by the simulator yet</td></tr>
+            </tbody>
+          </table>
+          <div class="callout warning">
+            <strong>Do not assume exactly four files per timestamp.</strong> Tesla’s current manuals state that supported vehicles may save six videos per recording. Readers should discover camera suffixes rather than reject unfamiliar ones.
+          </div>
+        </section>
+
+        <section id="metadata">
+          <h2><code>event.json</code></h2>
+          <p>Observed Sentry event directories can include a small JSON document describing the trigger. A representative file used by this project is:</p>
+          <pre><code>{
+  "timestamp": "2026-07-11T14:32:08",
+  "city": "Toronto",
+  "est_lat": "43.65",
+  "est_lon": "-79.38",
+  "reason": "sentry_aware_object_detection",
+  "camera": "5"
+}</code></pre>
+          <table>
+            <thead><tr><th>Field</th><th>Interpretation</th><th>Reliability</th></tr></thead>
+            <tbody>
+              <tr><td><code>timestamp</code></td><td>Event trigger time in local wall-clock form.</td><td>Useful for choosing the trigger-minute segment; timezone is not encoded.</td></tr>
+              <tr><td><code>city</code></td><td>Approximate place label.</td><td>Optional; should not identify an event.</td></tr>
+              <tr><td><code>est_lat</code>, <code>est_lon</code></td><td>Estimated location, often encoded as strings.</td><td>Optional and privacy-sensitive.</td></tr>
+              <tr><td><code>reason</code></td><td>Machine-readable trigger category.</td><td>Values can evolve with firmware.</td></tr>
+              <tr><td><code>camera</code></td><td>Numeric trigger-camera code.</td><td>Not the same vocabulary as filename suffixes.</td></tr>
+            </tbody>
+          </table>
+          <p>The current server maps codes <code>3</code>/<code>5</code> to the left repeater, <code>4</code>/<code>6</code> to the right repeater, <code>7</code> to the rear, and other or unknown codes to the front. That is a project fallback policy, not a complete Tesla schema.</p>
+          <div class="callout warning">
+            <strong><code>event.json</code> is metadata, not a commit marker.</strong> Its presence does not prove that every video has finished writing, and its absence should not make otherwise valid video undiscoverable.
+          </div>
+
+          <h2><code>thumb.png</code></h2>
+          <p>An event can also contain a thumbnail used for quick visual identification. It is supporting media, not evidence that the event directory is complete.</p>
+        </section>
+
+        <section id="write-lifecycle">
+          <h2>How the files appear over time</h2>
+          <p>The filesystem is live while the vehicle owns and writes the volume. A reader may observe partially updated metadata and growing files:</p>
+          <pre><code>RecentClips minute files open and grow
+                 │
+                 ▼
+       Sentry trigger occurs
+                 │
+                 ├── event directory appears
+                 ├── recent pre-trigger segments are copied
+                 ├── event.json may appear
+                 ├── thumb.png may appear
+                 └── post-trigger segment(s) continue arriving
+                                  │
+                                  ▼
+                    all observed files eventually stabilize</code></pre>
+          <p>Directory-entry metadata can temporarily be inconsistent during a write. exFAT also distinguishes allocated length from <em>Valid Data Length</em>; bytes beyond the latter are not yet valid file content. This project’s live reader skips checksum-invalid entry sets and never reads beyond Valid Data Length.</p>
+          <p>There is no documented filesystem-level transaction that atomically declares an event complete. Completion must therefore be inferred locally from stable files and elapsed post-trigger time, then represented explicitly in the project’s higher-level ingestion protocol.</p>
+        </section>
+
+        <section id="project-model">
+          <h2>What our simulator models</h2>
+          <p>The development simulator deliberately models a conservative, known subset:</p>
+          <ul>
+            <li>One-minute segments for <code>front</code>, <code>back</code>, <code>left_repeater</code>, and <code>right_repeater</code>.</li>
+            <li>A rolling <code>RecentClips</code> buffer with oldest-first deletion.</li>
+            <li>A Sentry directory containing up to nine finished pre-trigger minutes and one post-trigger minute.</li>
+            <li><code>event.json</code> and <code>thumb.png</code>.</li>
+            <li>Chunked writes without explicit sync, including interruption during an open segment.</li>
+          </ul>
+          <p>It does not yet model six-camera layouts, encrypted clips, every trigger reason, firmware-specific metadata, or real H.264 byte structure. Simulator output is test data, not a canonical Tesla format.</p>
+        </section>
+
+        <section id="sources">
+          <h2>Sources and confidence</h2>
+          <ul class="sources">
+            <li><a href="https://www.tesla.com/ownersmanual/modely/en_ie/GUID-F311BBCA-2532-4D04-B88C-DBA784ADEE21.html">Tesla Model Y Owner’s Manual — USB drive requirements and clip directories</a></li>
+            <li><a href="https://www.tesla.com/ownersmanual/modely/en_cl/GUID-3BCC07CE-5EA2-4F40-99D1-27690898FF3C.html">Tesla Model Y Owner’s Manual — Dashcam behavior</a></li>
+            <li>Repository fixtures, simulator behavior, and parser tests provide the observed low-level examples described here.</li>
+          </ul>
+          <p><span class="tag">Official</span> exFAT, directory purposes, rolling retention, saved recording behavior, and variable camera availability come from Tesla documentation. <span class="tag">Observed</span> precise filenames, JSON fields, write order, and camera-code mappings are implementation observations and may change.</p>
+        </section>
+      </article>
+
+      <aside class="toc" aria-label="On this page">
+        <strong>On this page</strong>
+        <a href="#volume">Recording volume</a>
+        <a href="#event-directory">Event directory</a>
+        <a href="#segments">Video segments</a>
+        <a href="#metadata">Event metadata</a>
+        <a href="#write-lifecycle">Write lifecycle</a>
+        <a href="#project-model">Simulator model</a>
+        <a href="#sources">Sources</a>
+      </aside>
+    </div>
+  </main>
+  <footer><div class="shell">Last reviewed 2026-07-11. Treat observed details as version-dependent.</div></footer>
+</body>
+</html>

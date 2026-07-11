@@ -1,7 +1,8 @@
-package collect
+package server
 
 import (
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -13,19 +14,45 @@ import (
 	"strings"
 )
 
-// Handler returns the collector's HTTP API:
+// Handler returns the server's HTTP API:
 //
 //	PUT /files/TeslaCam/SentryClips/<event>/<name>  raw body = file bytes
 //	GET /events                                     all events (JSON)
 //	GET /events/<id>                                one event + its files
-//	GET /healthz
-func (c *Collector) Handler() http.Handler {
+//	GET /healthz                                    always unauthenticated
+//
+// With Config.Token set, everything but /healthz requires
+// "Authorization: Bearer <token>".
+func (c *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("PUT /files/", c.handlePutFile)
 	mux.HandleFunc("GET /events", c.handleEvents)
 	mux.HandleFunc("GET /events/{id}", c.handleEvent)
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("ok")) })
-	return mux
+	authed := c.requireToken(mux)
+
+	outer := http.NewServeMux()
+	outer.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("ok")) })
+	outer.Handle("/", authed)
+	return outer
+}
+
+// requireToken rejects requests without the configured bearer token with 401.
+// A no-op when no token is configured.
+func (c *Server) requireToken(next http.Handler) http.Handler {
+	if c.cfg.Token == "" {
+		return next
+	}
+	want := sha256.Sum256([]byte("Bearer " + c.cfg.Token))
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Compare hashes: constant-time and length-independent.
+		got := sha256.Sum256([]byte(r.Header.Get("Authorization")))
+		if subtle.ConstantTimeCompare(got[:], want[:]) != 1 {
+			w.Header().Set("WWW-Authenticate", "Bearer")
+			http.Error(w, "missing or invalid bearer token", http.StatusUnauthorized)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // parseSentryPath validates an upload path and returns (eventID, fileName).
@@ -44,7 +71,7 @@ func parseSentryPath(p string) (string, string, error) {
 	return eventID, name, nil
 }
 
-func (c *Collector) handlePutFile(w http.ResponseWriter, r *http.Request) {
+func (c *Server) handlePutFile(w http.ResponseWriter, r *http.Request) {
 	rel := strings.TrimPrefix(r.URL.Path, "/files/")
 	eventID, name, err := parseSentryPath(rel)
 	if err != nil {
@@ -90,14 +117,14 @@ func (c *Collector) handlePutFile(w http.ResponseWriter, r *http.Request) {
 		if err := c.parseEventJSON(eventID, dst); err != nil {
 			// Metadata is best-effort: a torn/odd event.json must not
 			// reject the upload (the bytes are stored either way).
-			fmt.Fprintf(os.Stderr, "collect: parsing %s event.json: %v\n", eventID, err)
+			fmt.Fprintf(os.Stderr, "server: parsing %s event.json: %v\n", eventID, err)
 		}
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{"event": eventID, "name": name, "size": n, "sha256": sha})
 }
 
-// eventJSON is the subset of Tesla's event.json the collector uses.
+// eventJSON is the subset of Tesla's event.json the server uses.
 type eventJSON struct {
 	Timestamp string `json:"timestamp"`
 	City      string `json:"city"`
@@ -105,7 +132,7 @@ type eventJSON struct {
 	Camera    string `json:"camera"`
 }
 
-func (c *Collector) parseEventJSON(eventID, path string) error {
+func (c *Server) parseEventJSON(eventID, path string) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return err
@@ -117,7 +144,7 @@ func (c *Collector) parseEventJSON(eventID, path string) error {
 	return c.store.setEventMeta(eventID, ej.Timestamp, ej.City, ej.Reason, ej.Camera)
 }
 
-func (c *Collector) handleEvents(w http.ResponseWriter, r *http.Request) {
+func (c *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	evs, err := c.store.events()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -130,7 +157,7 @@ func (c *Collector) handleEvents(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(evs)
 }
 
-func (c *Collector) handleEvent(w http.ResponseWriter, r *http.Request) {
+func (c *Server) handleEvent(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	ev, err := c.store.event(id)
 	if err != nil {
