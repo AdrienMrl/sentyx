@@ -24,10 +24,10 @@ import (
 	"time"
 
 	"github.com/AdrienMrl/teslcam/internal/copyout"
+	"github.com/AdrienMrl/teslcam/internal/eventupload"
 	"github.com/AdrienMrl/teslcam/internal/exfat"
 	"github.com/AdrienMrl/teslcam/internal/server"
 	"github.com/AdrienMrl/teslcam/internal/sim"
-	"github.com/AdrienMrl/teslcam/internal/upload"
 	"github.com/AdrienMrl/teslcam/internal/watch"
 )
 
@@ -121,19 +121,23 @@ func TestLiveWriterReaderHarness(t *testing.T) {
 	go srv.Run(cctx, t.Logf)
 
 	// Uploader pushes extracted files to the server as they appear.
-	up, err := upload.New(upload.Config{BaseURL: "http://" + serverAddr, RetryDelay: 500 * time.Millisecond})
+	up, err := eventupload.New(eventupload.Config{
+		BaseURL: "http://" + serverAddr, DeviceID: "integration-pi",
+		RetryDelay: 500 * time.Millisecond, SettleDelay: 750 * time.Millisecond,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	go up.Run(cctx,
-		func(it upload.Item) {},
-		func(it upload.Item, err error) { t.Logf("upload error (will retry): %s: %v", it.ImagePath, err) },
+		func(it eventupload.Item) {},
+		func(it eventupload.Item, err error) { t.Logf("upload error (will retry): %s: %v", it.ImagePath, err) },
+		func(event string, generation int) { t.Logf("finalized %s generation %d", event, generation) },
 	)
 
 	go copier.Run(cctx,
 		func(r copyout.Result) {
 			t.Logf("copied %s (%d bytes, skipped=%v)", r.Path, r.Bytes, r.Skipped)
-			up.Enqueue(upload.Item{LocalPath: r.Dest, ImagePath: r.Path})
+			up.Enqueue(eventupload.Item{LocalPath: r.Dest, ImagePath: r.Path})
 		},
 		func(path string, err error) {
 			t.Logf("copy error (tolerated, re-enqueued on restabilize): %s: %v", path, err)
@@ -303,7 +307,8 @@ func TestLiveWriterReaderHarness(t *testing.T) {
 		t.Errorf("uploader never drained: %d still pending", p)
 	}
 
-	// Event completion needs QuietPeriod of silence, then analysis runs.
+	// The agent-side assembler finalizes after its local settle period, then
+	// the durable analysis worker runs.
 	var ev struct {
 		server.EventSummary
 		Files []server.FileInfo `json:"files"`
@@ -319,10 +324,12 @@ func TestLiveWriterReaderHarness(t *testing.T) {
 	if eventID == "" {
 		t.Fatal("no sentry event in journal")
 	}
+	sourceEventID := eventID
+	eventID = "integration-pi:" + eventID
 	analysisDeadline := time.Now().Add(20 * time.Second)
 	for {
 		var lastErr error
-		resp, err := http.Get("http://" + serverAddr + "/events/" + eventID)
+		resp, err := http.Get("http://" + serverAddr + "/v1/events/" + eventID)
 		if err != nil {
 			lastErr = err
 		} else {
@@ -360,7 +367,7 @@ func TestLiveWriterReaderHarness(t *testing.T) {
 	for _, rec := range journal {
 		rel := strings.TrimPrefix(rec.Path, "/")
 		parts := strings.Split(rel, "/")
-		if rec.Deleted || len(parts) != 4 || parts[1] != "SentryClips" || parts[2] != eventID {
+		if rec.Deleted || len(parts) != 4 || parts[1] != "SentryClips" || parts[2] != sourceEventID {
 			continue
 		}
 		f, ok := shaByName[parts[3]]

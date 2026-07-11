@@ -25,6 +25,11 @@ import (
 // "Authorization: Bearer <token>".
 func (c *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("PUT /v1/events/{event}", c.handlePutEventV1)
+	mux.HandleFunc("GET /v1/events/{event}", c.handleGetEventV1)
+	mux.HandleFunc("PUT /v1/blobs/{sha256}", c.handlePutBlobV1)
+	mux.HandleFunc("PUT /v1/events/{event}/manifests/{generation}", c.handlePutManifestV1)
+	mux.HandleFunc("POST /v1/events/{event}/manifests/{generation}/finalize", c.handleFinalizeManifestV1)
 	mux.HandleFunc("PUT /files/", c.handlePutFile)
 	mux.HandleFunc("GET /events", c.handleEvents)
 	mux.HandleFunc("GET /events/{id}", c.handleEvent)

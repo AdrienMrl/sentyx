@@ -2,7 +2,9 @@ package server
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -33,6 +35,46 @@ CREATE TABLE IF NOT EXISTS files (
   received_at INTEGER NOT NULL,
   PRIMARY KEY (event_id, name)
 );
+CREATE TABLE IF NOT EXISTS blobs (
+  sha256       TEXT PRIMARY KEY,
+  size         INTEGER NOT NULL,
+  stored_path  TEXT NOT NULL,
+  received_at  INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS event_manifests (
+  event_id         TEXT NOT NULL REFERENCES events(id),
+  generation       INTEGER NOT NULL,
+  observed_through INTEGER NOT NULL,
+  manifest_json    TEXT NOT NULL,
+  finalized_at     INTEGER,
+  PRIMARY KEY (event_id, generation)
+);
+CREATE TABLE IF NOT EXISTS manifest_artifacts (
+  event_id    TEXT NOT NULL,
+  generation  INTEGER NOT NULL,
+  artifact_id TEXT NOT NULL,
+  kind        TEXT NOT NULL,
+  sha256      TEXT NOT NULL,
+  size        INTEGER NOT NULL,
+  media_type  TEXT NOT NULL,
+  source_name TEXT NOT NULL,
+  segment_ts  TEXT,
+  camera      TEXT,
+  PRIMARY KEY (event_id, generation, artifact_id),
+  FOREIGN KEY (event_id, generation) REFERENCES event_manifests(event_id, generation)
+);
+CREATE TABLE IF NOT EXISTS analysis_jobs (
+  event_id     TEXT NOT NULL REFERENCES events(id),
+  generation   INTEGER NOT NULL,
+  state        TEXT NOT NULL,
+  attempts     INTEGER NOT NULL DEFAULT 0,
+  created_at   INTEGER NOT NULL,
+  started_at   INTEGER,
+  finished_at  INTEGER,
+  last_error   TEXT,
+  available_at INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (event_id, generation)
+);
 `
 
 type store struct {
@@ -47,6 +89,37 @@ func openStore(path string) (*store, error) {
 	if _, err := db.Exec(schema); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("server: initializing schema: %w", err)
+	}
+	// Additive migrations keep existing Phase-3 databases usable. SQLite does
+	// not support ADD COLUMN IF NOT EXISTS, so duplicate-column errors are the
+	// expected result after the first successful migration.
+	for _, stmt := range []string{
+		`ALTER TABLE events ADD COLUMN state TEXT NOT NULL DEFAULT 'receiving'`,
+		`ALTER TABLE events ADD COLUMN current_generation INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE events ADD COLUMN device_id TEXT`,
+		`ALTER TABLE events ADD COLUMN source_event_id TEXT`,
+		`ALTER TABLE events ADD COLUMN metadata_json TEXT`,
+		`ALTER TABLE analysis_jobs ADD COLUMN available_at INTEGER NOT NULL DEFAULT 0`,
+	} {
+		if _, err := db.Exec(stmt); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
+			db.Close()
+			return nil, fmt.Errorf("server: migrating schema: %w", err)
+		}
+	}
+	// A process crash may leave a leased job marked running. With one local
+	// worker there is no competing lease holder after startup, so reclaim it.
+	if _, err := db.Exec(`UPDATE analysis_jobs SET state = 'pending', started_at = NULL WHERE state = 'running'`); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("server: recovering analysis jobs: %w", err)
+	}
+	// Backfill completed legacy events created before durable jobs existed.
+	if _, err := db.Exec(`
+		INSERT INTO analysis_jobs (event_id, generation, state, created_at)
+		SELECT id, current_generation, 'pending', ? FROM events
+		WHERE completed_at IS NOT NULL AND analysis_state IN ('pending','running')
+		ON CONFLICT(event_id, generation) DO NOTHING`, time.Now().UnixMilli()); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("server: backfilling analysis jobs: %w", err)
 	}
 	return &store{db: db}, nil
 }
@@ -67,6 +140,10 @@ type EventSummary struct {
 	AnalysisJSON  string     `json:"analysis_json,omitempty"`
 	AnalysisError string     `json:"analysis_error,omitempty"`
 	FileCount     int        `json:"file_count"`
+	State         string     `json:"state"`
+	Generation    int        `json:"generation"`
+	DeviceID      string     `json:"device_id,omitempty"`
+	SourceEventID string     `json:"source_event_id,omitempty"`
 }
 
 // FileInfo is the API view of one received file.
@@ -132,7 +209,7 @@ func (s *store) completeQuietEvents(quiet time.Duration) ([]string, error) {
 	}
 	now := time.Now().UnixMilli()
 	for _, id := range ids {
-		if _, err := s.db.Exec(`UPDATE events SET completed_at = ? WHERE id = ?`, now, id); err != nil {
+		if _, err := s.db.Exec(`UPDATE events SET completed_at = ?, state = 'ready' WHERE id = ?`, now, id); err != nil {
 			return nil, err
 		}
 	}
@@ -167,9 +244,15 @@ func scanIDs(rows *sql.Rows) ([]string, error) {
 func (s *store) setAnalysis(eventID, state, clip, threatLevel, analysisJSON, analysisErr string) error {
 	_, err := s.db.Exec(`
 		UPDATE events SET analysis_state = ?, analyzed_clip = ?, threat_level = ?,
-		                  analysis_json = ?, analysis_error = ?
+		                  analysis_json = ?, analysis_error = ?,
+		                  state = CASE ?
+		                    WHEN 'running' THEN 'analyzing'
+		                    WHEN 'done' THEN 'done'
+		                    WHEN 'skipped' THEN 'done'
+		                    WHEN 'failed' THEN 'failed'
+		                    ELSE state END
 		WHERE id = ?`,
-		state, clip, threatLevel, analysisJSON, analysisErr, eventID)
+		state, clip, threatLevel, analysisJSON, analysisErr, state, eventID)
 	return err
 }
 
@@ -179,7 +262,9 @@ func (s *store) events() ([]EventSummary, error) {
 		       COALESCE(e.event_ts,''), COALESCE(e.city,''), COALESCE(e.reason,''), COALESCE(e.camera,''),
 		       e.analysis_state, COALESCE(e.analyzed_clip,''), COALESCE(e.threat_level,''),
 		       COALESCE(e.analysis_json,''), COALESCE(e.analysis_error,''),
-		       (SELECT COUNT(*) FROM files f WHERE f.event_id = e.id)
+		       (SELECT COUNT(*) FROM files f WHERE f.event_id = e.id),
+		       COALESCE(e.state,'receiving'), COALESCE(e.current_generation,0),
+		       COALESCE(e.device_id,''), COALESCE(e.source_event_id,'')
 		FROM events e ORDER BY e.id`)
 	if err != nil {
 		return nil, err
@@ -193,7 +278,8 @@ func (s *store) events() ([]EventSummary, error) {
 		if err := rows.Scan(&ev.ID, &first, &last, &completed,
 			&ev.EventTS, &ev.City, &ev.Reason, &ev.Camera,
 			&ev.AnalysisState, &ev.AnalyzedClip, &ev.ThreatLevel,
-			&ev.AnalysisJSON, &ev.AnalysisError, &ev.FileCount); err != nil {
+			&ev.AnalysisJSON, &ev.AnalysisError, &ev.FileCount,
+			&ev.State, &ev.Generation, &ev.DeviceID, &ev.SourceEventID); err != nil {
 			return nil, err
 		}
 		ev.FirstSeen = time.UnixMilli(first)
@@ -206,6 +292,8 @@ func (s *store) events() ([]EventSummary, error) {
 	}
 	return out, rows.Err()
 }
+
+var errNoAnalysisJob = errors.New("no analysis job")
 
 func (s *store) event(id string) (*EventSummary, error) {
 	all, err := s.events()

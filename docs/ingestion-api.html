@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Event ingestion API · teslcam-exp</title>
+  <meta name="description" content="The high-level, event-oriented ingestion protocol used between the TeslaCam agent and server.">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header>
+    <div class="shell topbar">
+      <a class="brand" href="index.html">teslcam-exp / docs</a>
+      <nav aria-label="Documentation">
+        <a href="index.html">Overview</a>
+        <a href="teslacam-filesystem.html">TeslaCam filesystem</a>
+        <a aria-current="page" href="ingestion-api.html">Ingestion API</a>
+      </nav>
+    </div>
+  </header>
+  <main class="shell">
+    <section class="hero">
+      <div class="eyebrow">API v1</div>
+      <h1>Upload events, not filesystem paths.</h1>
+      <p>The agent converts Tesla’s live, eventually consistent directory into verified blobs and a versioned logical-event manifest. The server validates delivery and analyzes only explicitly finalized generations.</p>
+    </section>
+
+    <div class="layout">
+      <article>
+        <section id="overview">
+          <h2>Protocol overview</h2>
+          <pre><code>stable TeslaCam file
+        │
+        ├── calculate SHA-256
+        ├── PUT event metadata
+        ├── PUT content-addressed blob
+        └── add typed artifact to local event
+                         │
+                  local settle delay
+                         │
+                         ├── PUT manifest generation
+                         └── POST generation/finalize
+                                      │
+                                      ▼
+                              durable analysis job</code></pre>
+          <p>The API does not expose <code>TeslaCam/SentryClips</code> as its resource model. Source paths are retained only as artifact provenance.</p>
+        </section>
+
+        <section id="endpoints">
+          <h2>Endpoints</h2>
+          <table>
+            <thead><tr><th>Method</th><th>Endpoint</th><th>Purpose</th></tr></thead>
+            <tbody>
+              <tr><td><code>PUT</code></td><td><code>/v1/events/{event_key}</code></td><td>Idempotently create or enrich a logical event.</td></tr>
+              <tr><td><code>GET</code></td><td><code>/v1/events/{event_key}</code></td><td>Inspect state, current generation, artifacts, and analysis.</td></tr>
+              <tr><td><code>PUT</code></td><td><code>/v1/blobs/{sha256}</code></td><td>Store bytes under their verified content hash.</td></tr>
+              <tr><td><code>PUT</code></td><td><code>/v1/events/{event_key}/manifests/{generation}</code></td><td>Declare the typed artifacts in one event generation.</td></tr>
+              <tr><td><code>POST</code></td><td><code>/v1/events/{event_key}/manifests/{generation}/finalize</code></td><td>Verify the generation and make it analysis-ready.</td></tr>
+            </tbody>
+          </table>
+          <p>All endpoints except <code>GET /healthz</code> use the server’s existing bearer-token authentication when configured.</p>
+        </section>
+
+        <section id="identity">
+          <h2>Event identity</h2>
+          <p>The agent creates a deterministic key:</p>
+          <pre><code>&lt;device-id&gt;:&lt;source-directory-name&gt;
+
+pi-garage-01:2026-07-11_14-32-08</code></pre>
+          <p>The source timestamp alone is not globally unique. Prefixing it with a stable device ID makes agent retries and restarts converge on the same server event.</p>
+        </section>
+
+        <section id="event">
+          <h2>1. Upsert the event</h2>
+          <pre><code>PUT /v1/events/pi-garage-01:2026-07-11_14-32-08
+Content-Type: application/json
+
+{
+  "device_id": "pi-garage-01",
+  "source": {
+    "type": "tesla_sentry",
+    "directory_name": "2026-07-11_14-32-08"
+  },
+  "detected_at": "2026-07-11T18:32:10Z",
+  "trigger": {
+    "occurred_at_local": "2026-07-11T14:32:08",
+    "camera_code": "5",
+    "reason": "sentry_aware_object_detection"
+  },
+  "location": {
+    "city": "Toronto",
+    "estimated_latitude": 43.65,
+    "estimated_longitude": -79.38
+  }
+}</code></pre>
+          <p><code>trigger</code> and <code>location</code> are optional. They are populated when a valid <code>event.json</code> becomes available; that file is enrichment, never a completion marker.</p>
+          <pre><code>{
+  "id": "pi-garage-01:2026-07-11_14-32-08",
+  "state": "receiving",
+  "generation": 0
+}</code></pre>
+        </section>
+
+        <section id="blob">
+          <h2>2. Upload verified blobs</h2>
+          <pre><code>PUT /v1/blobs/67d2a1…
+Content-Type: video/mp4
+Content-Length: 28123904
+
+&lt;raw MP4 bytes&gt;</code></pre>
+          <p>The server streams the body into a temporary file while calculating SHA-256. It rejects a mismatch with <code>422 Unprocessable Entity</code>, then atomically moves valid bytes into:</p>
+          <pre><code>data/blobs/67/67d2a1…</code></pre>
+          <p>Uploading an existing hash is idempotent. This makes retries cheap and prevents duplicate storage when content is referenced more than once.</p>
+        </section>
+
+        <section id="manifest">
+          <h2>3. Publish a manifest generation</h2>
+          <pre><code>PUT /v1/events/{event_key}/manifests/1
+Content-Type: application/json
+
+{
+  "generation": 1,
+  "observed_through": "2026-07-11T18:34:20Z",
+  "artifacts": [
+    {
+      "id": "2026-07-11_14-32-00-front.mp4",
+      "kind": "video",
+      "sha256": "67d2a1…",
+      "size": 28123904,
+      "media_type": "video/mp4",
+      "source_name": "2026-07-11_14-32-00-front.mp4",
+      "segment": {
+        "started_at_local": "2026-07-11T14:32:00",
+        "camera": "front"
+      }
+    }
+  ]
+}</code></pre>
+          <p>Camera is an open string rather than a closed enum. Unknown future streams can pass through without a protocol upgrade.</p>
+          <p>If referenced content is absent or has the wrong size, the response identifies it:</p>
+          <pre><code>{
+  "generation": 1,
+  "status": "incomplete",
+  "missing_blobs": ["67d2a1…"]
+}</code></pre>
+        </section>
+
+        <section id="finalize">
+          <h2>4. Finalize explicitly</h2>
+          <pre><code>POST /v1/events/{event_key}/manifests/1/finalize
+Content-Type: application/json
+
+{
+  "completion_reason": "post_trigger_window_settled",
+  "settled_at": "2026-07-11T18:34:32Z"
+}</code></pre>
+          <p>Finalization succeeds only if the manifest exists and every artifact resolves to a verified blob of the declared size. Success moves the event to <code>ready</code> and atomically inserts a durable analysis job.</p>
+          <pre><code>{
+  "event_id": "pi-garage-01:2026-07-11_14-32-08",
+  "generation": 1,
+  "status": "ready"
+}</code></pre>
+        </section>
+
+        <section id="settling">
+          <h2>Agent completion rule</h2>
+          <p>The agent starts or resets its settle timer whenever another stable artifact uploads successfully. The default is 90 seconds and is configurable with <code>-event-settle</code>.</p>
+          <pre><code>event directory discovered
+          │
+          ├── stable files upload as they appear
+          ├── growing files remain local
+          ├── event.json is optional metadata
+          └── no newly stable file for settle delay
+                              │
+                              ▼
+                        finalize generation</code></pre>
+          <div class="callout warning">
+            <strong>The timer is a local filesystem heuristic.</strong> Unlike the old design, the server does not mistake network silence for proof that Tesla finished writing.
+          </div>
+        </section>
+
+        <section id="generations">
+          <h2>Late artifacts and generations</h2>
+          <p>If another file stabilizes after generation 1 was finalized, the agent uploads it and publishes generation 2 containing the complete artifact set. Older generations remain an audit trail.</p>
+          <pre><code>generation 1 ready
+        │
+        └── late segment arrives
+                    │
+                    ├── upload blob
+                    ├── manifest generation 2
+                    └── finalize generation 2</code></pre>
+          <p>A generation older than the server’s current generation is rejected with <code>409 Conflict</code>.</p>
+        </section>
+
+        <section id="jobs">
+          <h2>Durable analysis jobs</h2>
+          <p>Finalization and job creation occur in one SQLite transaction. One serialized worker claims pending jobs, marks them running, and records completion or failure. Jobs left running by a process crash are reclaimed at startup.</p>
+          <pre><code>receiving → ready → analyzing → done
+                         │
+                         └──────→ failed</code></pre>
+          <p>Analyzer failures receive up to three durable attempts with bounded backoff. Each job is keyed by <code>(event_id, generation)</code>, so a late generation can be analyzed independently.</p>
+        </section>
+
+        <section id="compatibility">
+          <h2>Compatibility and current limitations</h2>
+          <ul>
+            <li>The legacy <code>PUT /files/TeslaCam/SentryClips/…</code> endpoint remains available during migration.</li>
+            <li>The Pi agent and <code>teslcam-watch</code> now publish through API v1 when <code>-post-to</code> is enabled.</li>
+            <li>Finalized manifests are materialized into the existing file metadata view, so the current single-clip Gemini analyzer keeps working.</li>
+            <li>The analyzer still selects one trigger-relevant clip. Passing the complete event manifest to a multi-camera analyzer is the next analysis-layer change.</li>
+            <li>The agent’s queue is recoverable from its local spool and a fresh filesystem scan, but it is not yet a separately persisted outbox.</li>
+            <li>Uploads restart from byte zero after interruption; HTTP range-based resume is not implemented yet.</li>
+          </ul>
+        </section>
+      </article>
+
+      <aside class="toc" aria-label="On this page">
+        <strong>On this page</strong>
+        <a href="#overview">Overview</a>
+        <a href="#endpoints">Endpoints</a>
+        <a href="#identity">Event identity</a>
+        <a href="#event">Event upsert</a>
+        <a href="#blob">Blob upload</a>
+        <a href="#manifest">Manifest</a>
+        <a href="#finalize">Finalize</a>
+        <a href="#settling">Agent settling</a>
+        <a href="#generations">Generations</a>
+        <a href="#jobs">Analysis jobs</a>
+        <a href="#compatibility">Limitations</a>
+      </aside>
+    </div>
+  </main>
+  <footer><div class="shell">API v1 implemented 2026-07-11. The filesystem remains a source adapter, not the network contract.</div></footer>
+</body>
+</html>

@@ -50,7 +50,7 @@
       events: DIR_ADDED / FILE_ADDED / FILE_CHANGED / FILE_STABLE / REMOVED;
       checksum-failed entries deferred to next poll
 - [x] "File complete" heuristic: size stable across N polls (re-arms if the
-      file grows again). Later: treat event.json as event-finalized marker
+      file grows again). `event.json` is metadata, never a finalization marker.
 - [x] CLI daemon: `teslcam-watch -image ... -interval ... -stable-polls ...` —
       logs events, flags `>>> NEW SENTRY EVENT` on new SentryClips dirs.
       Verified in the VM gadget loop: 1s detection latency, streaming clip
@@ -105,6 +105,9 @@
       H.264, targets 55% of source bitrate (1.2–2.5 Mbps), skips small/HEVC
       clips, and falls back to originals unless at least 10% is saved; all
       thresholds and tool/encoder paths are CLI-configurable
+- [x] High-level event uploader: stable files become verified content-addressed
+      blobs and typed manifest artifacts; the agent finalizes a generation only
+      after a configurable local settle period (`-event-settle`, default 90s).
 - [x] systemd unit template (`scripts/teslcam-agent.service`; dwc2 overlay +
       backing image are manual prereqs on the Pi)
 - [x] VM end-to-end test (`scripts/vm-agent-test.sh`): agent's configfs
@@ -121,9 +124,10 @@
       (`PUT /files/TeslaCam/SentryClips/<event>/<file>`, atomic store on
       disk, sha256 + metadata in SQLite via modernc.org/sqlite), event
       metadata parsed from event.json, inspection API (`GET /events[/<id>]`)
-- [x] Event completion: complete once event.json received and no file for
-      QuietPeriod (covers the post-trigger minute); analysis triggered once,
-      re-enqueued on restart if the server died mid-analysis
+- [x] Event completion v1: agent explicitly finalizes a versioned manifest;
+      server verifies every declared blob before atomically marking it ready.
+      The old event.json + QuietPeriod behavior remains only for legacy `/files`
+      clients during migration.
 - [x] Clip selection: trigger camera from event.json camera code (pillar
       codes map to repeaters), latest clip at/before the event timestamp,
       graceful fallbacks; AppleDouble junk ignored
@@ -131,11 +135,12 @@
       verdict stored (threat_level extracted), failures recorded with stderr
 - [x] `analyze-video.ts --json`: Gemini structured output (responseSchema),
       verdict JSON on stdout, progress on stderr — parseable by the server
-- [x] Uploader (`internal/upload`): pushes copy-out results to the server
-      with retry; `teslcam-watch -post-to` (same HTTP path the Pi agent will
-      use). Live harness now runs the full loop — sim → watcher → copy-out →
-      upload → server → analyzer — and verifies every sentry file arrived
-      byte-identical and the event was completed + analyzed
+- [x] Event uploader (`internal/eventupload`): idempotent event upsert, SHA-256
+      blob upload, typed manifest, generation finalization, and retry. Legacy
+      `internal/upload` remains for compatibility tests.
+- [x] Durable SQLite analysis jobs: finalized generations are queued in the
+      same transaction, running jobs are reclaimed after restart, and analyzer
+      failures receive three bounded attempts.
 - [x] VPS deployment (`scripts/deploy-server.sh`): `setup` (service user,
       dirs, /etc/teslcam/server.env, systemd unit — analysis off until
       GEMINI_API_KEY + ANALYZE_CMD are set), `deploy` (arch-detected static

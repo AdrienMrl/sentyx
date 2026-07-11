@@ -35,8 +35,6 @@ type Config struct {
 type Server struct {
 	cfg   Config
 	store *store
-	// analyses are serialized: one event analyzed at a time.
-	analyzeQ chan string // event ids
 }
 
 func New(cfg Config) (*Server, error) {
@@ -50,7 +48,7 @@ func New(cfg Config) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Server{cfg: cfg, store: st, analyzeQ: make(chan string, 64)}, nil
+	return &Server{cfg: cfg, store: st}, nil
 }
 
 // Run serves the ingest API and drives event completion until ctx is
@@ -65,15 +63,6 @@ func (c *Server) Run(ctx context.Context, logf func(format string, args ...any))
 	go func() { errc <- srv.Serve(ln) }()
 	go c.completionLoop(ctx, logf)
 	go c.analyzeLoop(ctx, logf)
-
-	// Re-enqueue events that were complete but unanalyzed at last shutdown.
-	pending, err := c.store.pendingAnalyses()
-	if err != nil {
-		return err
-	}
-	for _, id := range pending {
-		c.enqueueAnalysis(id, logf)
-	}
 
 	logf("server listening on %s (data in %s)", ln.Addr(), c.cfg.DataDir)
 	select {
@@ -105,28 +94,50 @@ func (c *Server) completionLoop(ctx context.Context, logf func(string, ...any)) 
 		}
 		for _, id := range ids {
 			logf("event %s complete", id)
-			c.enqueueAnalysis(id, logf)
+			if err := c.store.enqueueAnalysis(id, 0); err != nil {
+				logf("queueing analysis for %s: %v", id, err)
+			}
 		}
 	}
 }
 
-func (c *Server) enqueueAnalysis(id string, logf func(string, ...any)) {
-	select {
-	case c.analyzeQ <- id:
-	default:
-		// Queue full: leave analysis_state=pending; it is re-enqueued on
-		// the next server start. Better than blocking the caller.
-		logf("analysis queue full, %s deferred to next start", id)
-	}
-}
-
 func (c *Server) analyzeLoop(ctx context.Context, logf func(string, ...any)) {
+	tick := time.NewTicker(250 * time.Millisecond)
+	defer tick.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case id := <-c.analyzeQ:
-			c.analyzeEvent(ctx, id, logf)
+		case <-tick.C:
+		}
+		job, err := c.store.claimAnalysisJob()
+		if err == errNoAnalysisJob {
+			continue
+		}
+		if err != nil {
+			logf("claiming analysis job: %v", err)
+			continue
+		}
+		c.analyzeEvent(ctx, job.EventID, logf)
+		ev, loadErr := c.store.event(job.EventID)
+		state := "failed"
+		var jobErr error
+		if loadErr != nil {
+			jobErr = loadErr
+		} else if ev == nil {
+			jobErr = fmt.Errorf("event disappeared")
+		} else {
+			switch ev.AnalysisState {
+			case "done", "skipped":
+				state = "done"
+			case "failed":
+				jobErr = fmt.Errorf("%s", ev.AnalysisError)
+			default:
+				jobErr = fmt.Errorf("analysis ended in state %s", ev.AnalysisState)
+			}
+		}
+		if err := c.store.finishAnalysisJob(*job, state, jobErr); err != nil {
+			logf("finishing analysis job for %s: %v", job.EventID, err)
 		}
 	}
 }

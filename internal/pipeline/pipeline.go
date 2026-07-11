@@ -7,13 +7,12 @@ package pipeline
 import (
 	"context"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/AdrienMrl/teslcam/internal/copyout"
-	"github.com/AdrienMrl/teslcam/internal/upload"
+	"github.com/AdrienMrl/teslcam/internal/eventupload"
 	"github.com/AdrienMrl/teslcam/internal/videocompress"
 	"github.com/AdrienMrl/teslcam/internal/watch"
 )
@@ -29,9 +28,11 @@ type Config struct {
 	CopyTo     string // extract stable files into this local directory
 	CopyPrefix string // only extract files under this image path prefix
 
-	PostTo     string        // server base URL; extracted files are pushed there
-	PostToken  string        // bearer token for the server; empty = none
-	RetryDelay time.Duration // upload retry delay; required when PostTo is set
+	PostTo           string        // server base URL; extracted files are pushed there
+	PostToken        string        // bearer token for the server; empty = none
+	DeviceID         string        // stable source device identifier used in event keys
+	RetryDelay       time.Duration // upload retry delay; required when PostTo is set
+	EventSettleDelay time.Duration // quiet time after the last stable file before finalization
 	// VideoCompression, when non-nil, compresses eligible MP4s before upload.
 	// Other files and failed/ineffective transcodes use their original bytes.
 	VideoCompression *videocompress.Config
@@ -53,6 +54,9 @@ func Run(ctx context.Context, cfg Config) error {
 	}
 	if cfg.PostTo != "" && cfg.RetryDelay <= 0 {
 		return fmt.Errorf("pipeline: RetryDelay is required with PostTo")
+	}
+	if cfg.PostTo != "" && (cfg.DeviceID == "" || cfg.EventSettleDelay <= 0) {
+		return fmt.Errorf("pipeline: DeviceID and EventSettleDelay are required with PostTo")
 	}
 	if cfg.VideoCompression != nil && cfg.PostTo == "" {
 		return fmt.Errorf("pipeline: VideoCompression requires PostTo")
@@ -76,24 +80,27 @@ func Run(ctx context.Context, cfg Config) error {
 		return err
 	}
 
-	var uploader *upload.Uploader
+	var uploader *eventupload.Client
 	if cfg.PostTo != "" {
-		uploader, err = upload.New(upload.Config{BaseURL: cfg.PostTo, RetryDelay: cfg.RetryDelay, Token: cfg.PostToken})
+		uploader, err = eventupload.New(eventupload.Config{
+			BaseURL: cfg.PostTo, RetryDelay: cfg.RetryDelay,
+			SettleDelay: cfg.EventSettleDelay, DeviceID: cfg.DeviceID, Token: cfg.PostToken,
+		})
 		if err != nil {
 			return err
 		}
 		go uploader.Run(ctx,
-			func(it upload.Item) {
+			func(it eventupload.Item) {
 				cfg.Logf("upload: %s -> %s", it.ImagePath, cfg.PostTo)
-				if it.RemoveAfterUpload {
-					if err := os.Remove(it.LocalPath); err != nil && !os.IsNotExist(err) {
-						cfg.Logf("compression cleanup error for %s: %v", it.LocalPath, err)
-					}
-				}
 			},
-			func(it upload.Item, err error) { cfg.Logf("upload error for %s (will retry): %v", it.ImagePath, err) },
+			func(it eventupload.Item, err error) {
+				cfg.Logf("upload error for %s (will retry): %v", it.ImagePath, err)
+			},
+			func(eventID string, generation int) {
+				cfg.Logf("event finalized: %s generation %d", eventID, generation)
+			},
 		)
-		cfg.Logf("pushing extracted files to %s", cfg.PostTo)
+		cfg.Logf("publishing high-level events to %s as device %s", cfg.PostTo, cfg.DeviceID)
 	}
 
 	type compressionJob struct {
@@ -112,14 +119,14 @@ func Run(ctx context.Context, cfg Config) error {
 					result, err := compressor.Compress(ctx, job.localPath)
 					if err != nil {
 						cfg.Logf("compression error for %s (uploading original): %v", job.imagePath, err)
-						uploader.Enqueue(upload.Item{LocalPath: job.localPath, ImagePath: job.imagePath})
+						uploader.Enqueue(eventupload.Item{LocalPath: job.localPath, ImagePath: job.imagePath})
 						continue
 					}
 					if result.Compressed {
 						saved := 100 * (1 - float64(result.OutputBytes)/float64(result.OriginalBytes))
 						cfg.Logf("compression: %s %d -> %d bytes (%.0f%% saved, %d kbps)",
 							job.imagePath, result.OriginalBytes, result.OutputBytes, saved, result.TargetBitrate/1000)
-						uploader.Enqueue(upload.Item{
+						uploader.Enqueue(eventupload.Item{
 							LocalPath:         result.Path,
 							ImagePath:         job.imagePath,
 							RemoveAfterUpload: true,
@@ -127,7 +134,7 @@ func Run(ctx context.Context, cfg Config) error {
 						continue
 					}
 					cfg.Logf("compression skipped for %s: %s", job.imagePath, result.Reason)
-					uploader.Enqueue(upload.Item{LocalPath: job.localPath, ImagePath: job.imagePath})
+					uploader.Enqueue(eventupload.Item{LocalPath: job.localPath, ImagePath: job.imagePath})
 				}
 			}
 		}()
@@ -160,7 +167,7 @@ func Run(ctx context.Context, cfg Config) error {
 						case <-ctx.Done():
 						}
 					} else {
-						uploader.Enqueue(upload.Item{LocalPath: r.Dest, ImagePath: r.Path})
+						uploader.Enqueue(eventupload.Item{LocalPath: r.Dest, ImagePath: r.Path})
 					}
 				}
 			},

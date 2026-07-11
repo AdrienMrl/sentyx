@@ -91,6 +91,7 @@ mkdir -p "$WORK/spool"
 sudo "$WORK/bin/teslcam-agent" -image "$IMG" -udc auto -gadget-name "$GADGET_NAME" \
   -interval 500ms -stable-polls 2 \
   -copy-to "$WORK/spool" -copy-prefix /TeslaCam/SentryClips \
+  -device-id vm-test-pi -event-settle 5s \
   -post-to "http://$SERVER_ADDR" -token-file "$WORK/ingest.token" \
   >"$WORK/agent.log" 2>&1 &
 AGENT_PID=$!
@@ -131,8 +132,7 @@ sentry = [r for r in journal
 assert sentry, "journal contains no sentry files"
 bad = []
 for r in sentry:
-    event_id, name = r["Path"].split("/")[2], r["Path"].split("/")[3]
-    p = data / "files" / event_id / name
+    p = data / "blobs" / r["SHA256"][:2] / r["SHA256"]
     if not p.exists():
         bad.append(f"missing: {r['Path']}")
     elif hashlib.sha256(p.read_bytes()).hexdigest() != r["SHA256"]:

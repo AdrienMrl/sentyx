@@ -41,6 +41,8 @@ func main() {
 	copyTo := flag.String("copy-to", "", "extract stable files into this local directory (requires -copy-prefix)")
 	copyPrefix := flag.String("copy-prefix", "", "only extract files under this image path, e.g. /TeslaCam/SentryClips (requires -copy-to)")
 	postTo := flag.String("post-to", "", "push extracted files to this server base URL (requires -copy-to as the local spool)")
+	deviceID := flag.String("device-id", "", "stable source device ID used in event keys; default is the hostname")
+	eventSettle := flag.Duration("event-settle", 90*time.Second, "quiet time after the last stable event file before finalizing")
 	tokenFile := flag.String("token-file", "", "file holding the server's bearer token; empty = no auth")
 	compressVideo := flag.Bool("compress-video", true, "compress suitable H.264 MP4s before upload")
 	videoRatio := flag.Float64("video-target-ratio", videocompress.DefaultTargetRatio, "target fraction of the source video bitrate")
@@ -58,6 +60,12 @@ func main() {
 	token, err := tokenfile.Read(*tokenFile)
 	if err != nil {
 		log.Fatal(err)
+	}
+	if *deviceID == "" {
+		*deviceID, err = os.Hostname()
+		if err != nil || *deviceID == "" {
+			log.Fatalf("device-id: hostname: %v", err)
+		}
 	}
 
 	udcName := *udc
@@ -121,7 +129,9 @@ func main() {
 		CopyPrefix:       *copyPrefix,
 		PostTo:           *postTo,
 		PostToken:        token,
+		DeviceID:         *deviceID,
 		RetryDelay:       5 * time.Second,
+		EventSettleDelay: *eventSettle,
 		VideoCompression: videoCompression,
 		Logf:             log.Printf,
 	})
