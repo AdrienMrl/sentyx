@@ -88,6 +88,12 @@ id -u teslcam >/dev/null 2>&1 || useradd --system --home /var/lib/teslcam --shel
 mkdir -p /var/lib/teslcam /etc/teslcam
 chown teslcam:teslcam /var/lib/teslcam
 
+# Notification photos are decoded from Gemini's selected event timestamp.
+if ! command -v ffmpeg >/dev/null 2>&1; then
+  apt-get update
+  DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ffmpeg
+fi
+
 # Config: created once, never overwritten (it holds the API key).
 if [[ ! -f /etc/teslcam/server.env ]]; then
   cat > /etc/teslcam/server.env <<ENV
@@ -102,6 +108,9 @@ GEMINI_MEDIA_RESOLUTION=
 # Telegram alerts are off unless TELEGRAM_CHAT_ID is set AND the bot token is
 # written to /etc/teslcam/telegram.token; then: systemctl restart teslcam-server.
 TELEGRAM_CHAT_ID=
+# Adds upload receipts and full Gemini JSON/token/cost messages. The normal
+# frame+description alert is still sent. Requires Telegram configuration.
+TELEGRAM_DEBUG=0
 ENV
   chmod 640 /etc/teslcam/server.env
   chown root:teslcam /etc/teslcam/server.env

@@ -35,6 +35,12 @@ type Config struct {
 	// gets a live alert. Nil = no notifications. Delivery failures are logged
 	// and never fail the analysis flow (the verdict is already persisted).
 	Notifier Notifier
+	// DebugNotifications sends an additional upload-received notification and
+	// includes raw analysis JSON, token usage, and per-call cost on completion.
+	DebugNotifications bool
+	// FFmpegPath extracts the Gemini-selected notification frame. Empty uses
+	// "ffmpeg" from PATH.
+	FFmpegPath string
 }
 
 type Server struct {
@@ -54,6 +60,9 @@ func New(cfg Config) (*Server, error) {
 	analyzer := cfg.Analyzer
 	if len(cfg.AnalyzeCmd) > 0 {
 		analyzer = cmdAnalyzer{argv: cfg.AnalyzeCmd}
+	}
+	if cfg.FFmpegPath == "" {
+		cfg.FFmpegPath = "ffmpeg"
 	}
 	if err := os.MkdirAll(filepath.Join(cfg.DataDir, "files"), 0o755); err != nil {
 		return nil, err

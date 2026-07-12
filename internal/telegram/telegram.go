@@ -13,7 +13,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -46,10 +49,24 @@ func New(token, chatID string) (*Client, error) {
 	}, nil
 }
 
-// Notify formats the completed event's verdict as an HTML message and sends
-// it to the configured chat.
+// Notify sends the normal user-facing alert for every completed analysis. In
+// debug mode it follows that alert with the full structured verdict and cost;
+// upload-received notifications are debug-only and arrive separately.
 func (c *Client) Notify(ctx context.Context, n server.Notification) error {
-	return c.sendMessage(ctx, formatMessage(n))
+	if n.UploadReceived {
+		return c.sendMessage(ctx, formatUploadMessage(n))
+	}
+	var errs []error
+	caption := formatMessage(n)
+	if n.FramePath != "" {
+		errs = append(errs, c.sendPhoto(ctx, n.FramePath, caption))
+	} else {
+		errs = append(errs, c.sendMessage(ctx, caption))
+	}
+	if n.Verbose {
+		errs = append(errs, c.sendMessage(ctx, formatDebugMessage(n)))
+	}
+	return errors.Join(errs...)
 }
 
 // sendMessage calls the Bot API sendMessage method with HTML parse mode.
@@ -81,53 +98,91 @@ func (c *Client) sendMessage(ctx context.Context, text string) error {
 	return nil
 }
 
+// sendPhoto uploads the Gemini-timestamped event frame as a Telegram photo
+// with the normal alert in its caption.
+func (c *Client) sendPhoto(ctx context.Context, path, caption string) error {
+	var body bytes.Buffer
+	mw := multipart.NewWriter(&body)
+	if err := mw.WriteField("chat_id", c.chatID); err != nil {
+		return err
+	}
+	if err := mw.WriteField("caption", caption); err != nil {
+		return err
+	}
+	if err := mw.WriteField("parse_mode", "HTML"); err != nil {
+		return err
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("telegram: opening frame: %w", err)
+	}
+	defer f.Close()
+	part, err := mw.CreateFormFile("photo", filepath.Base(path))
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(part, f); err != nil {
+		return err
+	}
+	if err := mw.Close(); err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		fmt.Sprintf("%s/bot%s/sendPhoto", c.baseURL, c.token), &body)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	resp, err := c.httpc.Do(req)
+	if err != nil {
+		return fmt.Errorf("telegram: sendPhoto: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+		return fmt.Errorf("telegram: sendPhoto: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(msg)))
+	}
+	return nil
+}
+
 // formatMessage renders the verdict as a Telegram HTML message. Every
 // model- or event-supplied field is HTML-escaped; only the fixed markup is
 // left literal, so untrusted text can never inject tags.
 func formatMessage(n server.Notification) string {
-	level := n.ThreatLevel
-	if level == "" {
-		level = "unknown"
-	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s <b>Sentry alert: %s</b>", severityEmoji(n.ThreatLevel), esc(strings.ToUpper(level)))
+	b.WriteString("📹 <b>Sentry event</b>")
 	if n.WhatHappened != "" {
 		fmt.Fprintf(&b, "\n%s", esc(n.WhatHappened))
-	}
-	// Context line: include only the parts we actually have.
-	var parts []string
-	if n.City != "" {
-		parts = append(parts, "📍 "+esc(n.City))
-	}
-	if n.Camera != "" {
-		parts = append(parts, "📷 "+esc(n.Camera))
-	}
-	if n.EventTS != "" {
-		parts = append(parts, "🕐 "+esc(n.EventTS))
-	}
-	if len(parts) > 0 {
-		fmt.Fprintf(&b, "\n\n%s", strings.Join(parts, " · "))
-	}
-	if n.RecommendedAction != "" {
-		fmt.Fprintf(&b, "\n\n<b>Recommended:</b> %s", esc(n.RecommendedAction))
 	}
 	return b.String()
 }
 
-// severityEmoji maps a verdict threat level to a leading emoji.
-func severityEmoji(level string) string {
-	switch strings.ToLower(level) {
-	case "high":
-		return "🔴"
-	case "medium":
-		return "🟠"
-	case "low":
-		return "🟡"
-	case "none":
-		return "🟢"
-	default:
-		return "❓"
+func formatUploadMessage(n server.Notification) string {
+	return fmt.Sprintf("📥 <b>Sentry upload received</b>\nEvent: <code>%s</code>\nGeneration: %d\nAnalysis queued.",
+		esc(n.EventID), n.Generation)
+}
+
+func formatDebugMessage(n server.Notification) string {
+	verdict := strings.TrimSpace(string(n.VerdictJSON))
+	var pretty bytes.Buffer
+	if json.Indent(&pretty, []byte(verdict), "", "  ") == nil {
+		verdict = pretty.String()
 	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "🧪 <b>Gemini debug</b>\nEvent: <code>%s</code>", esc(n.EventID))
+	if verdict != "" {
+		fmt.Fprintf(&b, "\n\n<pre>%s</pre>", esc(verdict))
+	}
+	if n.Usage != nil {
+		fmt.Fprintf(&b, "\n\n<b>Usage:</b> %s · input %d · output %d · total %d tokens",
+			esc(n.Usage.Model), n.Usage.PromptTokens, n.Usage.OutputTokens, n.Usage.TotalTokens)
+	}
+	if n.EstimatedCostUSD != nil {
+		fmt.Fprintf(&b, "\n<b>Estimated API cost:</b> $%.6f USD (standard paid tier)", *n.EstimatedCostUSD)
+	} else {
+		b.WriteString("\n<b>Estimated API cost:</b> unavailable for this model")
+	}
+	return b.String()
 }
 
 // esc escapes text for Telegram's HTML parse mode, where only &, < and > are

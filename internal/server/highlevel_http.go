@@ -196,6 +196,7 @@ func (c *Server) handleFinalizeManifestV1(w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusOK, protocol.ManifestStatus{
 		EventID: r.PathValue("event"), Generation: generation, Status: "ready",
 	})
+	c.notifyUploadReceived(r.PathValue("event"), generation)
 }
 
 func decodeJSON(w http.ResponseWriter, r *http.Request, dst any) error {

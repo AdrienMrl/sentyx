@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/AdrienMrl/teslcam/internal/protocol"
 )
@@ -66,6 +67,31 @@ func TestSelectClip(t *testing.T) {
 	}
 	if _, err = selectClip([]FileInfo{{Name: "event.json"}}, "", "0"); err == nil {
 		t.Error("no clips: expected error")
+	}
+}
+
+func TestExtractEventFrameUsesGeminiTimestamp(t *testing.T) {
+	dir := t.TempDir()
+	ffmpeg := filepath.Join(dir, "ffmpeg")
+	script := `#!/bin/sh
+printf '%s\n' "$@" > "$(dirname "$0")/args"
+for last do :; done
+printf frame > "$last"
+`
+	if err := os.WriteFile(ffmpeg, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	frame, err := extractEventFrame(context.Background(), ffmpeg, filepath.Join(dir, "clip.mp4"), 17)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(frame)
+	got, err := os.ReadFile(filepath.Join(dir, "args"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(got), "-ss\n17\n") {
+		t.Fatalf("ffmpeg args do not contain Gemini timestamp: %q", got)
 	}
 }
 
@@ -301,10 +327,11 @@ func TestAnalyzePassesLogicalNameForExtensionlessBlob(t *testing.T) {
 // prove notifications fire on "done" and that a delivery failure never breaks
 // the analysis flow.
 type recordNotifier struct {
-	mu    sync.Mutex
-	calls int
-	last  Notification
-	err   error
+	mu     sync.Mutex
+	calls  int
+	last   Notification
+	err    error
+	called chan Notification
 }
 
 func (n *recordNotifier) Notify(_ context.Context, note Notification) error {
@@ -312,7 +339,39 @@ func (n *recordNotifier) Notify(_ context.Context, note Notification) error {
 	defer n.mu.Unlock()
 	n.calls++
 	n.last = note
+	if n.called != nil {
+		n.called <- note
+	}
 	return n.err
+}
+
+func TestDebugNotifiesWhenUploadFinalizes(t *testing.T) {
+	called := make(chan Notification, 1)
+	notif := &recordNotifier{called: called}
+	c, err := New(Config{
+		DataDir:            t.TempDir(),
+		ListenAddr:         "127.0.0.1:0",
+		Notifier:           notif,
+		DebugNotifications: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(c.Handler())
+	defer srv.Close()
+	up := protocol.EventUpsert{
+		DeviceID: "pi",
+		Source:   protocol.EventSource{Type: "tesla_sentry", DirectoryName: "debug-event"},
+	}
+	ingestV1(t, srv.URL, "debug-event", up, []ingestFile{{"clip-front.mp4", []byte("clip")}})
+	select {
+	case note := <-called:
+		if !note.UploadReceived || note.EventID != "debug-event" || note.Generation != 1 {
+			t.Fatalf("notification = %+v", note)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("upload notification was not sent")
+	}
 }
 
 func TestNotifyOnDoneIsNonFatal(t *testing.T) {

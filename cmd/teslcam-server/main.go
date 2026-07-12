@@ -13,6 +13,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 
@@ -75,18 +76,29 @@ func main() {
 		}
 		notifier = tg
 	}
+	telegramDebug := false
+	if raw := os.Getenv("TELEGRAM_DEBUG"); raw != "" {
+		telegramDebug, err = strconv.ParseBool(raw)
+		if err != nil {
+			log.Fatalf("TELEGRAM_DEBUG must be a boolean (1/true or 0/false): %v", err)
+		}
+	}
+	if telegramDebug && notifier == nil {
+		log.Fatal("TELEGRAM_DEBUG requires Telegram notifications to be configured")
+	}
 
 	var analyzeCmd []string
 	if *analyze != "" {
 		analyzeCmd = strings.Fields(*analyze)
 	}
 	c, err := server.New(server.Config{
-		DataDir:    *dataDir,
-		ListenAddr: *listen,
-		Analyzer:   analyzer,
-		AnalyzeCmd: analyzeCmd,
-		Token:      token,
-		Notifier:   notifier,
+		DataDir:            *dataDir,
+		ListenAddr:         *listen,
+		Analyzer:           analyzer,
+		AnalyzeCmd:         analyzeCmd,
+		Token:              token,
+		Notifier:           notifier,
+		DebugNotifications: telegramDebug,
 	})
 	if err != nil {
 		log.Fatal(err)

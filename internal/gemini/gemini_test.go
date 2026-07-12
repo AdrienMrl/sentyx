@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -18,14 +19,16 @@ import (
 
 // fakeAPI implements the subset of the Gemini REST API the client uses.
 type fakeAPI struct {
-	t              *testing.T
-	baseURL        string
-	uploadedBytes  atomic.Int64
-	pollsRemaining atomic.Int32 // how many GETs still return PROCESSING
-	generateFails  atomic.Int32 // how many generateContent calls 503 first
-	deleted        atomic.Bool
-	mediaRes       atomic.Value // generationConfig.mediaResolution seen (string)
-	displayName    atomic.Value // logical filename sent to the Files API
+	t               *testing.T
+	baseURL         string
+	uploadedBytes   atomic.Int64
+	pollsRemaining  atomic.Int32 // how many GETs still return PROCESSING
+	generateFails   atomic.Int32 // how many generateContent calls 503 first
+	deleted         atomic.Bool
+	mediaRes        atomic.Value // generationConfig.mediaResolution seen (string)
+	displayName     atomic.Value // logical filename sent to the Files API
+	maxOutput       atomic.Int64 // generationConfig.maxOutputTokens seen
+	schemaDescribed atomic.Bool  // every response schema property has a description
 }
 
 func (f *fakeAPI) handler() http.Handler {
@@ -102,8 +105,24 @@ func (f *fakeAPI) handler() http.Handler {
 		}
 		mr, _ := req.GenerationConfig["mediaResolution"].(string)
 		f.mediaRes.Store(mr)
+		if max, ok := req.GenerationConfig["maxOutputTokens"].(float64); ok {
+			f.maxOutput.Store(int64(max))
+		}
+		described := true
+		schema, _ := req.GenerationConfig["responseSchema"].(map[string]any)
+		properties, _ := schema["properties"].(map[string]any)
+		if len(properties) == 0 {
+			described = false
+		}
+		for _, raw := range properties {
+			property, _ := raw.(map[string]any)
+			if property["description"] == "" {
+				described = false
+			}
+		}
+		f.schemaDescribed.Store(described)
 		fmt.Fprint(w, `{
-			"candidates": [{"content": {"parts": [{"text": "{\"threat_level\":\"low\",\"concern_detected\":false}"}]}, "finishReason": "STOP"}],
+			"candidates": [{"content": {"parts": [{"text": "{\"concern_detected\":true,\"threat_level\":\"low\",\"what_happened\":\"A person approached the car.\",\"evidence\":\"The person stopped beside the door.\",\"recommended_action\":\"Review the footage.\",\"event_timestamp_seconds\":12}"}]}, "finishReason": "STOP"}],
 			"usageMetadata": {"promptTokenCount": 15000, "candidatesTokenCount": 120, "thoughtsTokenCount": 80, "totalTokenCount": 15200}
 		}`)
 	})
@@ -166,6 +185,55 @@ func TestAnalyze(t *testing.T) {
 	}
 	if got, _ := api.mediaRes.Load().(string); got != "" {
 		t.Errorf("mediaResolution sent without being configured: %q", got)
+	}
+	if got := api.maxOutput.Load(); got != 2048 {
+		t.Errorf("maxOutputTokens = %d, want 2048", got)
+	}
+	if !api.schemaDescribed.Load() {
+		t.Error("response schema properties are missing descriptions")
+	}
+}
+
+func TestValidateVerdictRejectsSemanticErrors(t *testing.T) {
+	valid := `{"concern_detected":false,"threat_level":"none","what_happened":"No concerning activity.","evidence":"No one approached the vehicle.","recommended_action":"Ignore.","event_timestamp_seconds":0}`
+	if _, err := validateVerdict([]byte(valid)); err != nil {
+		t.Fatalf("valid verdict rejected: %v", err)
+	}
+	for name, input := range map[string]string{
+		"missing field":      `{"concern_detected":false,"threat_level":"none"}`,
+		"inconsistent":       strings.Replace(valid, `"threat_level":"none"`, `"threat_level":"low"`, 1),
+		"negative timestamp": strings.Replace(valid, `"event_timestamp_seconds":0`, `"event_timestamp_seconds":-1`, 1),
+		"unknown field":      strings.TrimSuffix(valid, "}") + `,"extra":true}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := validateVerdict([]byte(input)); err == nil {
+				t.Fatal("invalid verdict accepted")
+			}
+		})
+	}
+}
+
+func TestEstimatedStandardCostUSD(t *testing.T) {
+	u := &server.TokenUsage{Model: "gemini-3.5-flash", PromptTokens: 1_000_000, OutputTokens: 1_000_000}
+	if got := estimatedStandardCostUSD(u); got == nil || *got != 10.50 {
+		t.Fatalf("cost = %v, want 10.50", got)
+	}
+	u.Model = "unknown-model"
+	if got := estimatedStandardCostUSD(u); got != nil {
+		t.Fatalf("unknown model cost = %v, want nil", *got)
+	}
+}
+
+func TestGenerationConfigUsesModernThinkingControlForGemini3(t *testing.T) {
+	c := &Client{model: "gemini-3.5-flash"}
+	cfg := c.generationConfig()
+	thinking, _ := cfg["thinkingConfig"].(map[string]any)
+	if thinking["thinkingLevel"] != "low" {
+		t.Fatalf("thinkingConfig = %#v", thinking)
+	}
+	c.model = "gemini-2.5-flash"
+	if _, ok := c.generationConfig()["thinkingConfig"]; ok {
+		t.Fatal("thinkingLevel sent to an older model family")
 	}
 }
 

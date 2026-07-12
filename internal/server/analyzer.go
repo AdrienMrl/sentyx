@@ -18,8 +18,9 @@ type TokenUsage struct {
 
 // AnalysisResult is an Analyzer's output for one clip.
 type AnalysisResult struct {
-	VerdictJSON []byte      // single JSON object; must contain "threat_level"
-	Usage       *TokenUsage // nil if the analyzer does not report usage
+	VerdictJSON      []byte      // single JSON object; must contain "threat_level"
+	Usage            *TokenUsage // nil if the analyzer does not report usage
+	EstimatedCostUSD *float64    // nil when provider/model pricing is unknown
 }
 
 // AnalysisClip separates the blob's physical storage path from its logical

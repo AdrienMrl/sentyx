@@ -34,33 +34,59 @@ activity directed at the vehicle or its surroundings. Consider things like:
 - Vandalism, weapons, or violence
 - Vehicle collisions or hit-and-run
 
-Respond in structured form:
-1. CONCERN DETECTED: yes / no
-2. THREAT LEVEL: none / low / medium / high
-3. WHAT HAPPENED: a factual description of the events, with approximate timestamps
-4. EVIDENCE: the specific visual cues that support your assessment
-5. RECOMMENDED ACTION: what the owner should do (e.g., ignore, review, report to police)
+Return the requested verdict. Keep each text field to one short sentence of at most
+20 words. Set event_timestamp_seconds to the moment that best shows the activity
+described in what_happened, measured from the start of this clip. Always choose a
+representative scene containing the relevant person, vehicle, or action; avoid title
+cards, blank frames, fades, and transitions. Set concern_detected to false exactly
+when threat_level is none. Be precise and do not speculate beyond what is visible.`
 
-Be precise and avoid speculation beyond what is visible.`
-
-// verdictSchema constrains the model to the verdict object the server
-// stores (analyze-video.ts uses the identical schema).
+// verdictSchema constrains the model to the verdict object the server stores.
 var verdictSchema = map[string]any{
 	"type": "OBJECT",
 	"properties": map[string]any{
-		"concern_detected": map[string]any{"type": "BOOLEAN"},
-		"threat_level": map[string]any{
-			"type": "STRING",
-			"enum": []string{"none", "low", "medium", "high"},
+		"concern_detected": map[string]any{
+			"type":        "BOOLEAN",
+			"description": "Whether visible activity warrants the owner's attention.",
 		},
-		"what_happened":      map[string]any{"type": "STRING"},
-		"evidence":           map[string]any{"type": "STRING"},
-		"recommended_action": map[string]any{"type": "STRING"},
+		"threat_level": map[string]any{
+			"type":        "STRING",
+			"enum":        []string{"none", "low", "medium", "high"},
+			"description": "Severity of the visible activity; use none when concern_detected is false.",
+		},
+		"what_happened": map[string]any{
+			"type":        "STRING",
+			"description": "One factual sentence, at most 20 words, describing what happened.",
+		},
+		"evidence": map[string]any{
+			"type":        "STRING",
+			"description": "One factual sentence, at most 20 words, naming the decisive visual evidence.",
+		},
+		"recommended_action": map[string]any{
+			"type":        "STRING",
+			"description": "One brief action for the owner, such as ignore, review footage, or contact police.",
+		},
+		"event_timestamp_seconds": map[string]any{
+			"type":        "INTEGER",
+			"description": "Seconds from clip start showing the clearest representative frame of what_happened; avoid title cards and transitions.",
+		},
 	},
 	"required": []string{
 		"concern_detected", "threat_level", "what_happened",
-		"evidence", "recommended_action",
+		"evidence", "recommended_action", "event_timestamp_seconds",
 	},
+}
+
+// verdict is deliberately pointer-valued so application validation can
+// distinguish a missing required field from its zero value. The API schema
+// constrains syntax; this type enforces the contract before storage.
+type verdict struct {
+	ConcernDetected   *bool   `json:"concern_detected"`
+	ThreatLevel       *string `json:"threat_level"`
+	WhatHappened      *string `json:"what_happened"`
+	Evidence          *string `json:"evidence"`
+	RecommendedAction *string `json:"recommended_action"`
+	EventTimestampSec *int    `json:"event_timestamp_seconds"`
 }
 
 // Client calls the Gemini API directly over REST. It implements
@@ -130,7 +156,30 @@ func (c *Client) Analyze(ctx context.Context, clip server.AnalysisClip) (*server
 	if err != nil {
 		return nil, fmt.Errorf("gemini: generateContent: %w", err)
 	}
-	return &server.AnalysisResult{VerdictJSON: verdict, Usage: usage}, nil
+	return &server.AnalysisResult{
+		VerdictJSON:      verdict,
+		Usage:            usage,
+		EstimatedCostUSD: estimatedStandardCostUSD(usage),
+	}, nil
+}
+
+// estimatedStandardCostUSD uses Gemini Developer API standard paid-tier
+// pricing. Gemini reports thinking tokens separately, but generate folds them
+// into OutputTokens because Google bills them at the output rate.
+func estimatedStandardCostUSD(usage *server.TokenUsage) *float64 {
+	if usage == nil {
+		return nil
+	}
+	var inputPerMillion, outputPerMillion float64
+	switch usage.Model {
+	case "gemini-3.5-flash": // pricing published 2026-07-09
+		inputPerMillion, outputPerMillion = 1.50, 9.00
+	default:
+		return nil
+	}
+	cost := (float64(usage.PromptTokens)*inputPerMillion +
+		float64(usage.OutputTokens)*outputPerMillion) / 1_000_000
+	return &cost
 }
 
 func clipMIMEType(path string) (string, error) {
@@ -251,13 +300,7 @@ func (c *Client) waitActive(ctx context.Context, file *geminiFile) error {
 }
 
 func (c *Client) generate(ctx context.Context, file *geminiFile) ([]byte, *server.TokenUsage, error) {
-	genConfig := map[string]any{
-		"responseMimeType": "application/json",
-		"responseSchema":   verdictSchema,
-	}
-	if c.mediaResolution != "" {
-		genConfig["mediaResolution"] = c.mediaResolution
-	}
+	genConfig := c.generationConfig()
 	reqBody, err := json.Marshal(map[string]any{
 		"contents": []map[string]any{{
 			"role": "user",
@@ -304,13 +347,16 @@ func (c *Client) generate(ctx context.Context, file *geminiFile) ([]byte, *serve
 	if len(resp.Candidates) == 0 {
 		return nil, nil, errors.New("response has no candidates")
 	}
+	if resp.Candidates[0].FinishReason != "STOP" {
+		return nil, nil, fmt.Errorf("candidate finished with %s", resp.Candidates[0].FinishReason)
+	}
 	var text strings.Builder
 	for _, p := range resp.Candidates[0].Content.Parts {
 		text.WriteString(p.Text)
 	}
-	verdict := []byte(text.String())
-	if !json.Valid(verdict) || len(bytes.TrimSpace(verdict)) == 0 {
-		return nil, nil, fmt.Errorf("candidate is not valid JSON (finishReason=%s)", resp.Candidates[0].FinishReason)
+	verdictJSON, err := validateVerdict([]byte(text.String()))
+	if err != nil {
+		return nil, nil, fmt.Errorf("invalid verdict: %w", err)
 	}
 	if resp.UsageMetadata == nil {
 		return nil, nil, errors.New("response has no usageMetadata")
@@ -322,7 +368,70 @@ func (c *Client) generate(ctx context.Context, file *geminiFile) ([]byte, *serve
 		OutputTokens: resp.UsageMetadata.CandidatesTokenCount + resp.UsageMetadata.ThoughtsTokenCount,
 		TotalTokens:  resp.UsageMetadata.TotalTokenCount,
 	}
-	return verdict, usage, nil
+	return verdictJSON, usage, nil
+}
+
+func (c *Client) generationConfig() map[string]any {
+	genConfig := map[string]any{
+		"responseMimeType": "application/json",
+		"responseSchema":   verdictSchema,
+		// This is a guardrail rather than the primary brevity control. The
+		// prompt and field descriptions keep normal responses well below it.
+		// Gemini's limit includes internal thinking tokens. Leave enough room
+		// for LOW reasoning plus the small schema-constrained visible response.
+		"maxOutputTokens": 2048,
+	}
+	// Gemini 3 models support thinkingLevel; older model families reject it.
+	// LOW retains useful video reasoning while avoiding the costlier MEDIUM
+	// default used by Gemini 3.5 Flash for this narrow classification task.
+	if strings.HasPrefix(c.model, "gemini-3") {
+		genConfig["thinkingConfig"] = map[string]any{"thinkingLevel": "low"}
+	}
+	if c.mediaResolution != "" {
+		genConfig["mediaResolution"] = c.mediaResolution
+	}
+	return genConfig
+}
+
+// validateVerdict applies the semantic checks that a response schema cannot.
+// It returns canonical JSON so downstream code never stores unknown fields or
+// provider-specific whitespace.
+func validateVerdict(data []byte) ([]byte, error) {
+	if len(bytes.TrimSpace(data)) == 0 {
+		return nil, errors.New("empty response")
+	}
+	var v verdict
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&v); err != nil {
+		return nil, err
+	}
+	if err := dec.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			return nil, errors.New("multiple JSON values")
+		}
+		return nil, fmt.Errorf("trailing data: %w", err)
+	}
+	if v.ConcernDetected == nil || v.ThreatLevel == nil || v.WhatHappened == nil ||
+		v.Evidence == nil || v.RecommendedAction == nil || v.EventTimestampSec == nil {
+		return nil, errors.New("response is missing a required field")
+	}
+	switch *v.ThreatLevel {
+	case "none", "low", "medium", "high":
+	default:
+		return nil, fmt.Errorf("invalid threat_level %q", *v.ThreatLevel)
+	}
+	if (*v.ThreatLevel == "none") == *v.ConcernDetected {
+		return nil, errors.New("concern_detected must be false exactly when threat_level is none")
+	}
+	if strings.TrimSpace(*v.WhatHappened) == "" || strings.TrimSpace(*v.Evidence) == "" ||
+		strings.TrimSpace(*v.RecommendedAction) == "" {
+		return nil, errors.New("text fields must not be empty")
+	}
+	if *v.EventTimestampSec < 0 {
+		return nil, errors.New("event_timestamp_seconds must not be negative")
+	}
+	return json.Marshal(v)
 }
 
 // deleteFile removes an uploaded file. Best-effort: files also expire

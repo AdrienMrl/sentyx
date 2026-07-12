@@ -3,8 +3,12 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -55,9 +59,10 @@ func (c *Server) analyzeEvent(ctx context.Context, eventID string, logf func(str
 	}
 
 	var parsed struct {
-		ThreatLevel       string `json:"threat_level"`
-		WhatHappened      string `json:"what_happened"`
-		RecommendedAction string `json:"recommended_action"`
+		ThreatLevel          string `json:"threat_level"`
+		WhatHappened         string `json:"what_happened"`
+		RecommendedAction    string `json:"recommended_action"`
+		EventTimestampSecond int    `json:"event_timestamp_seconds"`
 	}
 	if err := json.Unmarshal(res.VerdictJSON, &parsed); err != nil {
 		fail(clip.Name, fmt.Errorf("verdict is not a JSON object: %w\nverdict: %s", err, truncate(string(res.VerdictJSON), 2000)))
@@ -68,6 +73,18 @@ func (c *Server) analyzeEvent(ctx context.Context, eventID string, logf func(str
 		return
 	}
 	logf("event %s analyzed: threat_level=%s (clip %s)", eventID, parsed.ThreatLevel, clip.Name)
+	var framePath string
+	if c.notifier != nil {
+		frameCtx, cancelFrame := context.WithTimeout(ctx, 30*time.Second)
+		var frameErr error
+		framePath, frameErr = extractEventFrame(frameCtx, c.cfg.FFmpegPath, clipPath, parsed.EventTimestampSecond)
+		cancelFrame()
+		if frameErr != nil {
+			logf("extracting notification frame for %s: %v", eventID, frameErr)
+		} else {
+			defer os.Remove(framePath)
+		}
+	}
 
 	// The verdict is now durably stored, so a notification failure below is
 	// logged and swallowed — it must never fail the analysis flow.
@@ -79,7 +96,42 @@ func (c *Server) analyzeEvent(ctx context.Context, eventID string, logf func(str
 		City:              ev.City,
 		Camera:            prettyCamera(ev.Camera),
 		EventTS:           ev.EventTS,
+		Verbose:           c.cfg.DebugNotifications,
+		VerdictJSON:       res.VerdictJSON,
+		Usage:             res.Usage,
+		EstimatedCostUSD:  res.EstimatedCostUSD,
+		FramePath:         framePath,
 	}, logf)
+}
+
+// extractEventFrame decodes the exact moment selected by Gemini. Seeking after
+// opening the input is slower than keyframe seeking but accurate within the
+// video's frame timing, which matters more for an evidence notification.
+func extractEventFrame(ctx context.Context, ffmpegPath, clipPath string, seconds int) (string, error) {
+	f, err := os.CreateTemp("", "teslcam-event-*.jpg")
+	if err != nil {
+		return "", err
+	}
+	path := f.Name()
+	if err := f.Close(); err != nil {
+		os.Remove(path)
+		return "", err
+	}
+	args := []string{
+		"-hide_banner", "-loglevel", "error", "-y", "-i", clipPath,
+		"-ss", strconv.Itoa(seconds), "-frames:v", "1", "-q:v", "2", path,
+	}
+	out, err := exec.CommandContext(ctx, ffmpegPath, args...).CombinedOutput()
+	if err != nil {
+		os.Remove(path)
+		return "", fmt.Errorf("ffmpeg: %w: %s", err, truncate(strings.TrimSpace(string(out)), 1000))
+	}
+	info, err := os.Stat(path)
+	if err != nil || info.Size() == 0 {
+		os.Remove(path)
+		return "", errors.New("ffmpeg produced no frame")
+	}
+	return path, nil
 }
 
 // notify sends a live alert about a completed event's verdict, if a Notifier
@@ -90,7 +142,12 @@ func (c *Server) notify(ctx context.Context, n Notification, logf func(string, .
 	if c.notifier == nil {
 		return
 	}
-	nctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	timeout := 15 * time.Second
+	if n.Verbose {
+		// Debug sends the normal photo and a second full-verdict message.
+		timeout = 25 * time.Second
+	}
+	nctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	if err := c.notifier.Notify(nctx, n); err != nil {
 		logf("notifying about %s: %v", n.EventID, err)

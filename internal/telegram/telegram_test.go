@@ -3,8 +3,11 @@ package telegram
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -20,6 +23,78 @@ func TestNewRequiresTokenAndChatID(t *testing.T) {
 	}
 	if _, err := New("tok", "123"); err != nil {
 		t.Errorf("valid config rejected: %v", err)
+	}
+}
+
+func TestNotifySendsFrameThenVerboseDebug(t *testing.T) {
+	frame := filepath.Join(t.TempDir(), "event.jpg")
+	if err := os.WriteFile(frame, []byte("jpeg frame"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var paths, messages []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/sendPhoto"):
+			if err := r.ParseMultipartForm(1 << 20); err != nil {
+				t.Error(err)
+				break
+			}
+			messages = append(messages, r.FormValue("caption"))
+			file, _, err := r.FormFile("photo")
+			if err != nil {
+				t.Error(err)
+				break
+			}
+			defer file.Close()
+			got, _ := io.ReadAll(file)
+			if string(got) != "jpeg frame" {
+				t.Errorf("photo = %q", got)
+			}
+		case strings.HasSuffix(r.URL.Path, "/sendMessage"):
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Error(err)
+			}
+			messages = append(messages, body["text"].(string))
+		}
+		w.Write([]byte(`{"ok":true}`))
+	}))
+	defer srv.Close()
+
+	c, _ := New("tok", "123")
+	c.baseURL = srv.URL
+	cost := 0.0243
+	err := c.Notify(context.Background(), server.Notification{
+		EventID:      "event-1",
+		ThreatLevel:  "medium",
+		WhatHappened: "A person struck the driver door.",
+		FramePath:    frame,
+		Verbose:      true,
+		VerdictJSON:  []byte(`{"concern_detected":true,"threat_level":"medium"}`),
+		Usage: &server.TokenUsage{
+			Model: "gemini-3.5-flash", PromptTokens: 15_000, OutputTokens: 200, TotalTokens: 15_200,
+		},
+		EstimatedCostUSD: &cost,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(paths) != 2 || !strings.HasSuffix(paths[0], "/sendPhoto") || !strings.HasSuffix(paths[1], "/sendMessage") {
+		t.Fatalf("calls = %v, want sendPhoto then sendMessage", paths)
+	}
+	if !strings.Contains(messages[0], "A person struck the driver door.") || strings.Contains(messages[0], "concern_detected") {
+		t.Errorf("main caption = %q", messages[0])
+	}
+	if !strings.Contains(messages[1], "concern_detected") || !strings.Contains(messages[1], "$0.024300") {
+		t.Errorf("debug message = %q", messages[1])
+	}
+}
+
+func TestFormatUploadMessage(t *testing.T) {
+	msg := formatUploadMessage(server.Notification{EventID: "pi:<event>", Generation: 3})
+	if !strings.Contains(msg, "upload received") || !strings.Contains(msg, "Generation: 3") || strings.Contains(msg, "<event>") {
+		t.Errorf("upload message = %q", msg)
 	}
 }
 
@@ -69,11 +144,8 @@ func TestNotifySendsFormattedMessage(t *testing.T) {
 	}
 
 	text, _ := gotBody["text"].(string)
-	if !strings.Contains(text, "🔴") {
-		t.Errorf("missing high-severity emoji: %q", text)
-	}
-	if !strings.Contains(text, "Sentry alert: HIGH") {
-		t.Errorf("missing threat level heading: %q", text)
+	if !strings.Contains(text, "Sentry event") {
+		t.Errorf("missing event heading: %q", text)
 	}
 	// Untrusted verdict text must be HTML-escaped so it can't inject markup.
 	if !strings.Contains(text, "&lt;hard&gt;") || !strings.Contains(text, "&amp;") {
@@ -82,9 +154,9 @@ func TestNotifySendsFormattedMessage(t *testing.T) {
 	if strings.Contains(text, "<hard>") {
 		t.Errorf("raw angle brackets leaked into message: %q", text)
 	}
-	for _, want := range []string{"North Las Vegas", "left repeater", "2026-07-04T10:01:31", "report to police"} {
-		if !strings.Contains(text, want) {
-			t.Errorf("message missing %q: %q", want, text)
+	for _, excluded := range []string{"HIGH", "North Las Vegas", "left repeater", "2026-07-04T10:01:31", "report to police"} {
+		if strings.Contains(text, excluded) {
+			t.Errorf("main alert leaked non-description field %q: %q", excluded, text)
 		}
 	}
 }
@@ -106,23 +178,12 @@ func TestNotifyReturnsErrorOnAPIFailure(t *testing.T) {
 }
 
 func TestFormatMessageOptionalFields(t *testing.T) {
-	// An empty threat level renders "unknown" with the fallback emoji, and
-	// absent context fields are simply omitted (no dangling separators).
+	// The main message carries only the fixed heading and Gemini's description.
 	msg := formatMessage(server.Notification{WhatHappened: "nothing notable"})
-	if !strings.Contains(msg, "❓") || !strings.Contains(msg, "Sentry alert: UNKNOWN") {
-		t.Errorf("unknown-level formatting wrong: %q", msg)
+	if !strings.Contains(msg, "Sentry event") || !strings.Contains(msg, "nothing notable") {
+		t.Errorf("main message formatting wrong: %q", msg)
 	}
 	if strings.Contains(msg, "📍") || strings.Contains(msg, "📷") || strings.Contains(msg, " · ") {
 		t.Errorf("empty context fields leaked into message: %q", msg)
-	}
-}
-
-func TestSeverityEmoji(t *testing.T) {
-	for level, want := range map[string]string{
-		"high": "🔴", "medium": "🟠", "low": "🟡", "none": "🟢", "": "❓", "weird": "❓",
-	} {
-		if got := severityEmoji(level); got != want {
-			t.Errorf("severityEmoji(%q) = %q, want %q", level, got, want)
-		}
 	}
 }
