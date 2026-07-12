@@ -121,6 +121,47 @@ func TestEnqueueFilterAndDedupe(t *testing.T) {
 	}
 }
 
+func TestPriorityQueueAndPromotion(t *testing.T) {
+	c, err := New(Config{ImagePath: "unused.img", DestDir: t.TempDir(), PathPrefix: "/TeslaCam/SentryClips"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := "/TeslaCam/SentryClips/e/a.mp4"
+	b := "/TeslaCam/SentryClips/e/b.mp4"
+	meta := "/TeslaCam/SentryClips/e/event.json"
+	if !c.EnqueuePriority(a, 0) || !c.EnqueuePriority(b, 0) || !c.EnqueuePriority(meta, 100) {
+		t.Fatal("priority enqueue rejected")
+	}
+	if !c.Promote(b, 200) {
+		t.Fatal("pending path was not promoted")
+	}
+	for i, want := range []string{b, meta, a} {
+		got, ok := c.pop()
+		if !ok || got != want {
+			t.Fatalf("pop %d = %q, %v; want %q", i, got, ok, want)
+		}
+		c.mu.Lock()
+		c.inFlight--
+		c.mu.Unlock()
+	}
+	if c.Promote(a, 300) {
+		t.Error("already-popped path was promoted")
+	}
+}
+
+func TestPriorityQueuePreservesFIFO(t *testing.T) {
+	c, _ := New(Config{ImagePath: "unused.img", DestDir: t.TempDir(), PathPrefix: "/TeslaCam"})
+	paths := []string{"/TeslaCam/a", "/TeslaCam/b", "/TeslaCam/c"}
+	for _, path := range paths {
+		c.EnqueuePriority(path, 5)
+	}
+	for i, want := range paths {
+		if got, _ := c.pop(); got != want {
+			t.Fatalf("pop %d = %q, want %q", i, got, want)
+		}
+	}
+}
+
 func TestCopyFixtureSentryClips(t *testing.T) {
 	img := fixturePath(t)
 	want := manifest(t, img)

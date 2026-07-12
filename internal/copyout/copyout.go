@@ -38,11 +38,16 @@ type Copier struct {
 	cfg Config
 
 	mu       sync.Mutex
-	pending  []string
+	pending  []pendingPath
 	queued   map[string]bool // dedupe: paths in pending
 	inFlight int
 
 	wake chan struct{}
+}
+
+type pendingPath struct {
+	path     string
+	priority int
 }
 
 func New(cfg Config) (*Copier, error) {
@@ -60,6 +65,13 @@ func New(cfg Config) (*Copier, error) {
 // paths already pending are ignored; returns whether the path was accepted.
 // Safe to call from the watcher's emit callback: it never blocks on I/O.
 func (c *Copier) Enqueue(path string) bool {
+	return c.EnqueuePriority(path, 0)
+}
+
+// EnqueuePriority queues a path with a scheduling priority. Higher values are
+// copied first; equal priorities retain FIFO order. This only affects local
+// extraction order, never whether a file is retained.
+func (c *Copier) EnqueuePriority(path string, priority int) bool {
 	if !underPrefix(path, c.cfg.PathPrefix) {
 		return false
 	}
@@ -69,12 +81,31 @@ func (c *Copier) Enqueue(path string) bool {
 		return false
 	}
 	c.queued[path] = true
-	c.pending = append(c.pending, path)
+	c.pending = append(c.pending, pendingPath{path: path, priority: priority})
 	select {
 	case c.wake <- struct{}{}:
 	default:
 	}
 	return true
+}
+
+// Promote raises a pending path's priority. It returns false when the path is
+// not pending (already copied/in flight, never enqueued, or filtered out).
+func (c *Copier) Promote(path string, priority int) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.queued[path] {
+		return false
+	}
+	for i := range c.pending {
+		if c.pending[i].path == path {
+			if priority > c.pending[i].priority {
+				c.pending[i].priority = priority
+			}
+			return true
+		}
+	}
+	return false
 }
 
 // Pending returns the number of paths queued or currently being copied.
@@ -117,8 +148,14 @@ func (c *Copier) pop() (string, bool) {
 	if len(c.pending) == 0 {
 		return "", false
 	}
-	path := c.pending[0]
-	c.pending = c.pending[1:]
+	best := 0
+	for i := 1; i < len(c.pending); i++ {
+		if c.pending[i].priority > c.pending[best].priority {
+			best = i
+		}
+	}
+	path := c.pending[best].path
+	c.pending = append(c.pending[:best], c.pending[best+1:]...)
 	delete(c.queued, path)
 	c.inFlight++
 	return path, true
