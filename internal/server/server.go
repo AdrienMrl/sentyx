@@ -18,10 +18,6 @@ import (
 type Config struct {
 	DataDir    string // holds server.db and files/ (created if missing)
 	ListenAddr string // e.g. "127.0.0.1:8090"
-	// QuietPeriod: an event is complete once event.json has been received
-	// and no file has arrived for this long (the car keeps writing the
-	// post-trigger minute ~1 minute after the trigger).
-	QuietPeriod time.Duration
 	// Analyzer, if set, runs on the selected clip once an event completes.
 	// Mutually exclusive with AnalyzeCmd. Nil (and no AnalyzeCmd) = record
 	// events without analysis.
@@ -35,17 +31,22 @@ type Config struct {
 	// endpoint except /healthz. Empty = no auth (local dev / trusted
 	// network only — never expose an unauthenticated server).
 	Token string
+	// Notifier, if set, is sent each completed event's verdict so the user
+	// gets a live alert. Nil = no notifications. Delivery failures are logged
+	// and never fail the analysis flow (the verdict is already persisted).
+	Notifier Notifier
 }
 
 type Server struct {
 	cfg      Config
 	store    *store
 	analyzer Analyzer // nil = record only
+	notifier Notifier // nil = no notifications
 }
 
 func New(cfg Config) (*Server, error) {
-	if cfg.DataDir == "" || cfg.ListenAddr == "" || cfg.QuietPeriod <= 0 {
-		return nil, fmt.Errorf("server: DataDir, ListenAddr and QuietPeriod are all required")
+	if cfg.DataDir == "" || cfg.ListenAddr == "" {
+		return nil, fmt.Errorf("server: DataDir and ListenAddr are both required")
 	}
 	if cfg.Analyzer != nil && len(cfg.AnalyzeCmd) > 0 {
 		return nil, fmt.Errorf("server: Analyzer and AnalyzeCmd are mutually exclusive")
@@ -61,7 +62,7 @@ func New(cfg Config) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Server{cfg: cfg, store: st, analyzer: analyzer}, nil
+	return &Server{cfg: cfg, store: st, analyzer: analyzer, notifier: cfg.Notifier}, nil
 }
 
 // Run serves the ingest API and drives event completion until ctx is
@@ -74,7 +75,6 @@ func (c *Server) Run(ctx context.Context, logf func(format string, args ...any))
 	srv := &http.Server{Handler: c.Handler()}
 	errc := make(chan error, 1)
 	go func() { errc <- srv.Serve(ln) }()
-	go c.completionLoop(ctx, logf)
 	go c.analyzeLoop(ctx, logf)
 
 	logf("server listening on %s (data in %s)", ln.Addr(), c.cfg.DataDir)
@@ -86,31 +86,6 @@ func (c *Server) Run(ctx context.Context, logf func(format string, args ...any))
 		return ctx.Err()
 	case err := <-errc:
 		return err
-	}
-}
-
-// completionLoop marks events complete after QuietPeriod of silence and
-// queues them for analysis.
-func (c *Server) completionLoop(ctx context.Context, logf func(string, ...any)) {
-	tick := time.NewTicker(c.cfg.QuietPeriod / 4)
-	defer tick.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-tick.C:
-		}
-		ids, err := c.store.completeQuietEvents(c.cfg.QuietPeriod)
-		if err != nil {
-			logf("completion check: %v", err)
-			continue
-		}
-		for _, id := range ids {
-			logf("event %s complete", id)
-			if err := c.store.enqueueAnalysis(id, 0); err != nil {
-				logf("queueing analysis for %s: %v", id, err)
-			}
-		}
 	}
 }
 

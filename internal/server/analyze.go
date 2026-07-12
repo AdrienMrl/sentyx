@@ -55,7 +55,9 @@ func (c *Server) analyzeEvent(ctx context.Context, eventID string, logf func(str
 	}
 
 	var parsed struct {
-		ThreatLevel string `json:"threat_level"`
+		ThreatLevel       string `json:"threat_level"`
+		WhatHappened      string `json:"what_happened"`
+		RecommendedAction string `json:"recommended_action"`
 	}
 	if err := json.Unmarshal(res.VerdictJSON, &parsed); err != nil {
 		fail(clip.Name, fmt.Errorf("verdict is not a JSON object: %w\nverdict: %s", err, truncate(string(res.VerdictJSON), 2000)))
@@ -66,6 +68,43 @@ func (c *Server) analyzeEvent(ctx context.Context, eventID string, logf func(str
 		return
 	}
 	logf("event %s analyzed: threat_level=%s (clip %s)", eventID, parsed.ThreatLevel, clip.Name)
+
+	// The verdict is now durably stored, so a notification failure below is
+	// logged and swallowed — it must never fail the analysis flow.
+	c.notify(ctx, Notification{
+		EventID:           eventID,
+		ThreatLevel:       parsed.ThreatLevel,
+		WhatHappened:      parsed.WhatHappened,
+		RecommendedAction: parsed.RecommendedAction,
+		City:              ev.City,
+		Camera:            prettyCamera(ev.Camera),
+		EventTS:           ev.EventTS,
+	}, logf)
+}
+
+// notify sends a live alert about a completed event's verdict, if a Notifier
+// is configured. Delivery is bounded so a slow or unreachable notifier can't
+// stall the analysis worker, and any error is only logged: the verdict is
+// already persisted.
+func (c *Server) notify(ctx context.Context, n Notification, logf func(string, ...any)) {
+	if c.notifier == nil {
+		return
+	}
+	nctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	if err := c.notifier.Notify(nctx, n); err != nil {
+		logf("notifying about %s: %v", n.EventID, err)
+	}
+}
+
+// prettyCamera turns a Tesla camera code into a human-readable name for
+// alerts (e.g. "5" -> "left repeater"). An empty code yields "" so the
+// notification omits the camera rather than guessing.
+func prettyCamera(code string) string {
+	if code == "" {
+		return ""
+	}
+	return strings.ReplaceAll(cameraName(code), "_", " ")
 }
 
 // cameraName maps Tesla's event.json camera codes to clip-name cameras.
