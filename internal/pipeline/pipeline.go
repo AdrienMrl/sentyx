@@ -17,6 +17,13 @@ import (
 	"github.com/AdrienMrl/teslcam/internal/watch"
 )
 
+const (
+	copyPriorityBulk     = 0
+	copyPriorityArtifact = 100
+	copyPriorityMetadata = 200
+	copyPrioritySelected = 300
+)
+
 // Config for a pipeline run. ImagePath, Interval, StablePolls and Logf are
 // required; CopyTo/CopyPrefix (together) enable extraction, PostTo (requires
 // CopyTo) enables upload, matching the flags of teslcam-watch.
@@ -211,7 +218,10 @@ func Run(ctx context.Context, cfg Config) error {
 					return
 				}
 				if selector != nil {
-					selector.onFile(r.Dest, r.Path)
+					selected := selector.onFile(r.Dest, r.Path)
+					if selected != "" && copier.Promote(selected, copyPrioritySelected) {
+						cfg.Logf("copy priority: selected clip %s promoted ahead of background retention", selected)
+					}
 				} else {
 					enqueueFile(r.Dest, r.Path)
 				}
@@ -231,7 +241,18 @@ func Run(ctx context.Context, cfg Config) error {
 				cfg.Logf(">>> NEW SENTRY EVENT: %s", ev.Path)
 			}
 			if copier != nil && ev.Type == watch.FileStable {
-				copier.Enqueue(ev.Path)
+				priority := initialCopyPriority(ev.Path)
+				var selected string
+				if selector != nil {
+					selected = selector.onStable(ev.Path)
+					if selected == ev.Path {
+						priority = copyPrioritySelected
+					}
+				}
+				copier.EnqueuePriority(ev.Path, priority)
+				if selected != "" && selected != ev.Path && copier.Promote(selected, copyPrioritySelected) {
+					cfg.Logf("copy priority: selected clip %s promoted after stabilizing %s", selected, ev.Path)
+				}
 			}
 		},
 		func(err error) {
@@ -242,6 +263,20 @@ func Run(ctx context.Context, cfg Config) error {
 		return nil
 	}
 	return err
+}
+
+// initialCopyPriority gets selection metadata out of the live image before
+// bulk video retention. Small non-video artifacts follow; MP4s remain FIFO
+// until the selector promotes the trigger camera's relevant segment.
+func initialCopyPriority(imagePath string) int {
+	name := strings.ToLower(filepath.Base(imagePath))
+	if name == "event.json" {
+		return copyPriorityMetadata
+	}
+	if filepath.Ext(name) != ".mp4" {
+		return copyPriorityArtifact
+	}
+	return copyPriorityBulk
 }
 
 // IsSentryEventDir matches /TeslaCam/SentryClips/<timestamp> exactly (a new

@@ -62,3 +62,16 @@ func TestIsSentryEventDir(t *testing.T) {
 		}
 	}
 }
+
+func TestInitialCopyPriority(t *testing.T) {
+	base := "/TeslaCam/SentryClips/event/"
+	if got := initialCopyPriority(base + "event.json"); got != copyPriorityMetadata {
+		t.Errorf("event.json priority = %d", got)
+	}
+	if got := initialCopyPriority(base + "thumb.png"); got != copyPriorityArtifact {
+		t.Errorf("thumb.png priority = %d", got)
+	}
+	if got := initialCopyPriority(base + "2026-07-12_12-29-00-front.mp4"); got != copyPriorityBulk {
+		t.Errorf("clip priority = %d", got)
+	}
+}

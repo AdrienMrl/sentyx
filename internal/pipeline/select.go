@@ -40,10 +40,13 @@ type clipSelector struct {
 
 type heldEvent struct {
 	meta     *clipselect.Metadata // nil until event.json is seen
-	held     []mp4Ref             // .mp4 segments seen so far (image paths + local copies)
-	enqueued map[string]bool      // image paths already handed to enqueue (dedupe)
-	timedOut bool                 // fallback fired: pass everything through directly
-	timer    *time.Timer          // fallback: fires timeout after the last held clip
+	known    []string             // stable .mp4 image paths, copied or still pending
+	knownSet map[string]bool
+	held     []mp4Ref // .mp4 segments seen so far (image paths + local copies)
+	heldSet  map[string]bool
+	enqueued map[string]bool // image paths already handed to enqueue (dedupe)
+	timedOut bool            // fallback fired: pass everything through directly
+	timer    *time.Timer     // fallback: fires timeout after the last held clip
 }
 
 type mp4Ref struct {
@@ -60,24 +63,38 @@ func newClipSelector(timeout time.Duration, logf func(string, ...any), enqueue f
 	}
 }
 
+// onStable records an MP4 as soon as the watcher declares it stable, before
+// the copy-out worker reaches it. Once metadata is known this returns the best
+// clip's image path so the caller can promote that pending copy.
+func (s *clipSelector) onStable(imagePath string) string {
+	_, name := eventKeyAndName(imagePath)
+	if !strings.HasSuffix(strings.ToLower(name), ".mp4") {
+		return ""
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ev := s.eventLocked(imagePath)
+	s.recordKnownLocked(ev, imagePath)
+	return s.runSelectionLocked(ev)
+}
+
 // onFile is called once per stable (or re-reported) extracted file.
-func (s *clipSelector) onFile(localPath, imagePath string) {
+// It returns the selected image path, when known, so a still-pending copy can
+// be promoted ahead of background retention work.
+func (s *clipSelector) onFile(localPath, imagePath string) string {
 	sourceID, name := eventKeyAndName(imagePath)
 	lower := strings.ToLower(name)
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	ev := s.events[sourceID]
-	if ev == nil {
-		ev = &heldEvent{enqueued: map[string]bool{}}
-		s.events[sourceID] = ev
-	}
+	ev := s.eventLocked(imagePath)
 
 	// Once the fallback has fired, every file for the event goes straight up.
 	if ev.timedOut {
 		s.enqueueLocked(ev, localPath, imagePath)
-		return
+		return ""
 	}
 
 	switch {
@@ -95,44 +112,68 @@ func (s *clipSelector) onFile(localPath, imagePath string) {
 		if ev.timer != nil {
 			ev.timer.Stop() // metadata is here; the no-metadata fallback is moot
 		}
-		s.runSelectionLocked(ev)
+		return s.runSelectionLocked(ev)
 
 	case strings.HasSuffix(lower, ".mp4"):
 		// Hold the clip; (re)arm the fallback from this last-stable moment. If
 		// metadata is already known, a newly held clip may now be the best match,
 		// so re-run selection over the grown set.
-		ev.held = append(ev.held, mp4Ref{imagePath: imagePath, localPath: localPath})
+		s.recordKnownLocked(ev, imagePath)
+		if !ev.heldSet[imagePath] {
+			ev.heldSet[imagePath] = true
+			ev.held = append(ev.held, mp4Ref{imagePath: imagePath, localPath: localPath})
+		}
 		s.armTimerLocked(sourceID, ev)
-		s.runSelectionLocked(ev)
+		return s.runSelectionLocked(ev)
 
 	default:
 		// thumb.png and any other small non-video artifact: upload immediately.
 		s.enqueueLocked(ev, localPath, imagePath)
+		return ""
 	}
+}
+
+func (s *clipSelector) eventLocked(imagePath string) *heldEvent {
+	sourceID, _ := eventKeyAndName(imagePath)
+	ev := s.events[sourceID]
+	if ev == nil {
+		ev = &heldEvent{
+			knownSet: map[string]bool{},
+			heldSet:  map[string]bool{},
+			enqueued: map[string]bool{},
+		}
+		s.events[sourceID] = ev
+	}
+	return ev
+}
+
+func (s *clipSelector) recordKnownLocked(ev *heldEvent, imagePath string) {
+	if ev.knownSet[imagePath] {
+		return
+	}
+	ev.knownSet[imagePath] = true
+	ev.known = append(ev.known, imagePath)
 }
 
 // runSelectionLocked, once metadata is known, selects the trigger clip over the
 // currently-held set and enqueues it if not already sent. Re-running on every
 // new clip means a late segment that becomes the better match is enqueued too;
 // enqueued is never un-set, so at worst a rare boundary case uploads two clips.
-func (s *clipSelector) runSelectionLocked(ev *heldEvent) {
+func (s *clipSelector) runSelectionLocked(ev *heldEvent) string {
 	if ev.meta == nil {
-		return
+		return ""
 	}
-	imagePaths := make([]string, len(ev.held))
-	for i, m := range ev.held {
-		imagePaths[i] = m.imagePath
-	}
-	sel, err := clipselect.Select(imagePaths, *ev.meta)
+	sel, err := clipselect.Select(ev.known, *ev.meta)
 	if err != nil {
-		return // trigger camera has no clip yet; wait for more (or the timeout)
+		return "" // trigger camera has no clip yet; wait for more (or the timeout)
 	}
 	for _, m := range ev.held {
 		if m.imagePath == sel {
 			s.enqueueLocked(ev, m.localPath, m.imagePath)
-			return
+			break
 		}
 	}
+	return sel
 }
 
 func (s *clipSelector) enqueueLocked(ev *heldEvent, localPath, imagePath string) {

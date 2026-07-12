@@ -91,6 +91,38 @@ func TestSelectorHoldsUntilMetadataThenSelectsOneClip(t *testing.T) {
 	}
 }
 
+// Stable paths are known before their bulk copies finish. Metadata can
+// therefore choose a still-pending clip for the copy worker to promote.
+func TestSelectorChoosesStableUncopiedClip(t *testing.T) {
+	r := &recorder{}
+	sel := newClipSelector(time.Hour, discard, r.enqueue)
+	want := evDir + "/2026-07-12_12-29-00-left_repeater.mp4"
+	for _, path := range []string{
+		evDir + "/2026-07-12_12-28-00-left_repeater.mp4",
+		want,
+		evDir + "/2026-07-12_12-29-00-front.mp4",
+	} {
+		if got := sel.onStable(path); got != "" {
+			t.Fatalf("selected before metadata: %s", got)
+		}
+	}
+
+	selected := sel.onFile(writeEventJSON(t, "5", "2026-07-12T12:29:46"), evDir+"/event.json")
+	if selected != want {
+		t.Fatalf("selected pending clip = %q, want %q", selected, want)
+	}
+	if contains(r.snapshot(), want) {
+		t.Fatal("pending clip uploaded before it had a local copy")
+	}
+
+	if selected = sel.onFile("/local/selected.mp4", want); selected != want {
+		t.Fatalf("selected copied clip = %q, want %q", selected, want)
+	}
+	if !contains(r.snapshot(), want) {
+		t.Fatalf("selected clip was not uploaded after copy: %v", r.snapshot())
+	}
+}
+
 // A clip that stabilizes AFTER event.json and is a better match (later, still
 // at-or-before the trigger) is enqueued too; the earlier pick is not un-sent.
 func TestSelectorLateBetterClipEnqueued(t *testing.T) {
