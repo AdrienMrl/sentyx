@@ -156,7 +156,7 @@ func takeSnapshot(imagePath string) (snapshot, error) {
 		return nil, err
 	}
 	defer f.Close()
-	v, err := exfat.NewVolume(f)
+	v, err := exfat.LocateVolume(f)
 	if err != nil {
 		return nil, err
 	}

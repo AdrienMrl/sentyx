@@ -89,7 +89,7 @@ func (s *server) openVolume() (*exfat.Volume, *os.File, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	v, err := exfat.NewVolume(f)
+	v, err := exfat.LocateVolume(f)
 	if err != nil {
 		f.Close()
 		return nil, nil, err

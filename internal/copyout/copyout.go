@@ -133,7 +133,7 @@ func (c *Copier) copyOne(path string) (Result, error) {
 		return Result{}, err
 	}
 	defer f.Close()
-	v, err := exfat.NewVolume(f)
+	v, err := exfat.LocateVolume(f)
 	if err != nil {
 		return Result{}, err
 	}
