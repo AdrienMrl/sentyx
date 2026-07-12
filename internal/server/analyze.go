@@ -48,7 +48,7 @@ func (c *Server) analyzeEvent(ctx context.Context, eventID string, logf func(str
 	logf("analyzing %s clip %s", eventID, clip.Name)
 	runCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
-	res, err := c.analyzer.Analyze(runCtx, clipPath)
+	res, err := c.analyzer.Analyze(runCtx, AnalysisClip{Path: clipPath, Name: clip.Name})
 	if err != nil {
 		fail(clip.Name, err)
 		return

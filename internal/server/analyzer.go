@@ -22,10 +22,18 @@ type AnalysisResult struct {
 	Usage       *TokenUsage // nil if the analyzer does not report usage
 }
 
+// AnalysisClip separates the blob's physical storage path from its logical
+// source name. Content-addressed blobs intentionally have extensionless paths,
+// while analyzers may need the source name to determine the media type.
+type AnalysisClip struct {
+	Path string
+	Name string
+}
+
 // Analyzer produces a verdict for one clip. Implementations must honor ctx
 // cancellation; the caller bounds each run with a timeout.
 type Analyzer interface {
-	Analyze(ctx context.Context, clipPath string) (*AnalysisResult, error)
+	Analyze(ctx context.Context, clip AnalysisClip) (*AnalysisResult, error)
 }
 
 // cmdAnalyzer runs an external command with the clip path appended as the
@@ -35,8 +43,8 @@ type cmdAnalyzer struct {
 	argv []string
 }
 
-func (a cmdAnalyzer) Analyze(ctx context.Context, clipPath string) (*AnalysisResult, error) {
-	args := append(append([]string{}, a.argv[1:]...), clipPath)
+func (a cmdAnalyzer) Analyze(ctx context.Context, clip AnalysisClip) (*AnalysisResult, error) {
+	args := append(append([]string{}, a.argv[1:]...), clip.Path)
 	cmd := exec.CommandContext(ctx, a.argv[0], args...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr

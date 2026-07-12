@@ -66,8 +66,8 @@ var verdictSchema = map[string]any{
 // Client calls the Gemini API directly over REST. It implements
 // server.Analyzer.
 type Client struct {
-	apiKey  string
-	model   string
+	apiKey string
+	model  string
 	// mediaResolution is the API enum value ("MEDIA_RESOLUTION_LOW", ...);
 	// empty omits the field so the API default applies.
 	mediaResolution string
@@ -112,14 +112,14 @@ func New(apiKey, model, mediaResolution string) (*Client, error) {
 // Analyze uploads the clip, runs the model on it, and returns the verdict
 // plus token usage. The uploaded file is deleted afterwards (best-effort);
 // ctx bounds the whole run.
-func (c *Client) Analyze(ctx context.Context, clipPath string) (*server.AnalysisResult, error) {
-	mimeType, err := clipMIMEType(clipPath)
+func (c *Client) Analyze(ctx context.Context, clip server.AnalysisClip) (*server.AnalysisResult, error) {
+	mimeType, err := clipMIMEType(clip.Name)
 	if err != nil {
 		return nil, err
 	}
-	file, err := c.uploadFile(ctx, clipPath, mimeType)
+	file, err := c.uploadFile(ctx, clip.Path, clip.Name, mimeType)
 	if err != nil {
-		return nil, fmt.Errorf("gemini: uploading %s: %w", filepath.Base(clipPath), err)
+		return nil, fmt.Errorf("gemini: uploading %s: %w", filepath.Base(clip.Name), err)
 	}
 	defer c.deleteFile(file.Name)
 
@@ -156,7 +156,7 @@ type geminiFile struct {
 // uploadFile pushes the clip through the resumable-upload flow (start
 // request for an upload URL, then one upload+finalize request). Each attempt
 // re-reads the file from disk, so retries never send a torn body.
-func (c *Client) uploadFile(ctx context.Context, path, mimeType string) (*geminiFile, error) {
+func (c *Client) uploadFile(ctx context.Context, path, displayName, mimeType string) (*geminiFile, error) {
 	info, err := os.Stat(path)
 	if err != nil {
 		return nil, err
@@ -165,7 +165,7 @@ func (c *Client) uploadFile(ctx context.Context, path, mimeType string) (*gemini
 	var file *geminiFile
 	err = c.withRetry(ctx, func() error {
 		startBody, err := json.Marshal(map[string]any{
-			"file": map[string]any{"display_name": filepath.Base(path)},
+			"file": map[string]any{"display_name": filepath.Base(displayName)},
 		})
 		if err != nil {
 			return err

@@ -12,6 +12,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/AdrienMrl/teslcam/internal/server"
 )
 
 // fakeAPI implements the subset of the Gemini REST API the client uses.
@@ -23,6 +25,7 @@ type fakeAPI struct {
 	generateFails  atomic.Int32 // how many generateContent calls 503 first
 	deleted        atomic.Bool
 	mediaRes       atomic.Value // generationConfig.mediaResolution seen (string)
+	displayName    atomic.Value // logical filename sent to the Files API
 }
 
 func (f *fakeAPI) handler() http.Handler {
@@ -36,6 +39,16 @@ func (f *fakeAPI) handler() http.Handler {
 			http.Error(w, "expected resumable upload", http.StatusBadRequest)
 			return
 		}
+		var start struct {
+			File struct {
+				DisplayName string `json:"display_name"`
+			} `json:"file"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&start); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		f.displayName.Store(start.File.DisplayName)
 		w.Header().Set("X-Goog-Upload-URL", f.baseURL+"/upload-session")
 	})
 	mux.HandleFunc("POST /upload-session", func(w http.ResponseWriter, r *http.Request) {
@@ -125,7 +138,7 @@ func TestAnalyze(t *testing.T) {
 	api.pollsRemaining.Store(2) // exercise the PROCESSING poll loop
 	c, clip := newTestClient(t, api)
 
-	res, err := c.Analyze(context.Background(), clip)
+	res, err := c.Analyze(context.Background(), server.AnalysisClip{Path: clip, Name: filepath.Base(clip)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,12 +169,32 @@ func TestAnalyze(t *testing.T) {
 	}
 }
 
+func TestAnalyzeExtensionlessBlobUsesLogicalName(t *testing.T) {
+	api := &fakeAPI{t: t}
+	c, clip := newTestClient(t, api)
+	extensionless := filepath.Join(filepath.Dir(clip), "5a97e9bb8cd61daa")
+	if err := os.Rename(clip, extensionless); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := c.Analyze(context.Background(), server.AnalysisClip{
+		Path: extensionless,
+		Name: "2026-07-04_10-01-31-front.mp4",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := api.displayName.Load().(string); got != "2026-07-04_10-01-31-front.mp4" {
+		t.Fatalf("Gemini display name = %q", got)
+	}
+}
+
 func TestAnalyzeMediaResolutionLow(t *testing.T) {
 	api := &fakeAPI{t: t}
 	c, clip := newTestClient(t, api)
 	c.mediaResolution = "MEDIA_RESOLUTION_LOW"
 
-	if _, err := c.Analyze(context.Background(), clip); err != nil {
+	if _, err := c.Analyze(context.Background(), server.AnalysisClip{Path: clip, Name: filepath.Base(clip)}); err != nil {
 		t.Fatal(err)
 	}
 	if got, _ := api.mediaRes.Load().(string); got != "MEDIA_RESOLUTION_LOW" {
@@ -190,7 +223,7 @@ func TestAnalyzeRetriesTransientErrors(t *testing.T) {
 	c, clip := newTestClient(t, api)
 	c.retryBackoff = time.Millisecond
 
-	res, err := c.Analyze(context.Background(), clip)
+	res, err := c.Analyze(context.Background(), server.AnalysisClip{Path: clip, Name: filepath.Base(clip)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -206,7 +239,7 @@ func TestAnalyzeBadKeyFailsFast(t *testing.T) {
 	c.retryBackoff = time.Millisecond
 
 	start := time.Now()
-	if _, err := c.Analyze(context.Background(), clip); err == nil {
+	if _, err := c.Analyze(context.Background(), server.AnalysisClip{Path: clip, Name: filepath.Base(clip)}); err == nil {
 		t.Fatal("expected error with bad API key")
 	}
 	if time.Since(start) > time.Second {
