@@ -1,0 +1,533 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>teslcam REST API reference</title>
+<style>
+  :root{
+    --bg:#f6f7f9; --panel:#ffffff; --panel-2:#fbfcfd; --ink:#1c2530; --muted:#5b6875;
+    --border:#e2e6ea; --border-strong:#cdd4db; --code-bg:#f2f4f7; --code-ink:#1c2530;
+    --accent:#2b6cb0; --shadow:0 1px 2px rgba(16,24,40,.06),0 1px 3px rgba(16,24,40,.08);
+    --get:#2f855a; --get-bg:#e6f4ec; --put:#b7791f; --put-bg:#fbf1dc;
+    --post:#2b6cb0; --post-bg:#e4eefb; --req:#c53030; --req-bg:#fbe6e6;
+    --opt:#5b6875; --opt-bg:#eef1f4; --note-bg:#fff8e6; --note-border:#e6c96a; --note-ink:#6b5310;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#0f1418; --panel:#161c22; --panel-2:#1b232b; --ink:#e6ebf0; --muted:#9aa7b4;
+      --border:#28323b; --border-strong:#38454f; --code-bg:#0c1116; --code-ink:#d7dee6;
+      --accent:#6bb0ff; --shadow:0 1px 2px rgba(0,0,0,.4);
+      --get:#68d391; --get-bg:#12291d; --put:#e5b769; --put-bg:#2b2412; --post:#7fb4ff;
+      --post-bg:#122033; --req:#f98a8a; --req-bg:#2b1414; --opt:#9aa7b4; --opt-bg:#1e262e;
+      --note-bg:#241f0e; --note-border:#6b5310; --note-ink:#e6c96a;
+    }
+  }
+  :root[data-theme=light]{
+    --bg:#f6f7f9; --panel:#ffffff; --panel-2:#fbfcfd; --ink:#1c2530; --muted:#5b6875;
+    --border:#e2e6ea; --border-strong:#cdd4db; --code-bg:#f2f4f7; --code-ink:#1c2530;
+    --accent:#2b6cb0; --get:#2f855a; --get-bg:#e6f4ec; --put:#b7791f; --put-bg:#fbf1dc;
+    --post:#2b6cb0; --post-bg:#e4eefb; --req:#c53030; --req-bg:#fbe6e6; --opt:#5b6875;
+    --opt-bg:#eef1f4; --note-bg:#fff8e6; --note-border:#e6c96a; --note-ink:#6b5310;
+  }
+  :root[data-theme=dark]{
+    --bg:#0f1418; --panel:#161c22; --panel-2:#1b232b; --ink:#e6ebf0; --muted:#9aa7b4;
+    --border:#28323b; --border-strong:#38454f; --code-bg:#0c1116; --code-ink:#d7dee6;
+    --accent:#6bb0ff; --get:#68d391; --get-bg:#12291d; --put:#e5b769; --put-bg:#2b2412;
+    --post:#7fb4ff; --post-bg:#122033; --req:#f98a8a; --req-bg:#2b1414; --opt:#9aa7b4;
+    --opt-bg:#1e262e; --note-bg:#241f0e; --note-border:#6b5310; --note-ink:#e6c96a;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;}
+  code,pre{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;}
+  a{color:var(--accent);text-decoration:none}
+  a:hover{text-decoration:underline}
+  .wrap{max-width:960px;margin:0 auto;padding:32px 20px 80px}
+  header.top{border-bottom:1px solid var(--border);padding-bottom:20px;margin-bottom:8px}
+  h1{font-size:26px;margin:0 0 4px;letter-spacing:-.01em}
+  .sub{color:var(--muted);font-size:14px;margin:0}
+  h2.tag{font-size:13px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);
+    margin:34px 0 12px;padding-bottom:6px;border-bottom:1px solid var(--border)}
+  .card{background:var(--panel);border:1px solid var(--border);border-radius:10px;
+    box-shadow:var(--shadow);margin:10px 0;overflow:hidden}
+  .row{display:flex;align-items:center;gap:12px;padding:12px 14px;cursor:pointer;user-select:none}
+  .row:hover{background:var(--panel-2)}
+  .chip{font-weight:700;font-size:12px;letter-spacing:.03em;padding:4px 9px;border-radius:6px;
+    min-width:52px;text-align:center;flex:none}
+  .m-get{color:var(--get);background:var(--get-bg)}
+  .m-put{color:var(--put);background:var(--put-bg)}
+  .m-post{color:var(--post);background:var(--post-bg)}
+  .path{font-family:ui-monospace,Menlo,monospace;font-size:14px;font-weight:600;word-break:break-all}
+  .path .p{color:var(--accent)}
+  .summary{color:var(--muted);font-size:13px;margin-left:auto;text-align:right;flex:1 1 auto}
+  .caret{color:var(--muted);transition:transform .15s;flex:none}
+  .card.open .caret{transform:rotate(90deg)}
+  .body{display:none;border-top:1px solid var(--border);padding:4px 16px 18px}
+  .card.open .body{display:block}
+  .lock{font-size:11px;color:var(--muted);border:1px solid var(--border-strong);
+    border-radius:5px;padding:2px 6px;flex:none}
+  h4{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);
+    margin:18px 0 8px}
+  table{width:100%;border-collapse:collapse;font-size:13.5px;margin:2px 0}
+  th,td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--border);vertical-align:top}
+  th{color:var(--muted);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.04em}
+  td.f{font-family:ui-monospace,Menlo,monospace;white-space:nowrap}
+  td.t{font-family:ui-monospace,Menlo,monospace;color:var(--muted);white-space:nowrap}
+  .req{color:var(--req);background:var(--req-bg);border-radius:4px;padding:1px 6px;font-size:11px;font-weight:600}
+  .opt{color:var(--opt);background:var(--opt-bg);border-radius:4px;padding:1px 6px;font-size:11px}
+  pre{background:var(--code-bg);color:var(--code-ink);border:1px solid var(--border);
+    border-radius:8px;padding:12px 14px;overflow-x:auto;font-size:12.5px;line-height:1.5;margin:2px 0}
+  .status{display:flex;gap:8px;align-items:baseline;padding:5px 0;border-bottom:1px solid var(--border);font-size:13.5px}
+  .status:last-child{border-bottom:none}
+  .sc{font-family:ui-monospace,Menlo,monospace;font-weight:700;min-width:44px;flex:none}
+  .sc.ok{color:var(--get)} .sc.err{color:var(--req)}
+  .note{background:var(--note-bg);border:1px solid var(--note-border);color:var(--note-ink);
+    border-radius:8px;padding:10px 13px;font-size:13px;margin:12px 0}
+  .note b{color:var(--note-ink)}
+  .intro{background:var(--panel);border:1px solid var(--border);border-radius:10px;
+    box-shadow:var(--shadow);padding:18px 20px;margin:18px 0 8px}
+  .intro p{margin:8px 0}
+  .kv{font-family:ui-monospace,Menlo,monospace;background:var(--code-bg);border:1px solid var(--border);
+    border-radius:5px;padding:1px 6px;font-size:13px}
+  ol.life{margin:10px 0 4px;padding-left:20px}
+  ol.life li{margin:3px 0}
+  .flow{font-family:ui-monospace,Menlo,monospace;font-size:12.5px;color:var(--muted);margin-top:6px}
+  .foot{color:var(--muted);font-size:12.5px;margin-top:40px;border-top:1px solid var(--border);padding-top:14px}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header class="top">
+  <h1>teslcam REST API reference</h1>
+  <p class="sub">Event-ingestion + read API served by <code>internal/server</code>. Reference generated from source; where it diverges from the <a href="ingestion-api.html">narrative design doc</a>, the code wins (differences flagged inline).</p>
+</header>
+
+<div class="intro">
+  <h4>Base URL &amp; auth</h4>
+  <p>Base URL is deployment-specific, e.g. <span class="kv">https://your-host:8090</span> (dev default <span class="kv">127.0.0.1:8090</span>). No path prefix beyond the routes below.</p>
+  <p>When the server is started with a token, <b>every endpoint except <span class="kv">GET /healthz</span> requires</b> <span class="kv">Authorization: Bearer &lt;token&gt;</span>. A missing or wrong token returns <b>401</b> with a <span class="kv">WWW-Authenticate: Bearer</span> header. If no token is configured (local/trusted-network dev), auth is disabled entirely.</p>
+  <p>JSON request bodies are capped at <b>4&nbsp;MiB</b> and parsed with <b>unknown fields rejected</b> — an unexpected key yields <span class="kv">400 invalid JSON</span>. Blob bodies are raw bytes and are not size-capped by the JSON limit.</p>
+
+  <h4>Event lifecycle (v1)</h4>
+  <ol class="life">
+    <li><b>Upsert</b> the logical event — <span class="kv">PUT /v1/events/{event}</span> (idempotent by key).</li>
+    <li><b>Upload blobs</b> content-addressed by SHA-256 — <span class="kv">PUT /v1/blobs/{sha256}</span> (idempotent, dedup).</li>
+    <li><b>Publish a manifest generation</b> listing typed artifacts — <span class="kv">PUT /v1/events/{event}/manifests/{generation}</span>.</li>
+    <li><b>Finalize</b> the generation once all blobs resolve — <span class="kv">POST …/manifests/{generation}/finalize</span>.</li>
+    <li>Finalize atomically enqueues a <b>durable analysis job</b>; state walks <span class="kv">receiving → ready → analyzing → done</span> (or <span class="kv">failed</span>, retried up to 3×).</li>
+  </ol>
+  <p class="sub">Design rationale (event identity, generations, settle timing, audit trail) lives in the <a href="ingestion-api.html">Ingestion API design doc</a>. This page is the field-level reference.</p>
+</div>
+
+<!-- ============ INGESTION ============ -->
+<h2 class="tag">Ingestion (v1)</h2>
+
+<!-- PUT /v1/events/{event} -->
+<div class="card">
+  <div class="row" onclick="t(this)">
+    <span class="chip m-put">PUT</span>
+    <span class="path">/v1/events/<span class="p">{event}</span></span>
+    <span class="lock">bearer</span>
+    <span class="summary">Idempotently create or enrich a logical event</span>
+    <span class="caret">▶</span>
+  </div>
+  <div class="body">
+    <p>Creates or updates the event keyed by the <code>{event}</code> path segment. The key may be any string without <code>/</code>, max 512 chars (the agent uses <code>&lt;device-id&gt;:&lt;source-directory-name&gt;</code>). Re-sending enriches metadata; <code>trigger</code>/<code>location</code> fields are only overwritten when non-empty.</p>
+    <h4>Request body — <code>EventUpsert</code> (application/json)</h4>
+    <table>
+      <tr><th>Field</th><th>Type</th><th>Req</th><th>Description</th></tr>
+      <tr><td class="f">device_id</td><td class="t">string</td><td><span class="req">required</span></td><td>Stable device identifier; must be non-empty.</td></tr>
+      <tr><td class="f">source</td><td class="t">object</td><td><span class="req">required</span></td><td>Source descriptor (see below).</td></tr>
+      <tr><td class="f">source.type</td><td class="t">string</td><td><span class="req">required</span></td><td>Must equal <code>"tesla_sentry"</code>.</td></tr>
+      <tr><td class="f">source.directory_name</td><td class="t">string</td><td><span class="req">required</span></td><td>TeslaCam source dir name, e.g. <code>2026-07-11_14-32-08</code>.</td></tr>
+      <tr><td class="f">detected_at</td><td class="t">RFC3339 time</td><td><span class="opt">optional</span></td><td>When the agent first saw the event. Defaults to server time (UTC) if zero/omitted.</td></tr>
+      <tr><td class="f">trigger</td><td class="t">object</td><td><span class="opt">optional</span></td><td>Enrichment from <code>event.json</code>; never a completion marker.</td></tr>
+      <tr><td class="f">trigger.occurred_at_local</td><td class="t">string</td><td><span class="opt">optional</span></td><td>Local trigger timestamp (stored as event_ts).</td></tr>
+      <tr><td class="f">trigger.camera_code</td><td class="t">string</td><td><span class="opt">optional</span></td><td>Tesla camera code.</td></tr>
+      <tr><td class="f">trigger.reason</td><td class="t">string</td><td><span class="opt">optional</span></td><td>Sentry trigger reason.</td></tr>
+      <tr><td class="f">location</td><td class="t">object</td><td><span class="opt">optional</span></td><td>Estimated location.</td></tr>
+      <tr><td class="f">location.city</td><td class="t">string</td><td><span class="opt">optional</span></td><td>City name (stored on the event).</td></tr>
+      <tr><td class="f">location.estimated_latitude</td><td class="t">number</td><td><span class="opt">optional</span></td><td>Latitude (kept in metadata_json only).</td></tr>
+      <tr><td class="f">location.estimated_longitude</td><td class="t">number</td><td><span class="opt">optional</span></td><td>Longitude (kept in metadata_json only).</td></tr>
+    </table>
+    <h4>Example request</h4>
+<pre>curl -X PUT https://host:8090/v1/events/pi-garage-01:2026-07-11_14-32-08 \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "device_id": "pi-garage-01",
+    "source": { "type": "tesla_sentry", "directory_name": "2026-07-11_14-32-08" },
+    "detected_at": "2026-07-11T18:32:10Z",
+    "trigger": { "occurred_at_local": "2026-07-11T14:32:08", "camera_code": "5", "reason": "sentry_aware_object_detection" },
+    "location": { "city": "Toronto", "estimated_latitude": 43.65, "estimated_longitude": -79.38 }
+  }'</pre>
+    <h4>Example response — 200</h4>
+<pre>{
+  "id": "pi-garage-01:2026-07-11_14-32-08",
+  "state": "receiving",
+  "generation": 0
+}</pre>
+    <h4>Responses</h4>
+    <div class="status"><span class="sc ok">200</span><span>Event upserted. Body: <code>{ id, state, generation }</code> (generation = current finalized generation, 0 until first finalize).</span></div>
+    <div class="status"><span class="sc err">400</span><span>Invalid event key (empty, contains <code>/</code>, or &gt;512 chars); missing <code>device_id</code>/<code>source.directory_name</code>; <code>source.type</code> ≠ <code>tesla_sentry</code>; or malformed/unknown-field JSON.</span></div>
+    <div class="status"><span class="sc err">401</span><span>Missing or invalid bearer token.</span></div>
+    <div class="status"><span class="sc err">500</span><span>Store failure.</span></div>
+  </div>
+</div>
+
+<!-- GET /v1/events/{event} -->
+<div class="card">
+  <div class="row" onclick="t(this)">
+    <span class="chip m-get">GET</span>
+    <span class="path">/v1/events/<span class="p">{event}</span></span>
+    <span class="lock">bearer</span>
+    <span class="summary">Inspect one event: state, generation, files, analysis</span>
+    <span class="caret">▶</span>
+  </div>
+  <div class="body">
+    <p>Returns the full <code>EventSummary</code> plus its materialized <code>files</code> array (same shape as <code>GET /events/{id}</code>). After finalize, <code>files</code> reflects the finalized generation's artifacts.</p>
+    <h4>Example request</h4>
+<pre>curl https://host:8090/v1/events/pi-garage-01:2026-07-11_14-32-08 \
+  -H "Authorization: Bearer $TOKEN"</pre>
+    <h4>Example response — 200</h4>
+<pre>{
+  "id": "pi-garage-01:2026-07-11_14-32-08",
+  "first_seen": "2026-07-11T18:32:10Z",
+  "last_file_at": "2026-07-11T18:34:20Z",
+  "completed_at": "2026-07-11T18:34:32Z",
+  "event_ts": "2026-07-11T14:32:08",
+  "city": "Toronto",
+  "reason": "sentry_aware_object_detection",
+  "camera": "5",
+  "analysis_state": "done",
+  "analyzed_clip": "2026-07-11_14-32-00-front.mp4",
+  "threat_level": "low",
+  "analysis_json": "{\"threat_level\":\"low\", ...}",
+  "usage": { "model": "gemini-2.5-flash", "prompt_tokens": 12043, "output_tokens": 88, "total_tokens": 12131 },
+  "file_count": 1,
+  "state": "done",
+  "generation": 1,
+  "device_id": "pi-garage-01",
+  "source_event_id": "2026-07-11_14-32-08",
+  "files": [
+    { "name": "2026-07-11_14-32-00-front.mp4", "size": 28123904,
+      "sha256": "67d2a1…", "stored_path": "blobs/67/67d2a1…", "received_at": "2026-07-11T18:33:59Z" }
+  ]
+}</pre>
+    <p class="sub">See <a href="#schema-event">EventSummary</a> / <a href="#schema-file">FileInfo</a> field tables under Events (read). Omitted string fields (e.g. <code>city</code>, <code>threat_level</code>) are dropped when empty.</p>
+    <h4>Responses</h4>
+    <div class="status"><span class="sc ok">200</span><span><code>EventSummary</code> + <code>files[]</code>.</span></div>
+    <div class="status"><span class="sc err">401</span><span>Missing or invalid bearer token.</span></div>
+    <div class="status"><span class="sc err">404</span><span>No event with that key.</span></div>
+  </div>
+</div>
+
+<!-- PUT /v1/blobs/{sha256} -->
+<div class="card">
+  <div class="row" onclick="t(this)">
+    <span class="chip m-put">PUT</span>
+    <span class="path">/v1/blobs/<span class="p">{sha256}</span></span>
+    <span class="lock">bearer</span>
+    <span class="summary">Store raw bytes under their verified content hash</span>
+    <span class="caret">▶</span>
+  </div>
+  <div class="body">
+    <p>Body is the raw file bytes (any content type). <code>{sha256}</code> is 64 hex chars (upper/lower accepted, lowercased server-side). The server streams the body to a temp file while computing SHA-256, verifies it matches the path, then atomically moves it to <code>data/blobs/&lt;first2&gt;/&lt;sha256&gt;</code>. Idempotent: if the blob already exists (and Content-Length is unset or matches), the body is drained and <code>status:"exists"</code> is returned without rewriting.</p>
+    <h4>Request</h4>
+    <table>
+      <tr><th>Part</th><th>Type</th><th>Req</th><th>Description</th></tr>
+      <tr><td class="f">{sha256}</td><td class="t">path param</td><td><span class="req">required</span></td><td>64 hexadecimal characters (SHA-256 of the body).</td></tr>
+      <tr><td class="f">body</td><td class="t">raw bytes</td><td><span class="req">required</span></td><td>File content. <code>Content-Length</code> is used for the idempotent short-circuit when the blob already exists.</td></tr>
+    </table>
+    <h4>Example request</h4>
+<pre>curl -X PUT https://host:8090/v1/blobs/67d2a1... \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: video/mp4" \
+  --data-binary @2026-07-11_14-32-00-front.mp4</pre>
+    <h4>Example response — 200 (stored)</h4>
+<pre>{ "sha256": "67d2a1…", "size": 28123904, "status": "stored" }</pre>
+    <h4>Example response — 200 (already present)</h4>
+<pre>{ "sha256": "67d2a1…", "size": 28123904, "status": "exists" }</pre>
+    <h4>Responses</h4>
+    <div class="status"><span class="sc ok">200</span><span>Stored or already present. Body: <code>{ sha256, size, status }</code> with status <code>"stored"</code> or <code>"exists"</code>.</span></div>
+    <div class="status"><span class="sc err">400</span><span><code>{sha256}</code> is not 64 hex characters.</span></div>
+    <div class="status"><span class="sc err">401</span><span>Missing or invalid bearer token.</span></div>
+    <div class="status"><span class="sc err">422</span><span>Computed SHA-256 does not match the path (<code>sha256 mismatch: received &lt;got&gt;</code>). Bytes are discarded.</span></div>
+    <div class="status"><span class="sc err">500</span><span>Filesystem/store failure.</span></div>
+  </div>
+</div>
+
+<!-- PUT manifest -->
+<div class="card">
+  <div class="row" onclick="t(this)">
+    <span class="chip m-put">PUT</span>
+    <span class="path">/v1/events/<span class="p">{event}</span>/manifests/<span class="p">{generation}</span></span>
+    <span class="lock">bearer</span>
+    <span class="summary">Declare the typed artifacts of one event generation</span>
+    <span class="caret">▶</span>
+  </div>
+  <div class="body">
+    <p>Publishes (or replaces) the artifact set for a generation. <code>{generation}</code> is a positive integer and must equal the body's <code>generation</code>. Replacing an un-finalized generation's manifest overwrites its artifacts; a finalized generation is immutable. The response reports which referenced blobs are still missing (by hash, matched on hash <em>and</em> declared size).</p>
+    <h4>Request body — <code>Manifest</code> (application/json)</h4>
+    <table>
+      <tr><th>Field</th><th>Type</th><th>Req</th><th>Description</th></tr>
+      <tr><td class="f">generation</td><td class="t">int</td><td><span class="req">required</span></td><td>Positive; must match the URL segment.</td></tr>
+      <tr><td class="f">observed_through</td><td class="t">RFC3339 time</td><td><span class="opt">optional</span></td><td>High-water mark of source observation. Defaults to server time if zero.</td></tr>
+      <tr><td class="f">artifacts</td><td class="t">Artifact[]</td><td><span class="req">required</span></td><td>Typed artifacts (see below). May be empty, but finalize needs ≥1 video.</td></tr>
+    </table>
+    <h4><code>Artifact</code> object</h4>
+    <table>
+      <tr><th>Field</th><th>Type</th><th>Req</th><th>Description</th></tr>
+      <tr><td class="f">id</td><td class="t">string</td><td><span class="req">required</span></td><td>Stable artifact id within the generation; non-empty.</td></tr>
+      <tr><td class="f">kind</td><td class="t">string</td><td><span class="req">required</span></td><td>Non-empty. Conventionally <code>video | thumbnail | source_metadata | other</code> (open string; only <code>video</code> is enforced at finalize).</td></tr>
+      <tr><td class="f">sha256</td><td class="t">string</td><td><span class="req">required</span></td><td>64 hex chars; ties the artifact to a blob.</td></tr>
+      <tr><td class="f">size</td><td class="t">int64</td><td><span class="req">required</span></td><td>Declared byte size; must be ≥0 and match the stored blob's size to resolve.</td></tr>
+      <tr><td class="f">media_type</td><td class="t">string</td><td><span class="opt">optional</span></td><td>MIME type. Stored but not validated. <b>Note:</b> the design doc implies this is required; the handler does not enforce it.</td></tr>
+      <tr><td class="f">source_name</td><td class="t">string</td><td><span class="req">required</span></td><td>Original filename; must be unique across the manifest's artifacts.</td></tr>
+      <tr><td class="f">segment</td><td class="t">object</td><td><span class="opt">optional</span></td><td>Video segment info.</td></tr>
+      <tr><td class="f">segment.started_at_local</td><td class="t">string</td><td><span class="opt">optional</span></td><td>Segment start (local).</td></tr>
+      <tr><td class="f">segment.camera</td><td class="t">string</td><td><span class="opt">optional</span></td><td>Open string camera name (e.g. <code>front</code>). Required by JSON shape when <code>segment</code> is present, but not otherwise validated.</td></tr>
+    </table>
+    <h4>Example request</h4>
+<pre>curl -X PUT https://host:8090/v1/events/pi-garage-01:2026-07-11_14-32-08/manifests/1 \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{
+    "generation": 1,
+    "observed_through": "2026-07-11T18:34:20Z",
+    "artifacts": [{
+      "id": "2026-07-11_14-32-00-front.mp4",
+      "kind": "video",
+      "sha256": "67d2a1…",
+      "size": 28123904,
+      "media_type": "video/mp4",
+      "source_name": "2026-07-11_14-32-00-front.mp4",
+      "segment": { "started_at_local": "2026-07-11T14:32:00", "camera": "front" }
+    }]
+  }'</pre>
+    <h4>Example response — 200 (all blobs present)</h4>
+<pre>{ "event_id": "pi-garage-01:2026-07-11_14-32-08", "generation": 1, "status": "verified" }</pre>
+    <h4>Example response — 200 (missing blobs)</h4>
+<pre>{ "event_id": "pi-garage-01:2026-07-11_14-32-08", "generation": 1,
+  "status": "incomplete", "missing_blobs": ["67d2a1…"] }</pre>
+    <h4>Responses</h4>
+    <div class="status"><span class="sc ok">200</span><span><code>ManifestStatus</code> with status <code>"verified"</code> (all blobs resolved) or <code>"incomplete"</code> (+ <code>missing_blobs[]</code>). A missing blob is <b>not</b> an error here — only at finalize.</span></div>
+    <div class="status"><span class="sc err">400</span><span>Non-positive/non-integer generation; body generation ≠ URL; artifact validation failure (missing id/kind/source_name, bad sha256, negative size, duplicate source_name); malformed/unknown-field JSON.</span></div>
+    <div class="status"><span class="sc err">401</span><span>Missing or invalid bearer token.</span></div>
+    <div class="status"><span class="sc err">404</span><span>Event does not exist (upsert it first).</span></div>
+    <div class="status"><span class="sc err">409</span><span>The target generation is already finalized (immutable).</span></div>
+  </div>
+</div>
+
+<!-- POST finalize -->
+<div class="card">
+  <div class="row" onclick="t(this)">
+    <span class="chip m-post">POST</span>
+    <span class="path">/v1/events/<span class="p">{event}</span>/manifests/<span class="p">{generation}</span>/finalize</span>
+    <span class="lock">bearer</span>
+    <span class="summary">Verify a generation and make it analysis-ready</span>
+    <span class="caret">▶</span>
+  </div>
+  <div class="body">
+    <p>Seals a generation. Succeeds only if the manifest exists, contains at least one <code>video</code> artifact, and every artifact resolves to a stored blob of the declared size. On success the manifest is marked finalized, artifacts are materialized into the file view, the event moves to <code>state:"ready"</code> with <code>current_generation</code> updated, and a durable analysis job is enqueued — all in one transaction. The request body is optional.</p>
+    <h4>Request body — <code>FinalizeRequest</code> (optional, application/json)</h4>
+    <table>
+      <tr><th>Field</th><th>Type</th><th>Req</th><th>Description</th></tr>
+      <tr><td class="f">completion_reason</td><td class="t">string</td><td><span class="opt">optional</span></td><td>Free-text reason (e.g. <code>post_trigger_window_settled</code>). Accepted, not used for logic.</td></tr>
+      <tr><td class="f">settled_at</td><td class="t">RFC3339 time</td><td><span class="opt">optional</span></td><td>When the agent decided the event settled. Accepted, not used for logic.</td></tr>
+    </table>
+    <p class="sub">An empty body (Content-Length 0) is valid; a present body is decoded with unknown fields rejected.</p>
+    <h4>Example request</h4>
+<pre>curl -X POST https://host:8090/v1/events/pi-garage-01:2026-07-11_14-32-08/manifests/1/finalize \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{ "completion_reason": "post_trigger_window_settled", "settled_at": "2026-07-11T18:34:32Z" }'</pre>
+    <h4>Example response — 200 (ready)</h4>
+<pre>{ "event_id": "pi-garage-01:2026-07-11_14-32-08", "generation": 1, "status": "ready" }</pre>
+    <h4>Example response — 409 (blobs still missing)</h4>
+<pre>{ "event_id": "pi-garage-01:2026-07-11_14-32-08", "generation": 1,
+  "status": "incomplete", "missing_blobs": ["67d2a1…"] }</pre>
+    <div class="note"><b>Discrepancy vs task/doc:</b> incomplete finalize (missing blobs) returns <b>409 Conflict</b>, not 422. The only <b>422</b> on this endpoint is a manifest with <b>no <code>video</code> artifact</b> (<code>errNoVideoArtifact</code>) — a rule the narrative doc does not mention.</div>
+    <h4>Responses</h4>
+    <div class="status"><span class="sc ok">200</span><span>Finalized. <code>ManifestStatus</code> with status <code>"ready"</code>. Analysis job enqueued.</span></div>
+    <div class="status"><span class="sc err">400</span><span>Non-positive/non-integer generation, or malformed/unknown-field JSON body.</span></div>
+    <div class="status"><span class="sc err">401</span><span>Missing or invalid bearer token.</span></div>
+    <div class="status"><span class="sc err">404</span><span>Event not found, or no manifest for that generation.</span></div>
+    <div class="status"><span class="sc err">409</span><span>Generation older than the event's current generation (<code>errOldGeneration</code>), <em>or</em> blobs still missing — body carries <code>status:"incomplete"</code> + <code>missing_blobs[]</code>.</span></div>
+    <div class="status"><span class="sc err">422</span><span>Manifest contains no <code>video</code>-kind artifact.</span></div>
+    <div class="status"><span class="sc err">500</span><span>Store/transaction failure.</span></div>
+  </div>
+</div>
+
+<!-- ============ EVENTS (READ) ============ -->
+<h2 class="tag">Events (read)</h2>
+
+<!-- GET /events -->
+<div class="card">
+  <div class="row" onclick="t(this)">
+    <span class="chip m-get">GET</span>
+    <span class="path">/events</span>
+    <span class="lock">bearer</span>
+    <span class="summary">List all events (ordered by id)</span>
+    <span class="caret">▶</span>
+  </div>
+  <div class="body">
+    <p>Returns a JSON array of <code>EventSummary</code> (no files). Empty array when there are no events.</p>
+    <h4>Example request</h4>
+<pre>curl https://host:8090/events -H "Authorization: Bearer $TOKEN"</pre>
+    <h4>Example response — 200</h4>
+<pre>[
+  { "id": "pi-garage-01:2026-07-11_14-32-08", "first_seen": "2026-07-11T18:32:10Z",
+    "last_file_at": "2026-07-11T18:34:20Z", "analysis_state": "done",
+    "file_count": 1, "state": "done", "generation": 1, "device_id": "pi-garage-01",
+    "source_event_id": "2026-07-11_14-32-08" }
+]</pre>
+    <h4 id="schema-event">Response item — <code>EventSummary</code></h4>
+    <table>
+      <tr><th>Field</th><th>Type</th><th>Description</th></tr>
+      <tr><td class="f">id</td><td class="t">string</td><td>Event key (SentryClips dir name, or <code>device:dir</code> for v1).</td></tr>
+      <tr><td class="f">first_seen</td><td class="t">time</td><td>First byte/upsert time.</td></tr>
+      <tr><td class="f">last_file_at</td><td class="t">time</td><td>Most recent file/upsert time.</td></tr>
+      <tr><td class="f">completed_at</td><td class="t">time?</td><td>Set when the event completed; omitted while receiving.</td></tr>
+      <tr><td class="f">event_ts</td><td class="t">string</td><td>Trigger timestamp from metadata. Omitted if empty.</td></tr>
+      <tr><td class="f">city</td><td class="t">string</td><td>City. Omitted if empty.</td></tr>
+      <tr><td class="f">reason</td><td class="t">string</td><td>Trigger reason. Omitted if empty.</td></tr>
+      <tr><td class="f">camera</td><td class="t">string</td><td>Camera code. Omitted if empty.</td></tr>
+      <tr><td class="f">analysis_state</td><td class="t">string</td><td><code>pending | skipped | running | done | failed</code>.</td></tr>
+      <tr><td class="f">analyzed_clip</td><td class="t">string</td><td>Clip chosen for analysis. Omitted if empty.</td></tr>
+      <tr><td class="f">threat_level</td><td class="t">string</td><td>Verdict threat level. Omitted if empty.</td></tr>
+      <tr><td class="f">analysis_json</td><td class="t">string</td><td>Raw analyzer verdict JSON (as a string). Omitted if empty.</td></tr>
+      <tr><td class="f">analysis_error</td><td class="t">string</td><td>Last analyzer error. Omitted if empty.</td></tr>
+      <tr><td class="f">usage</td><td class="t">TokenUsage?</td><td>Token spend; present only once tokens are recorded.</td></tr>
+      <tr><td class="f">file_count</td><td class="t">int</td><td>Number of files/artifacts on the event.</td></tr>
+      <tr><td class="f">state</td><td class="t">string</td><td>Lifecycle: <code>receiving | ready | analyzing | done | failed</code>.</td></tr>
+      <tr><td class="f">generation</td><td class="t">int</td><td>Current (finalized) generation; 0 before first finalize.</td></tr>
+      <tr><td class="f">device_id</td><td class="t">string</td><td>Reporting device (v1). Omitted if empty.</td></tr>
+      <tr><td class="f">source_event_id</td><td class="t">string</td><td>Source directory name (v1). Omitted if empty.</td></tr>
+    </table>
+    <h4><code>TokenUsage</code> (nested)</h4>
+    <table>
+      <tr><th>Field</th><th>Type</th><th>Description</th></tr>
+      <tr><td class="f">model</td><td class="t">string</td><td>Analyzer model id.</td></tr>
+      <tr><td class="f">prompt_tokens</td><td class="t">int64</td><td>Input tokens.</td></tr>
+      <tr><td class="f">output_tokens</td><td class="t">int64</td><td>Output tokens.</td></tr>
+      <tr><td class="f">total_tokens</td><td class="t">int64</td><td>Total tokens.</td></tr>
+    </table>
+    <h4>Responses</h4>
+    <div class="status"><span class="sc ok">200</span><span>Array of <code>EventSummary</code> (<code>[]</code> when none).</span></div>
+    <div class="status"><span class="sc err">401</span><span>Missing or invalid bearer token.</span></div>
+    <div class="status"><span class="sc err">500</span><span>Store failure.</span></div>
+  </div>
+</div>
+
+<!-- GET /events/{id} -->
+<div class="card">
+  <div class="row" onclick="t(this)">
+    <span class="chip m-get">GET</span>
+    <span class="path">/events/<span class="p">{id}</span></span>
+    <span class="lock">bearer</span>
+    <span class="summary">One event plus its files</span>
+    <span class="caret">▶</span>
+  </div>
+  <div class="body">
+    <p>Returns one <code>EventSummary</code> with an added <code>files</code> array. Identical payload to <code>GET /v1/events/{event}</code>.</p>
+    <h4>Example request</h4>
+<pre>curl https://host:8090/events/pi-garage-01:2026-07-11_14-32-08 -H "Authorization: Bearer $TOKEN"</pre>
+    <h4 id="schema-file"><code>FileInfo</code> (each element of <code>files</code>)</h4>
+    <table>
+      <tr><th>Field</th><th>Type</th><th>Description</th></tr>
+      <tr><td class="f">name</td><td class="t">string</td><td>Artifact/file name (source_name after finalize).</td></tr>
+      <tr><td class="f">size</td><td class="t">int64</td><td>Byte size.</td></tr>
+      <tr><td class="f">sha256</td><td class="t">string</td><td>Content hash.</td></tr>
+      <tr><td class="f">stored_path</td><td class="t">string</td><td>Path under DataDir (e.g. <code>blobs/67/67d2a1…</code>).</td></tr>
+      <tr><td class="f">received_at</td><td class="t">time</td><td>When stored/materialized.</td></tr>
+    </table>
+    <h4>Responses</h4>
+    <div class="status"><span class="sc ok">200</span><span><code>EventSummary</code> + <code>files[]</code>.</span></div>
+    <div class="status"><span class="sc err">401</span><span>Missing or invalid bearer token.</span></div>
+    <div class="status"><span class="sc err">404</span><span>No event with that id.</span></div>
+  </div>
+</div>
+
+<!-- ============ USAGE ============ -->
+<h2 class="tag">Usage</h2>
+<div class="card">
+  <div class="row" onclick="t(this)">
+    <span class="chip m-get">GET</span>
+    <span class="path">/usage</span>
+    <span class="lock">bearer</span>
+    <span class="summary">Aggregate analysis token spend per model</span>
+    <span class="caret">▶</span>
+  </div>
+  <div class="body">
+    <p>Sums recorded token usage across all analyzed events, grouped by model, for cost accounting (multiply by the model's per-token price).</p>
+    <h4>Example request</h4>
+<pre>curl https://host:8090/usage -H "Authorization: Bearer $TOKEN"</pre>
+    <h4>Example response — 200</h4>
+<pre>{
+  "models": [
+    { "model": "gemini-2.5-flash", "events": 42,
+      "prompt_tokens": 501203, "output_tokens": 3720, "total_tokens": 504923 }
+  ]
+}</pre>
+    <h4>Response — <code>{ "models": UsageTotal[] }</code></h4>
+    <table>
+      <tr><th>Field</th><th>Type</th><th>Description</th></tr>
+      <tr><td class="f">model</td><td class="t">string</td><td>Model id (empty string groups un-attributed usage).</td></tr>
+      <tr><td class="f">events</td><td class="t">int64</td><td>Number of analyzed events for the model.</td></tr>
+      <tr><td class="f">prompt_tokens</td><td class="t">int64</td><td>Summed input tokens.</td></tr>
+      <tr><td class="f">output_tokens</td><td class="t">int64</td><td>Summed output tokens.</td></tr>
+      <tr><td class="f">total_tokens</td><td class="t">int64</td><td>Summed total tokens.</td></tr>
+    </table>
+    <h4>Responses</h4>
+    <div class="status"><span class="sc ok">200</span><span><code>{ models: [] }</code> when nothing analyzed yet.</span></div>
+    <div class="status"><span class="sc err">401</span><span>Missing or invalid bearer token.</span></div>
+    <div class="status"><span class="sc err">500</span><span>Store failure.</span></div>
+  </div>
+</div>
+
+<!-- ============ HEALTH ============ -->
+<h2 class="tag">Health</h2>
+<div class="card">
+  <div class="row" onclick="t(this)">
+    <span class="chip m-get">GET</span>
+    <span class="path">/healthz</span>
+    <span class="lock" style="border-color:var(--get);color:var(--get)">no auth</span>
+    <span class="summary">Liveness probe</span>
+    <span class="caret">▶</span>
+  </div>
+  <div class="body">
+    <p>Always unauthenticated (registered on the outer mux, ahead of the token middleware). Returns the literal body <code>ok</code> as <code>text/plain</code>.</p>
+    <h4>Example</h4>
+<pre>curl https://host:8090/healthz
+ok</pre>
+    <h4>Responses</h4>
+    <div class="status"><span class="sc ok">200</span><span>Body: <code>ok</code>. No auth required.</span></div>
+  </div>
+</div>
+
+<div class="note">
+  <b>Notes — where code and the <a href="ingestion-api.html">narrative doc</a> diverge (code wins):</b>
+  <ul style="margin:6px 0 0;padding-left:18px">
+    <li>Incomplete <b>finalize</b> (referenced blobs missing) returns <b>409 Conflict</b> with <code>status:"incomplete"</code> + <code>missing_blobs</code>, not 422.</li>
+    <li>Finalize additionally requires <b>at least one <code>video</code>-kind artifact</b> (else <b>422</b>) — the doc does not state this.</li>
+    <li>Artifact <code>media_type</code> is <b>not</b> validated as required, though the doc treats it as part of every artifact.</li>
+    <li>Blob upload returns a <code>status</code> field (<code>"stored"</code> / <code>"exists"</code>) not shown in the doc's examples.</li>
+    <li>Old-generation rejection (409) is enforced only at <b>finalize</b>; <code>PUT manifest</code> checks immutability of a finalized generation (409) but not ordering.</li>
+  </ul>
+</div>
+
+<div class="foot">
+  teslcam REST API reference · derived from <code>internal/server/http.go</code>, <code>internal/server/highlevel_http.go</code>, <code>internal/server/highlevel_store.go</code>, <code>internal/server/store.go</code>, <code>internal/server/analyzer.go</code>, <code>internal/protocol/protocol.go</code>. For design rationale see the <a href="ingestion-api.html">Ingestion API design doc</a>.
+</div>
+</div>
+
+<script>
+function t(el){ el.parentElement.classList.toggle('open'); }
+// Open the first card of each group by default for orientation.
+document.addEventListener('DOMContentLoaded',function(){
+  var first=document.querySelector('.card');
+  if(first) first.classList.add('open');
+});
+</script>
+</body>
+</html>
