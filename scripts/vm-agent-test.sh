@@ -63,7 +63,7 @@ sudo modprobe libcomposite
 echo ">> starting server on $SERVER_ADDR (bearer-token auth on)"
 mkdir -p "$WORK/data"
 head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' > "$WORK/ingest.token"
-"$WORK/bin/teslcam-server" -data "$WORK/data" -listen "$SERVER_ADDR" -quiet 8s \
+"$WORK/bin/teslcam-server" -data "$WORK/data" -listen "$SERVER_ADDR" \
   -token-file "$WORK/ingest.token" \
   >"$WORK/server.log" 2>&1 &
 SERVER_PID=$!
@@ -77,7 +77,7 @@ for _ in $(seq 1 20); do
 done
 [ -n "$up" ] || fail "server did not come up within 5s"
 code="$(curl -s -o /dev/null -w '%{http_code}' -X PUT --data-binary x \
-  "http://$SERVER_ADDR/files/TeslaCam/SentryClips/x/y.mp4")"
+  "http://$SERVER_ADDR/v1/events/x")"
 [ "$code" = "401" ] || fail "unauthenticated PUT returned $code, want 401"
 code="$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer wrong" \
   "http://$SERVER_ADDR/events")"

@@ -5,16 +5,15 @@
 #
 #   scripts/run-server-local.sh              # ingest + store only
 #   ANALYZE=1 scripts/run-server-local.sh    # + Gemini analysis
-#   DATA=/tmp/t LISTEN=127.0.0.1:9000 QUIET=5s scripts/run-server-local.sh
+#   DATA=/tmp/t LISTEN=127.0.0.1:9000 scripts/run-server-local.sh
 set -euo pipefail
 
 DATA="${DATA:-$HOME/teslcam-data}"
 LISTEN="${LISTEN:-127.0.0.1:8090}"
-QUIET="${QUIET:-10s}"        # local: short so events complete fast (car: ~90s)
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd -P)"
 cd "$PROJECT_DIR"
 
-args=(-data "$DATA" -listen "$LISTEN" -quiet "$QUIET")
+args=(-data "$DATA" -listen "$LISTEN")
 if [[ "${ANALYZE:-}" == "1" ]]; then
   if [[ -n "${ANALYZE_CMD:-}" ]]; then
     # Escape hatch: run an external analyzer command instead of the
@@ -37,7 +36,7 @@ else
 fi
 
 mkdir -p "$DATA"
-echo ">> data=$DATA  listen=http://$LISTEN  quiet=$QUIET"
-echo ">> push clips:  curl -X PUT --data-binary @file http://$LISTEN/files/TeslaCam/SentryClips/<event>/<name>"
+echo ">> data=$DATA  listen=http://$LISTEN"
+echo ">> push a clip: go run ./cmd/teslcam-test -server http://$LISTEN <clip.mp4>"
 echo ">> inspect:     curl http://$LISTEN/events   (ctrl-c to stop)"
 exec go run ./cmd/teslcam-server "${args[@]}"

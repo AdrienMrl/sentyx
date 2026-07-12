@@ -14,23 +14,36 @@ import (
 )
 
 func TestUploadWaitAndRender(t *testing.T) {
-	var puts []string
+	var calls []string // "METHOD path" of every non-GET request
 	httpClient := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		if r.Header.Get("Authorization") != "Bearer secret" {
-			t.Fatalf("missing authorization")
+			t.Fatalf("missing authorization on %s %s", r.Method, r.URL.Path)
 		}
-		if r.Method == http.MethodPut {
-			puts = append(puts, r.URL.Path)
+		if r.Body != nil {
 			io.Copy(io.Discard, r.Body)
-			return response(200, `{"ok":true}`), nil
 		}
-		var body bytes.Buffer
-		json.NewEncoder(&body).Encode(map[string]any{
-			"id": "manual-test", "analysis_state": "done", "analyzed_clip": "clip.mp4",
-			"threat_level": "low", "file_count": 2,
-			"analysis_json": `{"concern_detected":false,"details":{"summary":"all clear"}}`,
-		})
-		return response(200, body.String()), nil
+		switch {
+		case r.Method == http.MethodGet:
+			var body bytes.Buffer
+			json.NewEncoder(&body).Encode(map[string]any{
+				"id": "manual-test", "analysis_state": "done", "analyzed_clip": "clip.mp4",
+				"threat_level": "low", "file_count": 2,
+				"analysis_json": `{"concern_detected":false,"details":{"summary":"all clear"}}`,
+			})
+			return response(200, body.String()), nil
+		default:
+			calls = append(calls, r.Method+" "+r.URL.Path)
+			switch {
+			case strings.Contains(r.URL.Path, "/manifests/") && strings.HasSuffix(r.URL.Path, "/finalize"):
+				return response(200, `{"status":"ready"}`), nil
+			case strings.Contains(r.URL.Path, "/manifests/"):
+				return response(200, `{"status":"verified"}`), nil
+			case strings.HasPrefix(r.URL.Path, "/v1/blobs/"):
+				return response(200, `{"status":"stored"}`), nil
+			default: // event upsert
+				return response(200, `{"generation":0}`), nil
+			}
+		}
 	})}
 	f, err := os.CreateTemp(t.TempDir(), "clip-*.mp4")
 	if err != nil {
@@ -42,15 +55,33 @@ func TestUploadWaitAndRender(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.Upload(context.Background(), f.Name()); err != nil {
-		t.Fatal(err)
-	}
-	ev, _, err := c.Wait(context.Background())
+	clip, err := c.Upload(context.Background(), f.Name())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(puts) != 2 || !strings.Contains(puts[0], "left_repeater.mp4") || !strings.HasSuffix(puts[1], "/event.json") {
-		t.Fatalf("unexpected uploads: %v", puts)
+	if clip != "2026-07-11_12-00-00-left_repeater.mp4" {
+		t.Fatalf("unexpected clip name: %s", clip)
+	}
+	// The v1 flow: upsert event, PUT two blobs, PUT the manifest, finalize.
+	if len(calls) != 5 {
+		t.Fatalf("unexpected request sequence: %v", calls)
+	}
+	if calls[0] != "PUT /v1/events/manual-test" {
+		t.Errorf("first call should upsert the event: %v", calls)
+	}
+	if !strings.HasPrefix(calls[1], "PUT /v1/blobs/") || !strings.HasPrefix(calls[2], "PUT /v1/blobs/") {
+		t.Errorf("clip and event.json should be PUT as blobs: %v", calls)
+	}
+	if calls[3] != "PUT /v1/events/manual-test/manifests/1" {
+		t.Errorf("manifest should be declared at generation 1: %v", calls)
+	}
+	if calls[4] != "POST /v1/events/manual-test/manifests/1/finalize" {
+		t.Errorf("event should be finalized: %v", calls)
+	}
+
+	ev, _, err := c.Wait(context.Background())
+	if err != nil {
+		t.Fatal(err)
 	}
 	var out bytes.Buffer
 	if err := RenderASCII(&out, ev); err != nil {

@@ -16,8 +16,8 @@ import (
 )
 
 // TestManualCLIEndToEnd drives the manual client through the real server
-// handler, completion loop, analyzer subprocess, store, and ASCII renderer.
-// Its in-memory HTTP transport avoids opening a localhost socket.
+// handler (v1 upload + finalize), analyzer subprocess, store, and ASCII
+// renderer. Its in-memory HTTP transport avoids opening a localhost socket.
 func TestManualCLIEndToEnd(t *testing.T) {
 	analyzer := filepath.Join(t.TempDir(), "analyze.sh")
 	if err := os.WriteFile(analyzer, []byte(`#!/bin/sh
@@ -28,14 +28,13 @@ echo '{"concern_detected":true,"threat_level":"medium","what_happened":"manual t
 	}
 	s, err := New(Config{
 		DataDir: t.TempDir(), ListenAddr: "unused:0",
-		QuietPeriod: 20 * time.Millisecond, AnalyzeCmd: []string{analyzer}, Token: "secret",
+		AnalyzeCmd: []string{analyzer}, Token: "secret",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	go s.completionLoop(ctx, t.Logf)
 	go s.analyzeLoop(ctx, t.Logf)
 
 	clip := filepath.Join(t.TempDir(), "real-sentry.mp4")

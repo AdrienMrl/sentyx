@@ -2,8 +2,9 @@
 
 `teslcam-test` manually sends one real TeslaCam video through the backend and
 prints the analyzer result. It creates a synthetic `event.json`, uploads both
-files using the production ingest API, waits for the server's quiet period and
-analysis, then parses the nested `analysis_json` into an ASCII tree.
+files through the v1 ingestion protocol (content-addressed blobs + manifest,
+then an explicit finalize), waits for analysis, then parses the nested
+`analysis_json` into an ASCII tree.
 
 ## Local end-to-end test
 
@@ -14,11 +15,11 @@ Install the analyzer once and put `GEMINI_API_KEY=...` in
 npm --prefix experiments/gemini install
 ```
 
-In terminal one, start an analyzer-enabled server. The one-second quiet period
-keeps manual tests fast:
+In terminal one, start an analyzer-enabled server. Events complete as soon as
+the client finalizes them, so analysis starts immediately:
 
 ```sh
-DATA=/tmp/teslcam-test-data QUIET=1s ANALYZE=1 scripts/run-server-local.sh
+DATA=/tmp/teslcam-test-data ANALYZE=1 scripts/run-server-local.sh
 ```
 
 In terminal two, upload a real clip:
@@ -53,8 +54,7 @@ Useful flags:
 
 - `-camera 0` selects the Tesla trigger camera (`0` front, `3`/`5` left,
   `4`/`6` right, `7` back).
-- `-timeout 10m` controls how long to wait for the server's quiet period and
-  analyzer.
+- `-timeout 10m` controls how long to wait for the analyzer.
 - `-event-id NAME` makes repeated/debug runs easier to identify.
 - `-json` prints the final API response as indented JSON instead of the ASCII
   report.

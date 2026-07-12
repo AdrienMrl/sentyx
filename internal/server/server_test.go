@@ -6,44 +6,28 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
-	"time"
+
+	"github.com/AdrienMrl/teslcam/internal/protocol"
 )
 
 func TestNewRequiresConfig(t *testing.T) {
 	for _, cfg := range []Config{
 		{},
-		{DataDir: "x", ListenAddr: ":0"},         // no QuietPeriod
-		{DataDir: "x", QuietPeriod: time.Second}, // no ListenAddr
-		{ListenAddr: ":0", QuietPeriod: time.Second}, // no DataDir
+		{DataDir: "x"},     // no ListenAddr
+		{ListenAddr: ":0"}, // no DataDir
 	} {
 		if _, err := New(cfg); err == nil {
 			t.Errorf("New(%+v): expected error", cfg)
-		}
-	}
-}
-
-func TestParseSentryPath(t *testing.T) {
-	for _, tc := range []struct {
-		in, event, name string
-		ok              bool
-	}{
-		{"TeslaCam/SentryClips/2026-07-04_10-00-00/f.mp4", "2026-07-04_10-00-00", "f.mp4", true},
-		{"teslacam/sentryclips/e/event.json", "e", "event.json", true},
-		{"TeslaCam/RecentClips/f.mp4", "", "", false},
-		{"TeslaCam/SentryClips/f.mp4", "", "", false},       // no event dir
-		{"TeslaCam/SentryClips/e/sub/f.mp4", "", "", false}, // nested
-		{"TeslaCam/SentryClips/../../../etc/passwd", "", "", false},
-	} {
-		event, name, err := parseSentryPath(tc.in)
-		if (err == nil) != tc.ok || event != tc.event || name != tc.name {
-			t.Errorf("parseSentryPath(%q) = (%q, %q, %v), want (%q, %q, ok=%v)",
-				tc.in, event, name, err, tc.event, tc.name, tc.ok)
 		}
 	}
 }
@@ -100,9 +84,17 @@ echo '{"concern_detected":true,"threat_level":"high","what_happened":"person kic
 	return []string{script}
 }
 
-func put(t *testing.T, base, path string, body []byte) {
+// ingestFile is one file pushed through the v1 protocol, named by its
+// TeslaCam source name (which becomes the materialized file row's name).
+type ingestFile struct {
+	source string
+	body   []byte
+}
+
+// putBlob uploads one content-addressed blob and asserts a 200.
+func putBlob(t *testing.T, base, sha string, body []byte) {
 	t.Helper()
-	req, err := http.NewRequest(http.MethodPut, base+"/files/"+path, bytes.NewReader(body))
+	req, err := http.NewRequest(http.MethodPut, base+"/v1/blobs/"+sha, bytes.NewReader(body))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,8 +104,51 @@ func put(t *testing.T, base, path string, body []byte) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("PUT %s: %s", path, resp.Status)
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("PUT blob %s: %s: %s", sha, resp.Status, b)
 	}
+}
+
+// ingestV1 pushes a set of files as one finalized v1 event: upsert, blob PUTs,
+// manifest, finalize. Finalization enqueues the analysis job.
+func ingestV1(t *testing.T, base, key string, up protocol.EventUpsert, files []ingestFile) {
+	t.Helper()
+	if up.Source.Type == "" {
+		up.Source.Type = "tesla_sentry"
+	}
+	requestJSON(t, http.MethodPut, base+"/v1/events/"+key, up, http.StatusOK, nil)
+	artifacts := make([]protocol.Artifact, 0, len(files))
+	for _, f := range files {
+		sum := sha256.Sum256(f.body)
+		sha := hex.EncodeToString(sum[:])
+		putBlob(t, base, sha, f.body)
+		artifacts = append(artifacts, artifactFor(f.source, sha, int64(len(f.body))))
+	}
+	m := protocol.Manifest{Generation: 1, Artifacts: artifacts}
+	var status protocol.ManifestStatus
+	requestJSON(t, http.MethodPut, base+"/v1/events/"+key+"/manifests/1", m, http.StatusOK, &status)
+	if len(status.MissingBlobs) != 0 {
+		t.Fatalf("missing blobs after upload: %+v", status)
+	}
+	requestJSON(t, http.MethodPost, base+"/v1/events/"+key+"/manifests/1/finalize",
+		protocol.FinalizeRequest{}, http.StatusOK, &status)
+	if status.Status != "ready" {
+		t.Fatalf("finalize status = %+v", status)
+	}
+}
+
+// artifactFor builds a manifest artifact, assigning kind/media type by suffix.
+func artifactFor(name, sha string, size int64) protocol.Artifact {
+	a := protocol.Artifact{ID: name, SHA256: sha, Size: size, SourceName: name, Kind: "other", MediaType: "application/octet-stream"}
+	switch {
+	case strings.HasSuffix(name, ".mp4"):
+		a.Kind, a.MediaType = "video", "video/mp4"
+	case strings.HasSuffix(name, ".png"):
+		a.Kind, a.MediaType = "thumbnail", "image/png"
+	case strings.HasSuffix(name, ".json"):
+		a.Kind, a.MediaType = "source_metadata", "application/json"
+	}
+	return a
 }
 
 func getJSON(t *testing.T, url string, out any) {
@@ -133,10 +168,9 @@ func getJSON(t *testing.T, url string, out any) {
 
 func TestIngestCompleteAnalyze(t *testing.T) {
 	c, err := New(Config{
-		DataDir:     t.TempDir(),
-		ListenAddr:  "127.0.0.1:0", // unused: we serve via httptest
-		QuietPeriod: 200 * time.Millisecond,
-		AnalyzeCmd:  fakeAnalyzer(t),
+		DataDir:    t.TempDir(),
+		ListenAddr: "127.0.0.1:0", // unused: we serve via httptest
+		AnalyzeCmd: fakeAnalyzer(t),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -144,37 +178,23 @@ func TestIngestCompleteAnalyze(t *testing.T) {
 	srv := httptest.NewServer(c.Handler())
 	defer srv.Close()
 
-	const event = "2026-07-04_10-01-31"
-	dir := "TeslaCam/SentryClips/" + event
+	const event = "pi:2026-07-04_10-01-31"
 	clip := []byte("clip bytes: definitely an mp4")
-	eventJSON := []byte(`{"timestamp":"2026-07-04T10:01:31","city":"North Las Vegas","reason":"sentry_aware_object_detection","camera":"5"}`)
-
-	put(t, srv.URL, dir+"/2026-07-04_10-00-31-front.mp4", clip)
-	put(t, srv.URL, dir+"/2026-07-04_10-00-31-left_repeater.mp4", clip)
-	put(t, srv.URL, dir+"/2026-07-04_10-01-31-left_repeater.mp4", clip)
-	put(t, srv.URL, dir+"/event.json", eventJSON)
-	put(t, srv.URL, dir+"/thumb.png", []byte("png"))
-
-	// Rejected paths never create events.
-	req, _ := http.NewRequest(http.MethodPut, srv.URL+"/files/TeslaCam/RecentClips/x.mp4", bytes.NewReader(clip))
-	if resp, err := http.DefaultClient.Do(req); err != nil || resp.StatusCode != http.StatusBadRequest {
-		t.Fatalf("RecentClips upload: got %v %v, want 400", resp.Status, err)
+	up := protocol.EventUpsert{
+		DeviceID: "pi",
+		Source:   protocol.EventSource{Type: "tesla_sentry", DirectoryName: "2026-07-04_10-01-31"},
+		Trigger:  &protocol.Trigger{OccurredAtLocal: "2026-07-04T10:01:31", CameraCode: "5", Reason: "sentry_aware_object_detection"},
+		Location: &protocol.Location{City: "North Las Vegas"},
 	}
+	ingestV1(t, srv.URL, event, up, []ingestFile{
+		{"2026-07-04_10-00-31-front.mp4", clip},
+		{"2026-07-04_10-00-31-left_repeater.mp4", clip},
+		{"2026-07-04_10-01-31-left_repeater.mp4", clip},
+		{"event.json", []byte(`{"timestamp":"2026-07-04T10:01:31","city":"North Las Vegas","reason":"sentry_aware_object_detection","camera":"5"}`)},
+		{"thumb.png", []byte("png")},
+	})
 
-	// Not complete yet (files just arrived).
-	if ids, err := c.store.completeQuietEvents(c.cfg.QuietPeriod); err != nil || len(ids) != 0 {
-		t.Fatalf("premature completion: %v %v", ids, err)
-	}
-	time.Sleep(300 * time.Millisecond)
-	ids, err := c.store.completeQuietEvents(c.cfg.QuietPeriod)
-	if err != nil || len(ids) != 1 || ids[0] != event {
-		t.Fatalf("completion: got %v, %v", ids, err)
-	}
-	// Completion is once-only.
-	if ids, _ := c.store.completeQuietEvents(c.cfg.QuietPeriod); len(ids) != 0 {
-		t.Fatalf("event completed twice: %v", ids)
-	}
-
+	// Finalize enqueued the analysis job; run it synchronously here.
 	c.analyzeEvent(context.Background(), event, t.Logf)
 
 	var got struct {
@@ -226,22 +246,40 @@ func TestIngestCompleteAnalyze(t *testing.T) {
 		}
 	}
 
-	// Re-uploading the same file is idempotent (200, no duplicate row).
-	put(t, srv.URL, dir+"/thumb.png", []byte("png"))
+	// Re-uploading an identical blob is idempotent (200, no duplicate row).
+	pngSum := sha256.Sum256([]byte("png"))
+	putBlob(t, srv.URL, hex.EncodeToString(pngSum[:]), []byte("png"))
 	getJSON(t, srv.URL+"/events/"+event, &got)
 	if len(got.Files) != 5 {
 		t.Errorf("re-upload duplicated a file row: %d", len(got.Files))
 	}
 }
 
-func TestAnalyzerFailureRecorded(t *testing.T) {
-	script := filepath.Join(t.TempDir(), "fail.sh")
-	os.WriteFile(script, []byte("#!/bin/sh\necho boom >&2\nexit 3\n"), 0o755)
+// recordNotifier captures the last Notification and can be told to fail, to
+// prove notifications fire on "done" and that a delivery failure never breaks
+// the analysis flow.
+type recordNotifier struct {
+	mu    sync.Mutex
+	calls int
+	last  Notification
+	err   error
+}
+
+func (n *recordNotifier) Notify(_ context.Context, note Notification) error {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.calls++
+	n.last = note
+	return n.err
+}
+
+func TestNotifyOnDoneIsNonFatal(t *testing.T) {
+	notif := &recordNotifier{err: errors.New("telegram unreachable")}
 	c, err := New(Config{
-		DataDir:     t.TempDir(),
-		ListenAddr:  "127.0.0.1:0",
-		QuietPeriod: 50 * time.Millisecond,
-		AnalyzeCmd:  []string{script},
+		DataDir:    t.TempDir(),
+		ListenAddr: "127.0.0.1:0",
+		AnalyzeCmd: fakeAnalyzer(t),
+		Notifier:   notif,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -249,13 +287,74 @@ func TestAnalyzerFailureRecorded(t *testing.T) {
 	srv := httptest.NewServer(c.Handler())
 	defer srv.Close()
 
-	dir := "TeslaCam/SentryClips/2026-07-04_11-00-00"
-	put(t, srv.URL, dir+"/2026-07-04_11-00-00-front.mp4", []byte("x"))
-	put(t, srv.URL, dir+"/event.json", []byte(`{"timestamp":"2026-07-04T11:00:00","camera":"0"}`))
+	const event = "pi:2026-07-04_10-01-31"
+	up := protocol.EventUpsert{
+		DeviceID: "pi",
+		Source:   protocol.EventSource{Type: "tesla_sentry", DirectoryName: "2026-07-04_10-01-31"},
+		Trigger:  &protocol.Trigger{OccurredAtLocal: "2026-07-04T10:01:31", CameraCode: "5", Reason: "sentry"},
+		Location: &protocol.Location{City: "North Las Vegas"},
+	}
+	ingestV1(t, srv.URL, event, up, []ingestFile{
+		{"2026-07-04_10-01-31-left_repeater.mp4", []byte("clip bytes")},
+		{"event.json", []byte(`{"timestamp":"2026-07-04T10:01:31","city":"North Las Vegas","reason":"sentry","camera":"5"}`)},
+	})
 
-	c.analyzeEvent(context.Background(), "2026-07-04_11-00-00", t.Logf)
+	c.analyzeEvent(context.Background(), event, t.Logf)
 
-	ev, err := c.store.event("2026-07-04_11-00-00")
+	// The notifier errored, but analysis must still be persisted as done.
+	ev, err := c.store.event(event)
+	if err != nil || ev == nil {
+		t.Fatal(err)
+	}
+	if ev.AnalysisState != "done" || ev.ThreatLevel != "high" {
+		t.Fatalf("notify failure broke analysis: state=%s threat=%s", ev.AnalysisState, ev.ThreatLevel)
+	}
+
+	notif.mu.Lock()
+	defer notif.mu.Unlock()
+	if notif.calls != 1 {
+		t.Fatalf("notifier calls = %d, want 1", notif.calls)
+	}
+	if notif.last.ThreatLevel != "high" || notif.last.WhatHappened == "" ||
+		notif.last.RecommendedAction == "" {
+		t.Errorf("notification not populated from verdict: %+v", notif.last)
+	}
+	if notif.last.City != "North Las Vegas" || notif.last.EventTS != "2026-07-04T10:01:31" {
+		t.Errorf("event metadata not passed: %+v", notif.last)
+	}
+	if notif.last.Camera != "left repeater" { // camera code 5 -> left_repeater
+		t.Errorf("camera not mapped to readable name: %q", notif.last.Camera)
+	}
+}
+
+func TestAnalyzerFailureRecorded(t *testing.T) {
+	script := filepath.Join(t.TempDir(), "fail.sh")
+	os.WriteFile(script, []byte("#!/bin/sh\necho boom >&2\nexit 3\n"), 0o755)
+	c, err := New(Config{
+		DataDir:    t.TempDir(),
+		ListenAddr: "127.0.0.1:0",
+		AnalyzeCmd: []string{script},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(c.Handler())
+	defer srv.Close()
+
+	const event = "pi:2026-07-04_11-00-00"
+	up := protocol.EventUpsert{
+		DeviceID: "pi",
+		Source:   protocol.EventSource{Type: "tesla_sentry", DirectoryName: "2026-07-04_11-00-00"},
+		Trigger:  &protocol.Trigger{OccurredAtLocal: "2026-07-04T11:00:00", CameraCode: "0"},
+	}
+	ingestV1(t, srv.URL, event, up, []ingestFile{
+		{"2026-07-04_11-00-00-front.mp4", []byte("x")},
+		{"event.json", []byte(`{"timestamp":"2026-07-04T11:00:00","camera":"0"}`)},
+	})
+
+	c.analyzeEvent(context.Background(), event, t.Logf)
+
+	ev, err := c.store.event(event)
 	if err != nil || ev == nil {
 		t.Fatal(err)
 	}

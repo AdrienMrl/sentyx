@@ -204,8 +204,7 @@ Content-Type: application/json
         <section id="compatibility">
           <h2>Compatibility and current limitations</h2>
           <ul>
-            <li>The legacy <code>PUT /files/TeslaCam/SentryClips/…</code> endpoint remains available during migration.</li>
-            <li>The Pi agent and <code>teslcam-watch</code> now publish through API v1 when <code>-post-to</code> is enabled.</li>
+            <li>API v1 is the only ingestion path: the Pi agent and <code>teslcam-watch</code> publish events, blobs, and manifests through it (there is no legacy filesystem-path upload endpoint).</li>
             <li>Finalized manifests are materialized into the existing file metadata view, so the current single-clip Gemini analyzer keeps working.</li>
             <li>The analyzer still selects one trigger-relevant clip. Passing the complete event manifest to a multi-camera analyzer is the next analysis-layer change.</li>
             <li>The agent’s queue is recoverable from its local spool and a fresh filesystem scan, but it is not yet a separately persisted outbox.</li>

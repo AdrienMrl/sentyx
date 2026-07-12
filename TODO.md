@@ -120,14 +120,13 @@
 
 ## 4. Server + analyzer wiring (Phase 3)
 
-- [x] Server (`internal/server`, `cmd/teslcam-server`): HTTP ingest
-      (`PUT /files/TeslaCam/SentryClips/<event>/<file>`, atomic store on
-      disk, sha256 + metadata in SQLite via modernc.org/sqlite), event
-      metadata parsed from event.json, inspection API (`GET /events[/<id>]`)
+- [x] Server (`internal/server`, `cmd/teslcam-server`): v1 content-addressed
+      HTTP ingest (blobs + typed manifests), atomic store on disk, sha256 +
+      metadata in SQLite via modernc.org/sqlite, inspection API
+      (`GET /events[/<id>]`)
 - [x] Event completion v1: agent explicitly finalizes a versioned manifest;
       server verifies every declared blob before atomically marking it ready.
-      The old event.json + QuietPeriod behavior remains only for legacy `/files`
-      clients during migration.
+      (The legacy event.json + QuietPeriod `/files` upload path has been removed.)
 - [x] Clip selection: trigger camera from event.json camera code (pillar
       codes map to repeaters), latest clip at/before the event timestamp,
       graceful fallbacks; AppleDouble junk ignored
@@ -136,8 +135,7 @@
 - [x] `analyze-video.ts --json`: Gemini structured output (responseSchema),
       verdict JSON on stdout, progress on stderr — parseable by the server
 - [x] Event uploader (`internal/eventupload`): idempotent event upsert, SHA-256
-      blob upload, typed manifest, generation finalization, and retry. Legacy
-      `internal/upload` remains for compatibility tests.
+      blob upload, typed manifest, generation finalization, and retry.
 - [x] Durable SQLite analysis jobs: finalized generations are queued in the
       same transaction, running jobs are reclaimed after restart, and analyzer
       failures receive three bounded attempts.

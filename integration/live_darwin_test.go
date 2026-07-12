@@ -108,10 +108,9 @@ func TestLiveWriterReaderHarness(t *testing.T) {
 	}
 	serverAddr := freePort(t)
 	srv, err := server.New(server.Config{
-		DataDir:     t.TempDir(),
-		ListenAddr:  serverAddr,
-		QuietPeriod: 2 * time.Second,
-		AnalyzeCmd:  []string{analyzer},
+		DataDir:    t.TempDir(),
+		ListenAddr: serverAddr,
+		AnalyzeCmd: []string{analyzer},
 	})
 	if err != nil {
 		t.Fatal(err)

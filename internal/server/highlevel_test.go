@@ -19,7 +19,7 @@ import (
 )
 
 func TestHighLevelAPIRequiresVerifiedManifest(t *testing.T) {
-	c, err := New(Config{DataDir: t.TempDir(), ListenAddr: "unused:0", QuietPeriod: time.Second})
+	c, err := New(Config{DataDir: t.TempDir(), ListenAddr: "unused:0"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +87,7 @@ func TestEventUploaderToDurableAnalysis(t *testing.T) {
 		t.Fatal(err)
 	}
 	c, err := New(Config{
-		DataDir: t.TempDir(), ListenAddr: "unused:0", QuietPeriod: time.Second,
+		DataDir: t.TempDir(), ListenAddr: "unused:0",
 		AnalyzeCmd: []string{analyzer}, Token: "secret",
 	})
 	if err != nil {
@@ -165,7 +165,7 @@ func TestEventUploaderToDurableAnalysis(t *testing.T) {
 
 func TestRunningAnalysisJobIsRecoveredAfterRestart(t *testing.T) {
 	data := t.TempDir()
-	c, err := New(Config{DataDir: data, ListenAddr: "unused:0", QuietPeriod: time.Second})
+	c, err := New(Config{DataDir: data, ListenAddr: "unused:0"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -185,7 +185,7 @@ func TestRunningAnalysisJobIsRecoveredAfterRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	restarted, err := New(Config{DataDir: data, ListenAddr: "unused:0", QuietPeriod: time.Second})
+	restarted, err := New(Config{DataDir: data, ListenAddr: "unused:0"})
 	if err != nil {
 		t.Fatal(err)
 	}

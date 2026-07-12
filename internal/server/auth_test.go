@@ -6,15 +6,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
-	"time"
 )
 
 func TestBearerTokenAuth(t *testing.T) {
 	c, err := New(Config{
-		DataDir:     t.TempDir(),
-		ListenAddr:  "127.0.0.1:0", // unused: we serve via httptest
-		QuietPeriod: time.Second,
-		Token:       "s3cret",
+		DataDir:    t.TempDir(),
+		ListenAddr: "127.0.0.1:0", // unused: we serve via httptest
+		Token:      "s3cret",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -22,12 +20,17 @@ func TestBearerTokenAuth(t *testing.T) {
 	srv := httptest.NewServer(c.Handler())
 	defer srv.Close()
 
+	// A valid event-upsert body so the authorized PUT reaches 200 rather than
+	// failing body validation; unauthorized requests are rejected by the
+	// middleware before the body is ever read.
+	body := []byte(`{"device_id":"pi","source":{"type":"tesla_sentry","directory_name":"2026-07-07_09-00-00"}}`)
 	do := func(method, path, auth string) *http.Response {
 		t.Helper()
-		req, err := http.NewRequest(method, srv.URL+path, bytes.NewReader([]byte("body")))
+		req, err := http.NewRequest(method, srv.URL+path, bytes.NewReader(body))
 		if err != nil {
 			t.Fatal(err)
 		}
+		req.Header.Set("Content-Type", "application/json")
 		if auth != "" {
 			req.Header.Set("Authorization", auth)
 		}
@@ -40,7 +43,7 @@ func TestBearerTokenAuth(t *testing.T) {
 		return resp
 	}
 
-	putPath := "/files/TeslaCam/SentryClips/2026-07-07_09-00-00/clip-front.mp4"
+	putPath := "/v1/events/pi:2026-07-07_09-00-00"
 	cases := []struct {
 		name, method, path, auth string
 		want                     int
@@ -65,9 +68,8 @@ func TestBearerTokenAuth(t *testing.T) {
 
 func TestNoTokenMeansNoAuth(t *testing.T) {
 	c, err := New(Config{
-		DataDir:     t.TempDir(),
-		ListenAddr:  "127.0.0.1:0",
-		QuietPeriod: time.Second,
+		DataDir:    t.TempDir(),
+		ListenAddr: "127.0.0.1:0",
 	})
 	if err != nil {
 		t.Fatal(err)

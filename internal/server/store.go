@@ -160,67 +160,6 @@ type FileInfo struct {
 	ReceivedAt time.Time `json:"received_at"`
 }
 
-// recordFile upserts the event and the file row for one received file.
-func (s *store) recordFile(eventID, name string, size int64, sha, storedPath string) error {
-	now := time.Now().UnixMilli()
-	tx, err := s.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	if _, err := tx.Exec(`
-		INSERT INTO events (id, first_seen, last_file_at, analysis_state)
-		VALUES (?, ?, ?, 'pending')
-		ON CONFLICT(id) DO UPDATE SET last_file_at = excluded.last_file_at`,
-		eventID, now, now); err != nil {
-		return err
-	}
-	if _, err := tx.Exec(`
-		INSERT INTO files (event_id, name, size, sha256, stored_path, received_at)
-		VALUES (?, ?, ?, ?, ?, ?)
-		ON CONFLICT(event_id, name) DO UPDATE SET
-		  size = excluded.size, sha256 = excluded.sha256,
-		  stored_path = excluded.stored_path, received_at = excluded.received_at`,
-		eventID, name, size, sha, storedPath, now); err != nil {
-		return err
-	}
-	return tx.Commit()
-}
-
-// setEventMeta stores fields parsed from event.json.
-func (s *store) setEventMeta(eventID, eventTS, city, reason, camera string) error {
-	_, err := s.db.Exec(`UPDATE events SET event_ts = ?, city = ?, reason = ?, camera = ? WHERE id = ?`,
-		eventTS, city, reason, camera, eventID)
-	return err
-}
-
-// completeQuietEvents marks events complete when event.json has been received
-// and no file has arrived for quiet. Returns the newly completed ids.
-func (s *store) completeQuietEvents(quiet time.Duration) ([]string, error) {
-	cutoff := time.Now().Add(-quiet).UnixMilli()
-	rows, err := s.db.Query(`
-		SELECT e.id FROM events e
-		WHERE e.completed_at IS NULL
-		  AND e.last_file_at <= ?
-		  AND EXISTS (SELECT 1 FROM files f
-		              WHERE f.event_id = e.id AND f.name = 'event.json')`,
-		cutoff)
-	if err != nil {
-		return nil, err
-	}
-	ids, err := scanIDs(rows)
-	if err != nil {
-		return nil, err
-	}
-	now := time.Now().UnixMilli()
-	for _, id := range ids {
-		if _, err := s.db.Exec(`UPDATE events SET completed_at = ?, state = 'ready' WHERE id = ?`, now, id); err != nil {
-			return nil, err
-		}
-	}
-	return ids, nil
-}
-
 // pendingAnalyses returns completed events whose analysis never ran to a
 // terminal state (e.g. the server was stopped mid-analysis).
 func (s *store) pendingAnalyses() ([]string, error) {

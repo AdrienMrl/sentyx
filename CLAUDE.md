@@ -27,9 +27,9 @@ Must work on macOS and Linux for development; the in-car component requires Linu
 ## Running the server locally
 
 Use `scripts/run-server-local.sh` (not a bare `go run ./cmd/teslcam-server`) —
-it sets sensible dev defaults (data dir, listen addr, short quiet period).
+it sets sensible dev defaults (data dir, listen addr).
 `ANALYZE=1 scripts/run-server-local.sh` enables Gemini analysis; override
-`DATA=`/`LISTEN=`/`QUIET=` via env vars.
+`DATA=`/`LISTEN=` via env vars.
 
 ## Test client
 
