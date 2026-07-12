@@ -12,9 +12,9 @@ Must work on macOS and Linux for development; the in-car component requires Linu
 [Tesla] --USB--> [Pi: gadget agent] --WiFi/LTE--> [Server: Mac/Linux] --> [Gemini analyzer (Go, in-process)]
 ```
 
-- **Gadget agent (Go, runs on Pi)** — exposes a sparse exFAT image as a USB mass-storage LUN via Linux configfs/gadget. The car writes `TeslaCam/SentryClips/...` to it as a normal drive.
+- **Gadget agent (Go, runs on Pi)** — exposes a sparse exFAT image as a USB mass-storage LUN via Linux configfs/gadget. The car writes `TeslaCam/SentryClips/...` to it as a normal drive. Uploads are durable (SQLite spool, `-spool-db`/`-spool-max-mb`): events survive reboots and multi-day offline windows, and are re-finalized on reconnect. With `-select-clips`, only the trigger camera's relevant clip (plus `event.json`/`thumb.png`) is uploaded per event (~30x less LTE data); everything still extracts to the local spool.
 - **Live exFAT reader (Go, shared code)** — reads the backing image out-of-band while the car has it mounted; parses exFAT directly (read-only, tolerant of a dirty/in-flight filesystem) to detect new `SentryClips/<timestamp>/` folders as they're written. This is the core custom component — no existing library does live/dirty exFAT reads.
-- **Server (Go, Mac/Linux)** — receives event notifications + files from the agent, stores them (SQLite), and analyzes the most relevant clip of each completed event.
+- **Server (Go, Mac/Linux)** — receives events over the v1 ingestion protocol (upsert → content-addressed blobs → manifest → explicit finalize; see `docs/api-reference.html` and `docs/ingestion-api.html`), stores them (SQLite), analyzes the most relevant clip of each finalized event, and can send Telegram alerts on completed verdicts (`internal/telegram`; enabled by `-telegram-token-file` + `-telegram-chat-id`).
 - **Simulator (Mac/Linux, dev-only)** — a fake "Tesla writer" that writes realistic SentryClips into a local exFAT image, exercising the same live-reader code without a Pi or car. Primary dev loop.
 - **Analyzer (Go, `internal/gemini`)** — native Gemini client (Files API upload + schema-constrained verdict); records per-event token usage in SQLite, aggregated at `GET /usage` for cost accounting. An external command can be substituted via `-analyze` (the original `experiments/gemini/analyze-video.ts` remains as a standalone experiment).
 
@@ -23,6 +23,37 @@ Must work on macOS and Linux for development; the in-car component requires Linu
 - Only SoCs with a dual-role/OTG USB controller (Pi Zero/3/4, etc.) can act as a USB device; Mac and most PC ports are host-only in silicon. This cannot be worked around in software.
 - For Mac-side testing without a Pi: use a Linux VM (UTM/QEMU) with the `dummy_hcd` kernel module, which emulates a full gadget+host USB loop entirely in software. This validates the configfs/gadget setup and the exFAT reader end-to-end, but not real dwc2/dwc3 hardware timing or actual Tesla MCU compatibility — final validation needs a real Pi Zero 2 W plugged into the car.
 - Reclaiming disk space on the backing image while the car may still be writing to it is the trickiest correctness problem (see teslausb's image-cycling approach for prior art).
+
+## Production deployment (VPS)
+
+The server runs on the DigitalOcean droplet `adri@vps` (161.35.232.246, x86_64),
+fronted by the existing Caddy install with automatic TLS:
+
+- **Public base URL: `https://teslcam.161-35-232-246.sslip.io`** (sslip.io needs
+  no DNS; to switch to `teslcam.adrien.uk`, add a DNS-only A record on
+  Cloudflare → 161.35.232.246 and run `scripts/deploy-server.sh caddy teslcam.adrien.uk`).
+- Manage with `scripts/deploy-server.sh` (`setup` / `deploy` / `caddy <host>` /
+  `status` / `logs`); target override via `TESLCAM_VPS=user@host`.
+- On the VPS: binary at `/usr/local/bin/teslcam-server`, exec'd through the
+  config-driven launcher `/usr/local/bin/teslcam-server-start`; config in
+  `/etc/teslcam/server.env` (GEMINI_API_KEY + GEMINI_MODEL=gemini-3.5-flash,
+  GEMINI_MEDIA_RESOLUTION=low set; TELEGRAM_CHAT_ID empty = alerts off); data in
+  `/var/lib/teslcam`; agent bearer token in `/etc/teslcam/ingest.token`.
+- `/healthz` is open; every other endpoint requires the bearer token.
+
+## Prototype hardware (in-car Pi)
+
+Current prototype is a **Pi 4 Model B** at `ssh adri@pi` (not the Pi Zero 2 W the
+plan targets — power is the constraint: glovebox USB is ~1–2A, keep CPU load low).
+Configured 2026-07: `dtoverlay=dwc2,dr_mode=peripheral` in `/boot/firmware/config.txt`,
+`dwc2`+`libcomposite` in `/etc/modules`; UDC `fe980000.usb`. Backing image at
+`/var/lib/teslcam/backing.img` — **must be MBR-partitioned** (single exFAT
+partition; the Tesla MCU ignores partitionless "superfloppy" images — see
+`exfat.LocateVolume`). Repo cloned at `~/code/sentyx`; Go 1.25.1 in `/usr/local/go`.
+Verified end-to-end against the real car: enumeration, live dirty-exFAT reads of
+in-flight Sentry events, clean gadget teardown. The car writes plaintext MP4s
+(firmware 2026.14; 2026.20+ encrypts by default on Ryzen-MCU cars — design note:
+detect encrypted clips before upload; possible key-broker decrypt-on-Pi later).
 
 ## Running the server locally
 
