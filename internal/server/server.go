@@ -14,7 +14,7 @@ import (
 	"time"
 )
 
-// Config for a Server. All fields are required except AnalyzeCmd.
+// Config for a Server. All fields are required except AnalyzeCmd/Analyzer.
 type Config struct {
 	DataDir    string // holds server.db and files/ (created if missing)
 	ListenAddr string // e.g. "127.0.0.1:8090"
@@ -22,9 +22,14 @@ type Config struct {
 	// and no file has arrived for this long (the car keeps writing the
 	// post-trigger minute ~1 minute after the trigger).
 	QuietPeriod time.Duration
-	// AnalyzeCmd, if set, runs on the selected clip once an event completes
-	// (the clip path is appended as the last argument). It must print a
-	// single JSON object to stdout. Empty = record events without analysis.
+	// Analyzer, if set, runs on the selected clip once an event completes.
+	// Mutually exclusive with AnalyzeCmd. Nil (and no AnalyzeCmd) = record
+	// events without analysis.
+	Analyzer Analyzer
+	// AnalyzeCmd, if set, runs an external analyzer command on the selected
+	// clip (the clip path is appended as the last argument). It must print a
+	// single JSON verdict object to stdout; a top-level "usage" key is
+	// recorded as token usage.
 	AnalyzeCmd []string
 	// Token, if set, requires "Authorization: Bearer <Token>" on every
 	// endpoint except /healthz. Empty = no auth (local dev / trusted
@@ -33,13 +38,21 @@ type Config struct {
 }
 
 type Server struct {
-	cfg   Config
-	store *store
+	cfg      Config
+	store    *store
+	analyzer Analyzer // nil = record only
 }
 
 func New(cfg Config) (*Server, error) {
 	if cfg.DataDir == "" || cfg.ListenAddr == "" || cfg.QuietPeriod <= 0 {
 		return nil, fmt.Errorf("server: DataDir, ListenAddr and QuietPeriod are all required")
+	}
+	if cfg.Analyzer != nil && len(cfg.AnalyzeCmd) > 0 {
+		return nil, fmt.Errorf("server: Analyzer and AnalyzeCmd are mutually exclusive")
+	}
+	analyzer := cfg.Analyzer
+	if len(cfg.AnalyzeCmd) > 0 {
+		analyzer = cmdAnalyzer{argv: cfg.AnalyzeCmd}
 	}
 	if err := os.MkdirAll(filepath.Join(cfg.DataDir, "files"), 0o755); err != nil {
 		return nil, err
@@ -48,7 +61,7 @@ func New(cfg Config) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Server{cfg: cfg, store: st}, nil
+	return &Server{cfg: cfg, store: st, analyzer: analyzer}, nil
 }
 
 // Run serves the ingest API and drives event completion until ctx is

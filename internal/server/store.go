@@ -100,6 +100,10 @@ func openStore(path string) (*store, error) {
 		`ALTER TABLE events ADD COLUMN source_event_id TEXT`,
 		`ALTER TABLE events ADD COLUMN metadata_json TEXT`,
 		`ALTER TABLE analysis_jobs ADD COLUMN available_at INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE events ADD COLUMN analysis_model TEXT`,
+		`ALTER TABLE events ADD COLUMN prompt_tokens INTEGER`,
+		`ALTER TABLE events ADD COLUMN output_tokens INTEGER`,
+		`ALTER TABLE events ADD COLUMN total_tokens INTEGER`,
 	} {
 		if _, err := db.Exec(stmt); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
 			db.Close()
@@ -139,6 +143,7 @@ type EventSummary struct {
 	ThreatLevel   string     `json:"threat_level,omitempty"`
 	AnalysisJSON  string     `json:"analysis_json,omitempty"`
 	AnalysisError string     `json:"analysis_error,omitempty"`
+	Usage         *TokenUsage `json:"usage,omitempty"`
 	FileCount     int        `json:"file_count"`
 	State         string     `json:"state"`
 	Generation    int        `json:"generation"`
@@ -241,10 +246,15 @@ func scanIDs(rows *sql.Rows) ([]string, error) {
 	return ids, rows.Err()
 }
 
-func (s *store) setAnalysis(eventID, state, clip, threatLevel, analysisJSON, analysisErr string) error {
+func (s *store) setAnalysis(eventID, state, clip, threatLevel, analysisJSON, analysisErr string, usage *TokenUsage) error {
+	var model, prompt, output, total any
+	if usage != nil {
+		model, prompt, output, total = usage.Model, usage.PromptTokens, usage.OutputTokens, usage.TotalTokens
+	}
 	_, err := s.db.Exec(`
 		UPDATE events SET analysis_state = ?, analyzed_clip = ?, threat_level = ?,
 		                  analysis_json = ?, analysis_error = ?,
+		                  analysis_model = ?, prompt_tokens = ?, output_tokens = ?, total_tokens = ?,
 		                  state = CASE ?
 		                    WHEN 'running' THEN 'analyzing'
 		                    WHEN 'done' THEN 'done'
@@ -252,8 +262,40 @@ func (s *store) setAnalysis(eventID, state, clip, threatLevel, analysisJSON, ana
 		                    WHEN 'failed' THEN 'failed'
 		                    ELSE state END
 		WHERE id = ?`,
-		state, clip, threatLevel, analysisJSON, analysisErr, state, eventID)
+		state, clip, threatLevel, analysisJSON, analysisErr,
+		model, prompt, output, total, state, eventID)
 	return err
+}
+
+// UsageTotal is aggregate token spend for one model.
+type UsageTotal struct {
+	Model        string `json:"model"`
+	Events       int64  `json:"events"`
+	PromptTokens int64  `json:"prompt_tokens"`
+	OutputTokens int64  `json:"output_tokens"`
+	TotalTokens  int64  `json:"total_tokens"`
+}
+
+// usageTotals sums recorded token usage per model across all analyzed events.
+func (s *store) usageTotals() ([]UsageTotal, error) {
+	rows, err := s.db.Query(`
+		SELECT COALESCE(analysis_model,''), COUNT(*),
+		       COALESCE(SUM(prompt_tokens),0), COALESCE(SUM(output_tokens),0), COALESCE(SUM(total_tokens),0)
+		FROM events WHERE total_tokens IS NOT NULL
+		GROUP BY analysis_model ORDER BY analysis_model`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []UsageTotal
+	for rows.Next() {
+		var u UsageTotal
+		if err := rows.Scan(&u.Model, &u.Events, &u.PromptTokens, &u.OutputTokens, &u.TotalTokens); err != nil {
+			return nil, err
+		}
+		out = append(out, u)
+	}
+	return out, rows.Err()
 }
 
 func (s *store) events() ([]EventSummary, error) {
@@ -262,6 +304,7 @@ func (s *store) events() ([]EventSummary, error) {
 		       COALESCE(e.event_ts,''), COALESCE(e.city,''), COALESCE(e.reason,''), COALESCE(e.camera,''),
 		       e.analysis_state, COALESCE(e.analyzed_clip,''), COALESCE(e.threat_level,''),
 		       COALESCE(e.analysis_json,''), COALESCE(e.analysis_error,''),
+		       COALESCE(e.analysis_model,''), e.prompt_tokens, e.output_tokens, e.total_tokens,
 		       (SELECT COUNT(*) FROM files f WHERE f.event_id = e.id),
 		       COALESCE(e.state,'receiving'), COALESCE(e.current_generation,0),
 		       COALESCE(e.device_id,''), COALESCE(e.source_event_id,'')
@@ -275,12 +318,23 @@ func (s *store) events() ([]EventSummary, error) {
 		var ev EventSummary
 		var first, last int64
 		var completed sql.NullInt64
+		var model string
+		var prompt, output, total sql.NullInt64
 		if err := rows.Scan(&ev.ID, &first, &last, &completed,
 			&ev.EventTS, &ev.City, &ev.Reason, &ev.Camera,
 			&ev.AnalysisState, &ev.AnalyzedClip, &ev.ThreatLevel,
-			&ev.AnalysisJSON, &ev.AnalysisError, &ev.FileCount,
+			&ev.AnalysisJSON, &ev.AnalysisError,
+			&model, &prompt, &output, &total, &ev.FileCount,
 			&ev.State, &ev.Generation, &ev.DeviceID, &ev.SourceEventID); err != nil {
 			return nil, err
+		}
+		if total.Valid {
+			ev.Usage = &TokenUsage{
+				Model:        model,
+				PromptTokens: prompt.Int64,
+				OutputTokens: output.Int64,
+				TotalTokens:  total.Int64,
+			}
 		}
 		ev.FirstSeen = time.UnixMilli(first)
 		ev.LastFileAt = time.UnixMilli(last)

@@ -19,6 +19,7 @@ import (
 //	PUT /files/TeslaCam/SentryClips/<event>/<name>  raw body = file bytes
 //	GET /events                                     all events (JSON)
 //	GET /events/<id>                                one event + its files
+//	GET /usage                                      analysis token spend per model
 //	GET /healthz                                    always unauthenticated
 //
 // With Config.Token set, everything but /healthz requires
@@ -33,6 +34,7 @@ func (c *Server) Handler() http.Handler {
 	mux.HandleFunc("PUT /files/", c.handlePutFile)
 	mux.HandleFunc("GET /events", c.handleEvents)
 	mux.HandleFunc("GET /events/{id}", c.handleEvent)
+	mux.HandleFunc("GET /usage", c.handleUsage)
 	authed := c.requireToken(mux)
 
 	outer := http.NewServeMux()
@@ -160,6 +162,21 @@ func (c *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(evs)
+}
+
+// handleUsage reports aggregate analysis token spend per model, for cost
+// accounting (multiply by the model's per-token prices).
+func (c *Server) handleUsage(w http.ResponseWriter, r *http.Request) {
+	totals, err := c.store.usageTotals()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if totals == nil {
+		totals = []UsageTotal{}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{"models": totals})
 }
 
 func (c *Server) handleEvent(w http.ResponseWriter, r *http.Request) {

@@ -1,27 +1,26 @@
 package server
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
 )
 
 // analyzeEvent selects the most relevant clip for a completed event, runs
-// AnalyzeCmd on it, and stores the verdict. All outcomes land in the store
-// (done/failed/skipped) so nothing is silently dropped.
+// the configured Analyzer on it, and stores the verdict plus token usage.
+// All outcomes land in the store (done/failed/skipped) so nothing is
+// silently dropped.
 func (c *Server) analyzeEvent(ctx context.Context, eventID string, logf func(string, ...any)) {
-	if len(c.cfg.AnalyzeCmd) == 0 {
-		c.store.setAnalysis(eventID, "skipped", "", "", "", "")
+	if c.analyzer == nil {
+		c.store.setAnalysis(eventID, "skipped", "", "", "", "", nil)
 		return
 	}
 	fail := func(clip string, err error) {
 		logf("analysis of %s failed: %v", eventID, err)
-		if serr := c.store.setAnalysis(eventID, "failed", clip, "", "", err.Error()); serr != nil {
+		if serr := c.store.setAnalysis(eventID, "failed", clip, "", "", err.Error(), nil); serr != nil {
 			logf("recording analysis failure for %s: %v", eventID, serr)
 		}
 	}
@@ -41,32 +40,28 @@ func (c *Server) analyzeEvent(ctx context.Context, eventID string, logf func(str
 		fail("", err)
 		return
 	}
-	if err := c.store.setAnalysis(eventID, "running", clip.Name, "", "", ""); err != nil {
+	if err := c.store.setAnalysis(eventID, "running", clip.Name, "", "", "", nil); err != nil {
 		logf("marking %s running: %v", eventID, err)
 	}
 
 	clipPath := filepath.Join(c.cfg.DataDir, clip.StoredPath)
 	logf("analyzing %s clip %s", eventID, clip.Name)
-	cmdCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
+	runCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
-	args := append(append([]string{}, c.cfg.AnalyzeCmd[1:]...), clipPath)
-	cmd := exec.CommandContext(cmdCtx, c.cfg.AnalyzeCmd[0], args...)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &stdout, &stderr
-	if err := cmd.Run(); err != nil {
-		fail(clip.Name, fmt.Errorf("analyzer: %w\nstderr: %s", err, truncate(stderr.String(), 2000)))
+	res, err := c.analyzer.Analyze(runCtx, clipPath)
+	if err != nil {
+		fail(clip.Name, err)
 		return
 	}
 
-	verdict := stdout.Bytes()
 	var parsed struct {
 		ThreatLevel string `json:"threat_level"`
 	}
-	if err := json.Unmarshal(verdict, &parsed); err != nil {
-		fail(clip.Name, fmt.Errorf("analyzer stdout is not a JSON object: %w\nstdout: %s", err, truncate(stdout.String(), 2000)))
+	if err := json.Unmarshal(res.VerdictJSON, &parsed); err != nil {
+		fail(clip.Name, fmt.Errorf("verdict is not a JSON object: %w\nverdict: %s", err, truncate(string(res.VerdictJSON), 2000)))
 		return
 	}
-	if err := c.store.setAnalysis(eventID, "done", clip.Name, parsed.ThreatLevel, string(verdict), ""); err != nil {
+	if err := c.store.setAnalysis(eventID, "done", clip.Name, parsed.ThreatLevel, string(res.VerdictJSON), "", res.Usage); err != nil {
 		logf("storing analysis for %s: %v", eventID, err)
 		return
 	}

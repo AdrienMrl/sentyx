@@ -2,27 +2,40 @@
 
 ## Objective
 
-Software that emulates a USB mass-storage device for a Tesla and collects Sentry Mode events in real time, so clips can be analyzed (currently via Gemini, see `analyze-video.ts`) as soon as they're written rather than after manually pulling the drive.
+Software that emulates a USB mass-storage device for a Tesla and collects Sentry Mode events in real time, so clips can be analyzed (via Gemini, `internal/gemini`) as soon as they're written rather than after manually pulling the drive.
 
 Must work on macOS and Linux for development; the in-car component requires Linux gadget-mode hardware (e.g. Raspberry Pi Zero 2 W) since USB device-mode requires a UDC that Mac/PC ports don't have.
 
 ## Architecture
 
 ```
-[Tesla] --USB--> [Pi: gadget agent] --WiFi/LTE--> [Server: Mac/Linux] --> [Gemini analyzer (TS)]
+[Tesla] --USB--> [Pi: gadget agent] --WiFi/LTE--> [Server: Mac/Linux] --> [Gemini analyzer (Go, in-process)]
 ```
 
 - **Gadget agent (Go, runs on Pi)** — exposes a sparse exFAT image as a USB mass-storage LUN via Linux configfs/gadget. The car writes `TeslaCam/SentryClips/...` to it as a normal drive.
 - **Live exFAT reader (Go, shared code)** — reads the backing image out-of-band while the car has it mounted; parses exFAT directly (read-only, tolerant of a dirty/in-flight filesystem) to detect new `SentryClips/<timestamp>/` folders as they're written. This is the core custom component — no existing library does live/dirty exFAT reads.
-- **Server (Go, Mac/Linux)** — receives event notifications + files from the agent, stores them (SQLite), and triggers downstream analysis (webhook into the existing TS/Gemini pipeline).
+- **Server (Go, Mac/Linux)** — receives event notifications + files from the agent, stores them (SQLite), and analyzes the most relevant clip of each completed event.
 - **Simulator (Mac/Linux, dev-only)** — a fake "Tesla writer" that writes realistic SentryClips into a local exFAT image, exercising the same live-reader code without a Pi or car. Primary dev loop.
-- **Analyzer (existing TS/Gemini code)** — `analyze-video.ts` and friends; the server feeds this rather than replacing it.
+- **Analyzer (Go, `internal/gemini`)** — native Gemini client (Files API upload + schema-constrained verdict); records per-event token usage in SQLite, aggregated at `GET /usage` for cost accounting. An external command can be substituted via `-analyze` (the original `experiments/gemini/analyze-video.ts` remains as a standalone experiment).
 
 ## Key constraints
 
 - Only SoCs with a dual-role/OTG USB controller (Pi Zero/3/4, etc.) can act as a USB device; Mac and most PC ports are host-only in silicon. This cannot be worked around in software.
 - For Mac-side testing without a Pi: use a Linux VM (UTM/QEMU) with the `dummy_hcd` kernel module, which emulates a full gadget+host USB loop entirely in software. This validates the configfs/gadget setup and the exFAT reader end-to-end, but not real dwc2/dwc3 hardware timing or actual Tesla MCU compatibility — final validation needs a real Pi Zero 2 W plugged into the car.
 - Reclaiming disk space on the backing image while the car may still be writing to it is the trickiest correctness problem (see teslausb's image-cycling approach for prior art).
+
+## Running the server locally
+
+Use `scripts/run-server-local.sh` (not a bare `go run ./cmd/teslcam-server`) —
+it sets sensible dev defaults (data dir, listen addr, short quiet period).
+`ANALYZE=1 scripts/run-server-local.sh` enables Gemini analysis; override
+`DATA=`/`LISTEN=`/`QUIET=` via env vars.
+
+## Test client
+
+`cmd/teslcam-test` is a CLI that pushes one real clip through the ingest API
+and prints the analyzer result (library code in `internal/testcli`). Use it to
+exercise the server end-to-end; see `cmd/teslcam-test/README.md`.
 
 ## Dev VM (gadget testing without hardware)
 

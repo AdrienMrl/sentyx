@@ -19,6 +19,8 @@ const log = jsonMode ? console.error : console.log;
 
 const ai = new GoogleGenAI({ apiKey });
 
+const MODEL = "gemini-3.5-flash";
+
 const PROMPT = `You are a security analyst reviewing footage from a Tesla vehicle's
 Sentry Mode / TeslaCam system. This camera activates when the parked car detects a
 potential threat nearby.
@@ -82,9 +84,9 @@ async function main() {
     throw new Error("Uploaded file is missing uri/mimeType");
   }
 
-  log("Analyzing with gemini-3.5-flash ...\n");
+  log(`Analyzing with ${MODEL} ...\n`);
   const response = await ai.models.generateContent({
-    model: "gemini-3.5-flash",
+    model: MODEL,
     contents: [
       {
         role: "user",
@@ -104,8 +106,20 @@ async function main() {
 
   if (jsonMode) {
     if (!response.text) throw new Error("Empty response from Gemini");
-    JSON.parse(response.text); // fail loudly here rather than in the caller
-    console.log(response.text);
+    const verdict = JSON.parse(response.text); // fail loudly here rather than in the caller
+    const u = response.usageMetadata;
+    if (!u || u.totalTokenCount === undefined) {
+      throw new Error("Gemini response has no usageMetadata");
+    }
+    // Thinking tokens are billed at the output rate, so fold them into
+    // output_tokens for cost accounting.
+    verdict.usage = {
+      model: MODEL,
+      prompt_tokens: u.promptTokenCount ?? 0,
+      output_tokens: (u.candidatesTokenCount ?? 0) + (u.thoughtsTokenCount ?? 0),
+      total_tokens: u.totalTokenCount,
+    };
+    console.log(JSON.stringify(verdict));
   } else {
     console.log("===== GEMINI ANALYSIS =====\n");
     console.log(response.text);

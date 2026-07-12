@@ -16,11 +16,22 @@ cd "$PROJECT_DIR"
 
 args=(-data "$DATA" -listen "$LISTEN" -quiet "$QUIET")
 if [[ "${ANALYZE:-}" == "1" ]]; then
-  # dotenv otherwise searches the server's repo-root working directory,
-  # while the analyzer's documented .env lives beside the experiment.
-  export DOTENV_CONFIG_PATH="${DOTENV_CONFIG_PATH:-$PROJECT_DIR/experiments/gemini/.env}"
-  args+=(-analyze "${ANALYZE_CMD:-experiments/gemini/node_modules/.bin/tsx experiments/gemini/analyze-video.ts --json}")
-  echo ">> analysis ON (needs GEMINI_API_KEY in experiments/gemini/.env)"
+  if [[ -n "${ANALYZE_CMD:-}" ]]; then
+    # Escape hatch: run an external analyzer command instead of the
+    # built-in Gemini client (e.g. the TS experiment, or a fake in tests).
+    args+=(-analyze "$ANALYZE_CMD")
+    echo ">> analysis ON via external command: $ANALYZE_CMD"
+  else
+    if [[ -z "${GEMINI_API_KEY:-}" ]]; then
+      # The key historically lives in the experiment's .env.
+      set -a; source "$PROJECT_DIR/experiments/gemini/.env"; set +a
+    fi
+    args+=(-gemini-model "${GEMINI_MODEL:-gemini-3.5-flash}")
+    if [[ -n "${GEMINI_MEDIA_RESOLUTION:-}" ]]; then
+      args+=(-gemini-media-resolution "$GEMINI_MEDIA_RESOLUTION")
+    fi
+    echo ">> analysis ON (native Gemini, model ${GEMINI_MODEL:-gemini-3.5-flash}${GEMINI_MEDIA_RESOLUTION:+, media resolution $GEMINI_MEDIA_RESOLUTION})"
+  fi
 else
   echo ">> record-only (set ANALYZE=1 to enable Gemini analysis)"
 fi

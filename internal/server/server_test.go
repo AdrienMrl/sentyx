@@ -92,7 +92,7 @@ func fakeAnalyzer(t *testing.T) []string {
 	script := filepath.Join(t.TempDir(), "analyze.sh")
 	body := `#!/bin/sh
 test -r "$1" || { echo "clip not readable: $1" >&2; exit 1; }
-echo '{"concern_detected":true,"threat_level":"high","what_happened":"person kicked the car","evidence":"boot contact at 00:12","recommended_action":"report to police"}'
+echo '{"concern_detected":true,"threat_level":"high","what_happened":"person kicked the car","evidence":"boot contact at 00:12","recommended_action":"report to police","usage":{"model":"fake-model","prompt_tokens":15000,"output_tokens":200,"total_tokens":15200}}'
 `
 	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
 		t.Fatal(err)
@@ -194,6 +194,20 @@ func TestIngestCompleteAnalyze(t *testing.T) {
 	var verdict map[string]any
 	if err := json.Unmarshal([]byte(got.AnalysisJSON), &verdict); err != nil || verdict["concern_detected"] != true {
 		t.Errorf("verdict not stored as JSON: %s (%v)", got.AnalysisJSON, err)
+	}
+	if got.Usage == nil {
+		t.Error("token usage not stored")
+	} else if got.Usage.Model != "fake-model" || got.Usage.PromptTokens != 15000 ||
+		got.Usage.OutputTokens != 200 || got.Usage.TotalTokens != 15200 {
+		t.Errorf("token usage wrong: %+v", *got.Usage)
+	}
+	var totals struct {
+		Models []UsageTotal `json:"models"`
+	}
+	getJSON(t, srv.URL+"/usage", &totals)
+	if len(totals.Models) != 1 || totals.Models[0].Model != "fake-model" ||
+		totals.Models[0].Events != 1 || totals.Models[0].TotalTokens != 15200 {
+		t.Errorf("/usage totals wrong: %+v", totals.Models)
 	}
 	if len(got.Files) != 5 {
 		t.Errorf("file count: got %d, want 5", len(got.Files))
