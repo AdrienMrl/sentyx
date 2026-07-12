@@ -91,6 +91,15 @@ type ingestFile struct {
 	body   []byte
 }
 
+type recordingAnalyzer struct {
+	clip AnalysisClip
+}
+
+func (a *recordingAnalyzer) Analyze(_ context.Context, clip AnalysisClip) (*AnalysisResult, error) {
+	a.clip = clip
+	return &AnalysisResult{VerdictJSON: []byte(`{"threat_level":"low"}`)}, nil
+}
+
 // putBlob uploads one content-addressed blob and asserts a 200.
 func putBlob(t *testing.T, base, sha string, body []byte) {
 	t.Helper()
@@ -252,6 +261,39 @@ func TestIngestCompleteAnalyze(t *testing.T) {
 	getJSON(t, srv.URL+"/events/"+event, &got)
 	if len(got.Files) != 5 {
 		t.Errorf("re-upload duplicated a file row: %d", len(got.Files))
+	}
+}
+
+func TestAnalyzePassesLogicalNameForExtensionlessBlob(t *testing.T) {
+	analyzer := &recordingAnalyzer{}
+	c, err := New(Config{
+		DataDir: t.TempDir(), ListenAddr: "127.0.0.1:0", Analyzer: analyzer,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(c.Handler())
+	defer srv.Close()
+
+	const event = "pi:extensionless-blob"
+	up := protocol.EventUpsert{
+		DeviceID: "pi",
+		Source:   protocol.EventSource{Type: "tesla_sentry", DirectoryName: "extensionless-blob"},
+		Trigger:  &protocol.Trigger{OccurredAtLocal: "2026-07-04T10:01:31", CameraCode: "0"},
+	}
+	ingestV1(t, srv.URL, event, up, []ingestFile{
+		{"2026-07-04_10-01-31-front.mp4", []byte("clip bytes")},
+	})
+
+	c.analyzeEvent(context.Background(), event, t.Logf)
+	if analyzer.clip.Name != "2026-07-04_10-01-31-front.mp4" {
+		t.Fatalf("logical clip name = %q", analyzer.clip.Name)
+	}
+	if ext := filepath.Ext(analyzer.clip.Path); ext != "" {
+		t.Fatalf("content-addressed blob unexpectedly has extension %q", ext)
+	}
+	if _, err := os.Stat(analyzer.clip.Path); err != nil {
+		t.Fatalf("physical clip path is not readable: %v", err)
 	}
 }
 
