@@ -33,9 +33,21 @@ type Config struct {
 	DeviceID         string        // stable source device identifier used in event keys
 	RetryDelay       time.Duration // upload retry delay; required when PostTo is set
 	EventSettleDelay time.Duration // quiet time after the last stable file before finalization
+	SpoolDBPath      string        // durable pending-upload queue DB; required when PostTo is set
+	SpoolMaxBytes    int64         // cap on the durable spool; required (> 0) when PostTo is set
 	// VideoCompression, when non-nil, compresses eligible MP4s before upload.
 	// Other files and failed/ineffective transcodes use their original bytes.
 	VideoCompression *videocompress.Config
+
+	// SelectClips gates uploads to only the trigger camera's relevant clip per
+	// event (plus event.json and thumb.png); all other clips stay extracted
+	// locally but are not uploaded. Requires PostTo. When false the pipeline
+	// uploads every extracted file (the original behaviour), unchanged.
+	SelectClips bool
+	// SelectMetadataTimeout is the fallback window: if event.json has not
+	// appeared this long after an event's last stable clip, every held clip for
+	// that event is uploaded rather than lost. Required (> 0) when SelectClips.
+	SelectMetadataTimeout time.Duration
 
 	Logf func(format string, v ...any)
 }
@@ -58,8 +70,19 @@ func Run(ctx context.Context, cfg Config) error {
 	if cfg.PostTo != "" && (cfg.DeviceID == "" || cfg.EventSettleDelay <= 0) {
 		return fmt.Errorf("pipeline: DeviceID and EventSettleDelay are required with PostTo")
 	}
+	if cfg.PostTo != "" && (cfg.SpoolDBPath == "" || cfg.SpoolMaxBytes <= 0) {
+		return fmt.Errorf("pipeline: SpoolDBPath and SpoolMaxBytes (> 0) are required with PostTo")
+	}
 	if cfg.VideoCompression != nil && cfg.PostTo == "" {
 		return fmt.Errorf("pipeline: VideoCompression requires PostTo")
+	}
+	if cfg.SelectClips {
+		if cfg.PostTo == "" {
+			return fmt.Errorf("pipeline: SelectClips requires PostTo")
+		}
+		if cfg.SelectMetadataTimeout <= 0 {
+			return fmt.Errorf("pipeline: SelectMetadataTimeout (> 0) is required with SelectClips")
+		}
 	}
 
 	var compressor *videocompress.Compressor
@@ -85,6 +108,7 @@ func Run(ctx context.Context, cfg Config) error {
 		uploader, err = eventupload.New(eventupload.Config{
 			BaseURL: cfg.PostTo, RetryDelay: cfg.RetryDelay,
 			SettleDelay: cfg.EventSettleDelay, DeviceID: cfg.DeviceID, Token: cfg.PostToken,
+			SpoolDBPath: cfg.SpoolDBPath, SpoolMaxBytes: cfg.SpoolMaxBytes, Logf: cfg.Logf,
 		})
 		if err != nil {
 			return err
@@ -143,6 +167,29 @@ func Run(ctx context.Context, cfg Config) error {
 			cfg.VideoCompression.MinBitrate/1000, cfg.VideoCompression.MaxBitrate/1000)
 	}
 
+	// enqueueFile routes one extracted file into the real upload path: MP4s go
+	// through the compression queue when enabled, everything else straight to
+	// the uploader. Both the upload-everything path and the clip selector feed
+	// through this, so a selected clip is compressed exactly like any other.
+	enqueueFile := func(localPath, imagePath string) {
+		if compressionJobs != nil && strings.EqualFold(filepath.Ext(localPath), ".mp4") {
+			select {
+			case compressionJobs <- compressionJob{localPath: localPath, imagePath: imagePath}:
+			case <-ctx.Done():
+			}
+		} else {
+			uploader.Enqueue(eventupload.Item{LocalPath: localPath, ImagePath: imagePath})
+		}
+	}
+
+	// When -select-clips is on, the selector holds each event's clips and only
+	// enqueues the trigger camera's relevant one once event.json is known.
+	var selector *clipSelector
+	if cfg.SelectClips {
+		selector = newClipSelector(cfg.SelectMetadataTimeout, cfg.Logf, enqueueFile)
+		cfg.Logf("clip selection enabled: uploading only the trigger clip per event (metadata timeout %s)", cfg.SelectMetadataTimeout)
+	}
+
 	var copier *copyout.Copier
 	if cfg.CopyTo != "" {
 		copier, err = copyout.New(copyout.Config{
@@ -160,15 +207,13 @@ func Run(ctx context.Context, cfg Config) error {
 				} else {
 					cfg.Logf("copy: %s -> %s (%d bytes)", r.Path, r.Dest, r.Bytes)
 				}
-				if uploader != nil {
-					if compressionJobs != nil && strings.EqualFold(filepath.Ext(r.Dest), ".mp4") {
-						select {
-						case compressionJobs <- compressionJob{localPath: r.Dest, imagePath: r.Path}:
-						case <-ctx.Done():
-						}
-					} else {
-						uploader.Enqueue(eventupload.Item{LocalPath: r.Dest, ImagePath: r.Path})
-					}
+				if uploader == nil {
+					return
+				}
+				if selector != nil {
+					selector.onFile(r.Dest, r.Path)
+				} else {
+					enqueueFile(r.Dest, r.Path)
 				}
 			},
 			func(path string, err error) {

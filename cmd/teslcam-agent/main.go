@@ -43,7 +43,11 @@ func main() {
 	postTo := flag.String("post-to", "", "push extracted files to this server base URL (requires -copy-to as the local spool)")
 	deviceID := flag.String("device-id", "", "stable source device ID used in event keys; default is the hostname")
 	eventSettle := flag.Duration("event-settle", 90*time.Second, "quiet time after the last stable event file before finalizing")
+	spoolDB := flag.String("spool-db", "", "SQLite file holding the durable pending-upload queue (required with -post-to)")
+	spoolMaxMB := flag.Int64("spool-max-mb", 0, "cap on the durable upload spool in MiB; oldest uploaded files evicted first (required, > 0, with -post-to)")
 	tokenFile := flag.String("token-file", "", "file holding the server's bearer token; empty = no auth")
+	selectClips := flag.Bool("select-clips", false, "upload only the trigger camera's relevant clip per event (plus event.json/thumb.png); other clips stay extracted locally but are not uploaded")
+	selectMetadataTimeout := flag.Duration("select-metadata-timeout", 0, "fallback: if event.json has not appeared this long after an event's last stable clip, upload all held clips (required, > 0, with -select-clips)")
 	compressVideo := flag.Bool("compress-video", true, "compress suitable H.264 MP4s before upload")
 	videoRatio := flag.Float64("video-target-ratio", videocompress.DefaultTargetRatio, "target fraction of the source video bitrate")
 	videoMinMB := flag.Int64("video-min-mb", videocompress.DefaultMinInputBytes>>20, "only compress videos at least this many MiB")
@@ -56,6 +60,23 @@ func main() {
 	flag.Parse()
 	if *imagePath == "" || *udc == "" {
 		log.Fatal("both -image and -udc are required")
+	}
+	// The durable spool queue is what lets the car spend days parked offline
+	// without losing pending uploads across reboots, so its config is required
+	// whenever uploading is enabled — no implicit path or cap.
+	if *postTo != "" && (*spoolDB == "" || *spoolMaxMB <= 0) {
+		log.Fatal("-spool-db and -spool-max-mb (> 0) are required with -post-to")
+	}
+	// Clip selection cuts LTE/Gemini cost ~30x but must never silently lose an
+	// event, so its fallback timeout is required and explicit — no implicit
+	// default that would hide a stuck event behind an arbitrary window.
+	if *selectClips {
+		if *postTo == "" {
+			log.Fatal("-select-clips requires -post-to")
+		}
+		if *selectMetadataTimeout <= 0 {
+			log.Fatal("-select-metadata-timeout (> 0) is required with -select-clips")
+		}
 	}
 	token, err := tokenfile.Read(*tokenFile)
 	if err != nil {
@@ -122,18 +143,22 @@ func main() {
 	}
 
 	runErr := pipeline.Run(ctx, pipeline.Config{
-		ImagePath:        *imagePath,
-		Interval:         *interval,
-		StablePolls:      *stablePolls,
-		CopyTo:           *copyTo,
-		CopyPrefix:       *copyPrefix,
-		PostTo:           *postTo,
-		PostToken:        token,
-		DeviceID:         *deviceID,
-		RetryDelay:       5 * time.Second,
-		EventSettleDelay: *eventSettle,
-		VideoCompression: videoCompression,
-		Logf:             log.Printf,
+		ImagePath:             *imagePath,
+		Interval:              *interval,
+		StablePolls:           *stablePolls,
+		CopyTo:                *copyTo,
+		CopyPrefix:            *copyPrefix,
+		PostTo:                *postTo,
+		PostToken:             token,
+		DeviceID:              *deviceID,
+		RetryDelay:            5 * time.Second,
+		EventSettleDelay:      *eventSettle,
+		SpoolDBPath:           *spoolDB,
+		SpoolMaxBytes:         *spoolMaxMB << 20,
+		VideoCompression:      videoCompression,
+		SelectClips:           *selectClips,
+		SelectMetadataTimeout: *selectMetadataTimeout,
+		Logf:                  log.Printf,
 	})
 
 	if err := g.Teardown(); err != nil {
