@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/AdrienMrl/teslcam/internal/cameraselect"
 	"github.com/AdrienMrl/teslcam/internal/copyout"
 	"github.com/AdrienMrl/teslcam/internal/eventupload"
 	"github.com/AdrienMrl/teslcam/internal/videocompress"
@@ -55,6 +56,11 @@ type Config struct {
 	// appeared this long after an event's last stable clip, every held clip for
 	// that event is uploaded rather than lost. Required (> 0) when SelectClips.
 	SelectMetadataTimeout time.Duration
+	// CameraScorer replaces Tesla's unreliable camera code with measured neural
+	// and class-agnostic video scores. CameraScoreWait is a short debounce that
+	// lets every trigger-time camera clip stabilize before scoring begins.
+	CameraScorer    cameraselect.Scorer
+	CameraScoreWait time.Duration
 
 	Logf func(format string, v ...any)
 }
@@ -90,6 +96,11 @@ func Run(ctx context.Context, cfg Config) error {
 		if cfg.SelectMetadataTimeout <= 0 {
 			return fmt.Errorf("pipeline: SelectMetadataTimeout (> 0) is required with SelectClips")
 		}
+		if cfg.CameraScorer != nil && cfg.CameraScoreWait <= 0 {
+			return fmt.Errorf("pipeline: CameraScoreWait (> 0) is required with CameraScorer")
+		}
+	} else if cfg.CameraScorer != nil {
+		return fmt.Errorf("pipeline: CameraScorer requires SelectClips")
 	}
 
 	var compressor *videocompress.Compressor
@@ -193,8 +204,14 @@ func Run(ctx context.Context, cfg Config) error {
 	// enqueues the trigger camera's relevant one once event.json is known.
 	var selector *clipSelector
 	if cfg.SelectClips {
-		selector = newClipSelector(cfg.SelectMetadataTimeout, cfg.Logf, enqueueFile)
-		cfg.Logf("clip selection enabled: uploading only the trigger clip per event (metadata timeout %s)", cfg.SelectMetadataTimeout)
+		if cfg.CameraScorer != nil {
+			selector = newScoredClipSelector(ctx, cfg.SelectMetadataTimeout, cfg.CameraScoreWait, cfg.CameraScorer, cfg.Logf, enqueueFile)
+			cfg.Logf("camera scoring enabled: uploading a recall-biased camera set (wait %s, fallback timeout %s)",
+				cfg.CameraScoreWait, cfg.SelectMetadataTimeout)
+		} else {
+			selector = newClipSelector(cfg.SelectMetadataTimeout, cfg.Logf, enqueueFile)
+			cfg.Logf("clip selection enabled: uploading only the Tesla trigger clip per event (metadata timeout %s)", cfg.SelectMetadataTimeout)
+		}
 	}
 
 	var copier *copyout.Copier
@@ -218,9 +235,10 @@ func Run(ctx context.Context, cfg Config) error {
 					return
 				}
 				if selector != nil {
-					selected := selector.onFile(r.Dest, r.Path)
-					if selected != "" && copier.Promote(selected, copyPrioritySelected) {
-						cfg.Logf("copy priority: selected clip %s promoted ahead of background retention", selected)
+					for _, selected := range selector.onFile(r.Dest, r.Path) {
+						if copier.Promote(selected, copyPrioritySelected) {
+							cfg.Logf("copy priority: candidate clip %s promoted ahead of background retention", selected)
+						}
 					}
 				} else {
 					enqueueFile(r.Dest, r.Path)
@@ -242,16 +260,18 @@ func Run(ctx context.Context, cfg Config) error {
 			}
 			if copier != nil && ev.Type == watch.FileStable {
 				priority := initialCopyPriority(ev.Path)
-				var selected string
+				var selected []string
 				if selector != nil {
 					selected = selector.onStable(ev.Path)
-					if selected == ev.Path {
+					if containsPath(selected, ev.Path) {
 						priority = copyPrioritySelected
 					}
 				}
 				copier.EnqueuePriority(ev.Path, priority)
-				if selected != "" && selected != ev.Path && copier.Promote(selected, copyPrioritySelected) {
-					cfg.Logf("copy priority: selected clip %s promoted after stabilizing %s", selected, ev.Path)
+				for _, candidate := range selected {
+					if candidate != ev.Path && copier.Promote(candidate, copyPrioritySelected) {
+						cfg.Logf("copy priority: candidate clip %s promoted after stabilizing %s", candidate, ev.Path)
+					}
 				}
 			}
 		},
@@ -263,6 +283,15 @@ func Run(ctx context.Context, cfg Config) error {
 		return nil
 	}
 	return err
+}
+
+func containsPath(paths []string, want string) bool {
+	for _, path := range paths {
+		if path == want {
+			return true
+		}
+	}
+	return false
 }
 
 // initialCopyPriority gets selection metadata out of the live image before

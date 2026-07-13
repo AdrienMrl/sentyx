@@ -1,11 +1,15 @@
 package pipeline
 
 import (
+	"context"
+	"encoding/json"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/AdrienMrl/teslcam/internal/cameraselect"
 	"github.com/AdrienMrl/teslcam/internal/clipselect"
 )
 
@@ -28,8 +32,12 @@ import (
 // All state is guarded by mu: onFile runs on the single copy-out goroutine,
 // but the per-event fallback timers fire on their own goroutines.
 type clipSelector struct {
-	timeout time.Duration
-	logf    func(format string, v ...any)
+	ctx       context.Context
+	timeout   time.Duration
+	scoreWait time.Duration
+	scorer    cameraselect.Scorer
+	policy    cameraselect.Policy
+	logf      func(format string, v ...any)
 	// enqueue routes a decided file to the real upload path (compression queue
 	// or uploader) exactly as the upload-everything path would.
 	enqueue func(localPath, imagePath string)
@@ -39,14 +47,18 @@ type clipSelector struct {
 }
 
 type heldEvent struct {
-	meta     *clipselect.Metadata // nil until event.json is seen
-	known    []string             // stable .mp4 image paths, copied or still pending
-	knownSet map[string]bool
-	held     []mp4Ref // .mp4 segments seen so far (image paths + local copies)
-	heldSet  map[string]bool
-	enqueued map[string]bool // image paths already handed to enqueue (dedupe)
-	timedOut bool            // fallback fired: pass everything through directly
-	timer    *time.Timer     // fallback: fires timeout after the last held clip
+	meta       *clipselect.Metadata // nil until event.json is seen
+	known      []string             // stable .mp4 image paths, copied or still pending
+	knownSet   map[string]bool
+	held       []mp4Ref // .mp4 segments seen so far (image paths + local copies)
+	heldSet    map[string]bool
+	enqueued   map[string]bool // image paths already handed to enqueue (dedupe)
+	timedOut   bool            // fallback fired: pass everything through directly
+	timer      *time.Timer     // fallback: fires timeout after the last held clip
+	scoreTimer *time.Timer
+	scoreReady bool
+	scoring    bool
+	scored     bool
 }
 
 type mp4Ref struct {
@@ -55,34 +67,42 @@ type mp4Ref struct {
 }
 
 func newClipSelector(timeout time.Duration, logf func(string, ...any), enqueue func(localPath, imagePath string)) *clipSelector {
+	return newScoredClipSelector(context.Background(), timeout, 0, nil, logf, enqueue)
+}
+
+func newScoredClipSelector(ctx context.Context, timeout, scoreWait time.Duration, scorer cameraselect.Scorer, logf func(string, ...any), enqueue func(localPath, imagePath string)) *clipSelector {
 	return &clipSelector{
-		timeout: timeout,
-		logf:    logf,
-		enqueue: enqueue,
-		events:  map[string]*heldEvent{},
+		ctx:       ctx,
+		timeout:   timeout,
+		scoreWait: scoreWait,
+		scorer:    scorer,
+		policy:    cameraselect.DefaultPolicy(),
+		logf:      logf,
+		enqueue:   enqueue,
+		events:    map[string]*heldEvent{},
 	}
 }
 
 // onStable records an MP4 as soon as the watcher declares it stable, before
 // the copy-out worker reaches it. Once metadata is known this returns the best
 // clip's image path so the caller can promote that pending copy.
-func (s *clipSelector) onStable(imagePath string) string {
-	_, name := eventKeyAndName(imagePath)
+func (s *clipSelector) onStable(imagePath string) []string {
+	sourceID, name := eventKeyAndName(imagePath)
 	if !strings.HasSuffix(strings.ToLower(name), ".mp4") {
-		return ""
+		return nil
 	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	ev := s.eventLocked(imagePath)
 	s.recordKnownLocked(ev, imagePath)
-	return s.runSelectionLocked(ev)
+	return s.runSelectionLocked(sourceID, ev)
 }
 
 // onFile is called once per stable (or re-reported) extracted file.
 // It returns the selected image path, when known, so a still-pending copy can
 // be promoted ahead of background retention work.
-func (s *clipSelector) onFile(localPath, imagePath string) string {
+func (s *clipSelector) onFile(localPath, imagePath string) []string {
 	sourceID, name := eventKeyAndName(imagePath)
 	lower := strings.ToLower(name)
 
@@ -94,7 +114,7 @@ func (s *clipSelector) onFile(localPath, imagePath string) string {
 	// Once the fallback has fired, every file for the event goes straight up.
 	if ev.timedOut {
 		s.enqueueLocked(ev, localPath, imagePath)
-		return ""
+		return nil
 	}
 
 	switch {
@@ -109,10 +129,15 @@ func (s *clipSelector) onFile(localPath, imagePath string) string {
 		} else {
 			ev.meta = &meta
 		}
-		if ev.timer != nil {
-			ev.timer.Stop() // metadata is here; the no-metadata fallback is moot
+		if s.scorer == nil {
+			if ev.timer != nil {
+				ev.timer.Stop() // legacy selection no longer needs its fallback
+			}
+		} else {
+			s.armScoreTimerLocked(sourceID, ev)
+			s.armTimerLocked(sourceID, ev) // scorer/copy failure safety fallback
 		}
-		return s.runSelectionLocked(ev)
+		return s.runSelectionLocked(sourceID, ev)
 
 	case strings.HasSuffix(lower, ".mp4"):
 		// Hold the clip; (re)arm the fallback from this last-stable moment. If
@@ -124,12 +149,12 @@ func (s *clipSelector) onFile(localPath, imagePath string) string {
 			ev.held = append(ev.held, mp4Ref{imagePath: imagePath, localPath: localPath})
 		}
 		s.armTimerLocked(sourceID, ev)
-		return s.runSelectionLocked(ev)
+		return s.runSelectionLocked(sourceID, ev)
 
 	default:
 		// thumb.png and any other small non-video artifact: upload immediately.
 		s.enqueueLocked(ev, localPath, imagePath)
-		return ""
+		return nil
 	}
 }
 
@@ -159,13 +184,48 @@ func (s *clipSelector) recordKnownLocked(ev *heldEvent, imagePath string) {
 // currently-held set and enqueues it if not already sent. Re-running on every
 // new clip means a late segment that becomes the better match is enqueued too;
 // enqueued is never un-set, so at worst a rare boundary case uploads two clips.
-func (s *clipSelector) runSelectionLocked(ev *heldEvent) string {
+func (s *clipSelector) runSelectionLocked(sourceID string, ev *heldEvent) []string {
 	if ev.meta == nil {
-		return ""
+		return nil
 	}
+	if s.scorer != nil {
+		candidates, err := clipselect.Candidates(ev.known, *ev.meta)
+		if err != nil {
+			return nil
+		}
+		promote := make([]string, 0, len(candidates))
+		for _, candidate := range candidates {
+			promote = append(promote, candidate.Path)
+		}
+		if ev.scoreReady && !ev.scoring && !ev.scored && !ev.timedOut {
+			local := make(map[string]string, len(ev.held))
+			for _, held := range ev.held {
+				local[held.imagePath] = held.localPath
+			}
+			ready := make([]scoringCandidate, 0, len(candidates))
+			for _, candidate := range candidates {
+				localPath := local[candidate.Path]
+				if localPath == "" {
+					return promote // wait for the promoted copy to finish
+				}
+				ready = append(ready, scoringCandidate{
+					imagePath: candidate.Path,
+					Candidate: cameraselect.Candidate{
+						Camera: candidate.Camera, LocalPath: localPath,
+						EventOffsetSeconds: candidate.EventOffsetSeconds,
+					},
+				})
+			}
+			ev.scoring = true
+			meta := *ev.meta
+			go s.scoreEvent(sourceID, ev, meta, ready)
+		}
+		return promote
+	}
+
 	sel, err := clipselect.Select(ev.known, *ev.meta)
 	if err != nil {
-		return "" // trigger camera has no clip yet; wait for more (or the timeout)
+		return nil // trigger camera has no clip yet; wait for more (or the timeout)
 	}
 	for _, m := range ev.held {
 		if m.imagePath == sel {
@@ -173,7 +233,101 @@ func (s *clipSelector) runSelectionLocked(ev *heldEvent) string {
 			break
 		}
 	}
-	return sel
+	return []string{sel}
+}
+
+type scoringCandidate struct {
+	cameraselect.Candidate
+	imagePath string
+}
+
+func (s *clipSelector) armScoreTimerLocked(sourceID string, ev *heldEvent) {
+	if ev.scoreTimer != nil || ev.scored || ev.scoring {
+		return
+	}
+	if s.scoreWait <= 0 {
+		ev.scoreReady = true
+		return
+	}
+	ev.scoreTimer = time.AfterFunc(s.scoreWait, func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		current := s.events[sourceID]
+		if current == nil || current.timedOut || current.scored {
+			return
+		}
+		current.scoreReady = true
+		s.runSelectionLocked(sourceID, current)
+	})
+}
+
+func (s *clipSelector) scoreEvent(sourceID string, target *heldEvent, meta clipselect.Metadata, candidates []scoringCandidate) {
+	ctx, cancel := context.WithTimeout(s.ctx, 3*time.Minute)
+	defer cancel()
+	scores := make([]cameraselect.Score, 0, len(candidates))
+	for _, candidate := range candidates {
+		score, err := s.scorer.Score(ctx, candidate.Candidate)
+		if err != nil {
+			s.logf("camera selection: scoring %s/%s failed: %v", sourceID, candidate.Camera, err)
+			score = cameraselect.Score{Camera: candidate.Camera, Error: err.Error()}
+		} else {
+			s.logf("camera selection: %s/%s score=%.3f objects=%.3f motion=%.3f novelty=%.3f occlusion=%.3f reasons=%v",
+				sourceID, candidate.Camera, score.Combined, score.Objects, score.Motion, score.Novelty, score.Occlusion, score.Reasons)
+		}
+		scores = append(scores, score)
+	}
+	selection := s.policy.Select(scores, clipselect.CameraName(meta.Camera))
+	data, err := json.MarshalIndent(selection, "", "  ")
+	if err == nil {
+		data = append(data, '\n')
+	}
+	var metadataLocal, metadataImage string
+	if err == nil && len(candidates) > 0 {
+		metadataLocal = filepath.Join(filepath.Dir(candidates[0].LocalPath), cameraselect.MetadataName)
+		metadataImage = strings.TrimSuffix(candidates[0].imagePath, filepath.Base(candidates[0].imagePath)) + cameraselect.MetadataName
+		err = os.WriteFile(metadataLocal, data, 0o644)
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ev := s.events[sourceID]
+	if ev == nil || ev != target {
+		return
+	}
+	ev.scoring = false
+	ev.scored = true
+	if ev.timer != nil {
+		ev.timer.Stop()
+	}
+	if ev.timedOut {
+		return // safety fallback already uploaded every held clip
+	}
+	if err != nil {
+		s.logf("camera selection: writing metadata for %s failed; uploading all held clips: %v", sourceID, err)
+		for _, held := range ev.held {
+			s.enqueueLocked(ev, held.localPath, held.imagePath)
+		}
+		return
+	}
+	selected := make(map[string]bool, len(selection.Selected))
+	for _, camera := range selection.Selected {
+		selected[camera] = true
+	}
+	for _, candidate := range candidates {
+		if selected[candidate.Camera] {
+			s.enqueueLocked(ev, candidate.LocalPath, candidate.imagePath)
+		}
+	}
+	s.enqueueLocked(ev, metadataLocal, metadataImage)
+	s.logf("camera selection: %s ranked=%v selected=%v", sourceID, cameraNames(selection.Ranked), selection.Selected)
+}
+
+func cameraNames(scores []cameraselect.Score) []string {
+	names := make([]string, 0, len(scores))
+	for _, score := range scores {
+		names = append(names, score.Camera)
+	}
+	return names
 }
 
 func (s *clipSelector) enqueueLocked(ev *heldEvent, localPath, imagePath string) {
@@ -199,12 +353,17 @@ func (s *clipSelector) onTimeout(sourceID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	ev := s.events[sourceID]
-	if ev == nil || ev.meta != nil || ev.timedOut {
-		return // metadata landed (or already flushed) in the meantime
+	if ev == nil || ev.timedOut || (ev.meta != nil && (s.scorer == nil || ev.scored)) {
+		return // legacy selection or neural scoring already completed
 	}
 	ev.timedOut = true
-	s.logf("clip selection: WARNING no event.json for %s within %s; uploading all %d held clip(s)",
-		sourceID, s.timeout, len(ev.held))
+	if ev.meta == nil {
+		s.logf("clip selection: WARNING no event.json for %s within %s; uploading all %d held clip(s)",
+			sourceID, s.timeout, len(ev.held))
+	} else {
+		s.logf("camera selection: WARNING scoring did not complete for %s within %s; uploading all %d held clip(s)",
+			sourceID, s.timeout, len(ev.held))
+	}
 	for _, m := range ev.held {
 		s.enqueueLocked(ev, m.localPath, m.imagePath)
 	}

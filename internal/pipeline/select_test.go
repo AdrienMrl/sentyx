@@ -1,11 +1,15 @@
 package pipeline
 
 import (
+	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/AdrienMrl/teslcam/internal/cameraselect"
 )
 
 // recorder captures the (imagePath) order in which files are handed to the
@@ -26,6 +30,14 @@ func (r *recorder) snapshot() []string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return append([]string(nil), r.got...)
+}
+
+type fixedScorer struct {
+	scores map[string]cameraselect.Score
+}
+
+func (s fixedScorer) Score(_ context.Context, candidate cameraselect.Candidate) (cameraselect.Score, error) {
+	return s.scores[candidate.Camera], nil
 }
 
 // writeEventJSON writes an event.json into a temp dir and returns its path.
@@ -102,21 +114,21 @@ func TestSelectorChoosesStableUncopiedClip(t *testing.T) {
 		want,
 		evDir + "/2026-07-12_12-29-00-front.mp4",
 	} {
-		if got := sel.onStable(path); got != "" {
-			t.Fatalf("selected before metadata: %s", got)
+		if got := sel.onStable(path); len(got) != 0 {
+			t.Fatalf("selected before metadata: %v", got)
 		}
 	}
 
 	selected := sel.onFile(writeEventJSON(t, "5", "2026-07-12T12:29:46"), evDir+"/event.json")
-	if selected != want {
-		t.Fatalf("selected pending clip = %q, want %q", selected, want)
+	if len(selected) != 1 || selected[0] != want {
+		t.Fatalf("selected pending clip = %v, want %q", selected, want)
 	}
 	if contains(r.snapshot(), want) {
 		t.Fatal("pending clip uploaded before it had a local copy")
 	}
 
-	if selected = sel.onFile("/local/selected.mp4", want); selected != want {
-		t.Fatalf("selected copied clip = %q, want %q", selected, want)
+	if selected = sel.onFile("/local/selected.mp4", want); len(selected) != 1 || selected[0] != want {
+		t.Fatalf("selected copied clip = %v, want %q", selected, want)
 	}
 	if !contains(r.snapshot(), want) {
 		t.Fatalf("selected clip was not uploaded after copy: %v", r.snapshot())
@@ -209,5 +221,61 @@ func TestSelectorMetadataBeatsTimeout(t *testing.T) {
 	}
 	if !contains(got, evDir+"/2026-07-12_12-29-00-front.mp4") {
 		t.Errorf("selected front clip not uploaded: %v", got)
+	}
+}
+
+func TestScoredSelectorUploadsGenerousRankedSetAndMetadata(t *testing.T) {
+	r := &recorder{}
+	localDir := t.TempDir()
+	scorer := fixedScorer{scores: map[string]cameraselect.Score{
+		"back":           {Camera: "back", Objects: .90, Motion: .70, Reasons: []string{"person"}},
+		"front":          {Camera: "front", Objects: .05},
+		"left_repeater":  {Camera: "left_repeater", Motion: .62, Novelty: .55},
+		"right_repeater": {Camera: "right_repeater", Motion: .10},
+	}}
+	sel := newScoredClipSelector(context.Background(), time.Hour, 10*time.Millisecond, scorer, discard, r.enqueue)
+
+	files := []string{
+		"2026-07-12_12-29-00-back.mp4",
+		"2026-07-12_12-29-00-front.mp4",
+		"2026-07-12_12-29-00-left_repeater.mp4",
+		"2026-07-12_12-29-00-right_repeater.mp4",
+	}
+	for _, file := range files {
+		imagePath := evDir + "/" + file
+		sel.onStable(imagePath)
+		sel.onFile(filepath.Join(localDir, file), imagePath)
+	}
+	promoted := sel.onFile(writeEventJSON(t, "6", "2026-07-12T12:29:46"), evDir+"/event.json")
+	if len(promoted) != len(files) {
+		t.Fatalf("promoted %v, want every camera candidate", promoted)
+	}
+
+	metadataImage := evDir + "/" + cameraselect.MetadataName
+	deadline := time.Now().Add(2 * time.Second)
+	for !contains(r.snapshot(), metadataImage) && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	got := r.snapshot()
+	for _, camera := range []string{"back", "left_repeater", "right_repeater"} {
+		path := evDir + "/2026-07-12_12-29-00-" + camera + ".mp4"
+		if !contains(got, path) {
+			t.Errorf("selected camera %s not enqueued: %v", camera, got)
+		}
+	}
+	if contains(got, evDir+"/2026-07-12_12-29-00-front.mp4") {
+		t.Errorf("low-score front camera unexpectedly selected: %v", got)
+	}
+
+	data, err := os.ReadFile(filepath.Join(localDir, cameraselect.MetadataName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var metadata cameraselect.Metadata
+	if err := json.Unmarshal(data, &metadata); err != nil {
+		t.Fatal(err)
+	}
+	if metadata.Ranked[0].Camera != "back" || len(metadata.Selected) != 3 {
+		t.Fatalf("selection metadata = %+v", metadata)
 	}
 }

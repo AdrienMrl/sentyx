@@ -24,6 +24,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/AdrienMrl/teslcam/internal/cameraselect"
 	"github.com/AdrienMrl/teslcam/internal/gadget"
 	"github.com/AdrienMrl/teslcam/internal/pipeline"
 	"github.com/AdrienMrl/teslcam/internal/tokenfile"
@@ -48,6 +49,13 @@ func main() {
 	tokenFile := flag.String("token-file", "", "file holding the server's bearer token; empty = no auth")
 	selectClips := flag.Bool("select-clips", false, "upload only the trigger camera's relevant clip per event (plus event.json/thumb.png); other clips stay extracted locally but are not uploaded")
 	selectMetadataTimeout := flag.Duration("select-metadata-timeout", 0, "fallback: if event.json has not appeared this long after an event's last stable clip, upload all held clips (required, > 0, with -select-clips)")
+	cameraScorerPath := flag.String("camera-scorer", "", "native camera scoring executable; empty keeps Tesla camera-code selection")
+	cameraModelParam := flag.String("camera-model-param", "", "NanoDet NCNN .param file (required with -camera-scorer)")
+	cameraModelBin := flag.String("camera-model-bin", "", "NanoDet NCNN .bin file (required with -camera-scorer)")
+	cameraScoreWait := flag.Duration("camera-score-wait", 15*time.Second, "wait after event.json for trigger-time camera copies before scoring")
+	cameraScoreWindow := flag.Float64("camera-score-window", 12, "seconds around the Tesla event timestamp scored per camera")
+	cameraScoreFPS := flag.Float64("camera-score-fps", 2, "class-agnostic motion samples per second")
+	cameraScoreThreads := flag.Int("camera-score-threads", 2, "CPU threads used by camera scoring")
 	compressVideo := flag.Bool("compress-video", true, "compress suitable H.264 MP4s before upload")
 	videoRatio := flag.Float64("video-target-ratio", videocompress.DefaultTargetRatio, "target fraction of the source video bitrate")
 	videoMinMB := flag.Int64("video-min-mb", videocompress.DefaultMinInputBytes>>20, "only compress videos at least this many MiB")
@@ -77,6 +85,9 @@ func main() {
 		if *selectMetadataTimeout <= 0 {
 			log.Fatal("-select-metadata-timeout (> 0) is required with -select-clips")
 		}
+	}
+	if *cameraScorerPath != "" && !*selectClips {
+		log.Fatal("-camera-scorer requires -select-clips")
 	}
 	token, err := tokenfile.Read(*tokenFile)
 	if err != nil {
@@ -141,6 +152,16 @@ func main() {
 		cfg.MinSavingsRatio = *videoMinSavings
 		videoCompression = &cfg
 	}
+	var cameraScorer cameraselect.Scorer
+	if *cameraScorerPath != "" {
+		cameraScorer, err = cameraselect.NewCommandScorer(cameraselect.CommandConfig{
+			Path: *cameraScorerPath, ModelParam: *cameraModelParam, ModelBin: *cameraModelBin,
+			Window: *cameraScoreWindow, SampleFPS: *cameraScoreFPS, Threads: *cameraScoreThreads,
+		})
+		if err != nil {
+			log.Fatal(err)
+		}
+	}
 
 	runErr := pipeline.Run(ctx, pipeline.Config{
 		ImagePath:             *imagePath,
@@ -158,6 +179,8 @@ func main() {
 		VideoCompression:      videoCompression,
 		SelectClips:           *selectClips,
 		SelectMetadataTimeout: *selectMetadataTimeout,
+		CameraScorer:          cameraScorer,
+		CameraScoreWait:       *cameraScoreWait,
 		Logf:                  log.Printf,
 	})
 
