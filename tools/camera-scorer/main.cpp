@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "nanodet.h"
+#include <cpu.h>
 
 namespace {
 
@@ -168,7 +169,8 @@ void add_detections(NanoDet& detector, const cv::Mat& frame, Signals& signals) {
 
 Signals score_video(const Config& cfg) {
     cv::setNumThreads(cfg.threads);
-	NanoDet detector(cfg.model_param.c_str(), cfg.model_bin.c_str(), false);
+    ncnn::set_omp_num_threads(cfg.threads);
+    NanoDet detector(cfg.model_param.c_str(), cfg.model_bin.c_str(), false);
 
     cv::VideoCapture video(cfg.video);
     if (!video.isOpened()) throw std::runtime_error("cannot open video");

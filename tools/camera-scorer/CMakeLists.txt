@@ -16,7 +16,11 @@ find_package(OpenMP REQUIRED)
 # compatibility copy without that obsolete call instead of modifying the
 # upstream checkout.
 file(READ ${NANODET_DIR}/demo_ncnn/nanodet.cpp NANODET_SOURCE)
+set(NANODET_SOURCE "#include <cpu.h>\n${NANODET_SOURCE}")
 string(REPLACE "ex.set_num_threads(4);" "" NANODET_SOURCE "${NANODET_SOURCE}")
+string(REPLACE "this->Net = new ncnn::Net();"
+  "this->Net = new ncnn::Net();\n    this->Net->opt.num_threads = ncnn::get_omp_num_threads();"
+  NANODET_SOURCE "${NANODET_SOURCE}")
 file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/nanodet_compat.cpp "${NANODET_SOURCE}")
 
 add_executable(teslcam-camera-scorer main.cpp ${CMAKE_CURRENT_BINARY_DIR}/nanodet_compat.cpp)

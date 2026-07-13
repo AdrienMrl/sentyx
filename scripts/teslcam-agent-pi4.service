@@ -1,0 +1,35 @@
+[Unit]
+Description=teslcam Pi 4 gadget agent with local camera scoring
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStartPre=/sbin/modprobe libcomposite
+ExecStart=/usr/local/bin/teslcam-agent \
+  -image /var/lib/teslcam/backing-part.img \
+  -udc auto \
+  -interval 2s \
+  -stable-polls 3 \
+  -copy-to /var/lib/teslcam/clips \
+  -copy-prefix /TeslaCam/SentryClips \
+  -post-to https://teslcam.161-35-232-246.sslip.io \
+  -token-file /etc/teslcam/server.token \
+  -spool-db /var/lib/teslcam/spool.db \
+  -spool-max-mb 8192 \
+  -select-clips \
+  -select-metadata-timeout 5m \
+  -camera-scorer /usr/local/bin/teslcam-camera-scorer \
+  -camera-model-param /usr/local/share/teslcam/nanodet-plus-m_416.param \
+  -camera-model-bin /usr/local/share/teslcam/nanodet-plus-m_416.bin \
+  -camera-score-wait 15s \
+  -camera-score-window 12 \
+  -camera-score-fps 2 \
+  -camera-score-threads 1 \
+  -camera-score-timeout 90s \
+  -camera-score-cooldown 3s
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
