@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/AdrienMrl/teslcam/internal/cameraselect"
 	"github.com/AdrienMrl/teslcam/internal/protocol"
 )
 
@@ -67,6 +68,47 @@ func TestSelectClip(t *testing.T) {
 	}
 	if _, err = selectClip([]FileInfo{{Name: "event.json"}}, "", "0"); err == nil {
 		t.Error("no clips: expected error")
+	}
+}
+
+func TestSelectClipRankedOverridesUnreliableTeslaCamera(t *testing.T) {
+	files := []FileInfo{
+		{Name: "2026-07-04_10-01-00-back.mp4"},
+		{Name: "2026-07-04_10-01-00-right_repeater.mp4"},
+	}
+	clip, err := selectClipRanked(files, "2026-07-04T10:01:30", "6", []string{"back", "right_repeater"})
+	if err != nil || clip.Name != "2026-07-04_10-01-00-back.mp4" {
+		t.Fatalf("ranked selection = %v, %v", clip, err)
+	}
+	if got := prettyClipCamera(clip.Name); got != "back" {
+		t.Fatalf("pretty selected camera = %q", got)
+	}
+}
+
+func TestSelectClipRankedSkipsMissingCandidate(t *testing.T) {
+	files := []FileInfo{{Name: "2026-07-04_10-01-00-left_repeater.mp4"}}
+	clip, err := selectClipRanked(files, "2026-07-04T10:01:30", "6", []string{"back", "left_repeater"})
+	if err != nil || clip.Name != files[0].Name {
+		t.Fatalf("ranked missing-camera fallback = %v, %v", clip, err)
+	}
+}
+
+func TestParseCameraSelection(t *testing.T) {
+	data, err := json.Marshal(cameraselect.Metadata{
+		Version: 1,
+		Ranked:  []cameraselect.Score{{Camera: "back"}, {Camera: "back"}, {Camera: "left_pillar"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := parseCameraSelection(data)
+	if err != nil || strings.Join(got, ",") != "back,left_pillar" {
+		t.Fatalf("parsed selection = %v, %v", got, err)
+	}
+	for _, bad := range [][]byte{[]byte(`{`), []byte(`{"version":2,"ranked":[]}`)} {
+		if _, err := parseCameraSelection(bad); err == nil {
+			t.Fatalf("parseCameraSelection(%s) succeeded", bad)
+		}
 	}
 }
 

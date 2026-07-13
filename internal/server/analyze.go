@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/AdrienMrl/teslcam/internal/cameraselect"
 )
 
 // analyzeEvent selects the most relevant clip for a completed event, runs
@@ -39,7 +41,11 @@ func (c *Server) analyzeEvent(ctx context.Context, eventID string, logf func(str
 		fail("", err)
 		return
 	}
-	clip, err := selectClip(files, ev.EventTS, ev.Camera)
+	rankedCameras, selectionErr := loadCameraSelection(c.cfg.DataDir, files)
+	if selectionErr != nil {
+		logf("camera selection metadata for %s is invalid; using Tesla fallback: %v", eventID, selectionErr)
+	}
+	clip, err := selectClipRanked(files, ev.EventTS, ev.Camera, rankedCameras)
 	if err != nil {
 		fail("", err)
 		return
@@ -94,7 +100,7 @@ func (c *Server) analyzeEvent(ctx context.Context, eventID string, logf func(str
 		WhatHappened:      parsed.WhatHappened,
 		RecommendedAction: parsed.RecommendedAction,
 		City:              ev.City,
-		Camera:            prettyCamera(ev.Camera),
+		Camera:            prettyClipCamera(clip.Name),
 		EventTS:           ev.EventTS,
 		Verbose:           c.cfg.DebugNotifications,
 		VerdictJSON:       res.VerdictJSON,
@@ -164,6 +170,14 @@ func prettyCamera(code string) string {
 	return strings.ReplaceAll(cameraName(code), "_", " ")
 }
 
+func prettyClipCamera(name string) string {
+	_, camera, ok := parseClipName(name)
+	if !ok {
+		return ""
+	}
+	return strings.ReplaceAll(camera, "_", " ")
+}
+
 // cameraName maps Tesla's event.json camera codes to clip-name cameras.
 // Codes without their own clip stream (pillar cameras) map to the nearest
 // repeater; unknown codes fall back to front.
@@ -185,23 +199,51 @@ func cameraName(code string) string {
 // trigger happened in); failing that, the camera's latest clip; failing
 // that, any camera's latest clip.
 func selectClip(files []FileInfo, eventTS, cameraCode string) (*FileInfo, error) {
+	return selectClipRanked(files, eventTS, cameraCode, nil)
+}
+
+// selectClipRanked honors the Pi's measured camera rank when available. The
+// Tesla camera code remains only a backwards-compatible fallback for agents
+// that do not upload camera-selection.json.
+func selectClipRanked(files []FileInfo, eventTS, cameraCode string, rankedCameras []string) (*FileInfo, error) {
+	for _, camera := range rankedCameras {
+		if clip := selectCameraClip(files, eventTS, camera); clip != nil {
+			return clip, nil
+		}
+	}
 	cam := cameraName(cameraCode)
+	if clip := selectCameraClip(files, eventTS, cam); clip != nil {
+		return clip, nil
+	}
+
+	var bestAny *FileInfo
+	for i := range files {
+		f := &files[i]
+		stamp, _, ok := parseClipName(f.Name)
+		if ok && (bestAny == nil || stamp > mustStamp(bestAny)) {
+			bestAny = f
+		}
+	}
+	if bestAny != nil {
+		return bestAny, nil
+	}
+	return nil, fmt.Errorf("event has no clips to analyze (%d files)", len(files))
+}
+
+func selectCameraClip(files []FileInfo, eventTS, camera string) *FileInfo {
 
 	// Clip names are <stamp>-<camera>.mp4 with stamp 2006-01-02_15-04-05;
 	// event_ts is 2006-01-02T15:04:05. Normalized, both sort lexically.
 	evStamp := strings.ReplaceAll(strings.ReplaceAll(eventTS, "T", "_"), ":", "-")
 
-	var best, bestOfCam, bestAny *FileInfo
+	var best, bestOfCam *FileInfo
 	for i := range files {
 		f := &files[i]
 		stamp, fcam, ok := parseClipName(f.Name)
 		if !ok {
 			continue
 		}
-		if bestAny == nil || stamp > mustStamp(bestAny) {
-			bestAny = f
-		}
-		if fcam != cam {
+		if fcam != camera {
 			continue
 		}
 		if bestOfCam == nil || stamp > mustStamp(bestOfCam) {
@@ -211,15 +253,50 @@ func selectClip(files []FileInfo, eventTS, cameraCode string) (*FileInfo, error)
 			best = f
 		}
 	}
-	switch {
-	case best != nil:
-		return best, nil
-	case bestOfCam != nil:
-		return bestOfCam, nil
-	case bestAny != nil:
-		return bestAny, nil
+	if best != nil {
+		return best
 	}
-	return nil, fmt.Errorf("event has no clips to analyze (%d files)", len(files))
+	if bestOfCam != nil {
+		return bestOfCam
+	}
+	return nil
+}
+
+func loadCameraSelection(dataDir string, files []FileInfo) ([]string, error) {
+	for _, file := range files {
+		if file.Name != cameraselect.MetadataName {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(dataDir, file.StoredPath))
+		if err != nil {
+			return nil, err
+		}
+		return parseCameraSelection(data)
+	}
+	return nil, nil
+}
+
+func parseCameraSelection(data []byte) ([]string, error) {
+	var meta cameraselect.Metadata
+	if err := json.Unmarshal(data, &meta); err != nil {
+		return nil, err
+	}
+	if meta.Version != 1 || len(meta.Ranked) == 0 {
+		return nil, fmt.Errorf("unsupported or empty camera selection metadata")
+	}
+	seen := map[string]bool{}
+	ranked := make([]string, 0, len(meta.Ranked))
+	for _, score := range meta.Ranked {
+		if score.Camera == "" || seen[score.Camera] {
+			continue
+		}
+		seen[score.Camera] = true
+		ranked = append(ranked, score.Camera)
+	}
+	if len(ranked) == 0 {
+		return nil, fmt.Errorf("camera selection contains no camera names")
+	}
+	return ranked, nil
 }
 
 // parseClipName splits "<stamp>-<camera>.mp4" into its stamp and camera.
