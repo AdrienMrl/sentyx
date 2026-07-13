@@ -18,9 +18,16 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
+
+type Candidate struct {
+	Path               string
+	Camera             string
+	EventOffsetSeconds float64
+}
 
 const (
 	stampLayout = "2006-01-02_15-04-05" // clip filename timestamp
@@ -99,6 +106,58 @@ func Select(files []string, meta Metadata) (string, error) {
 		return bestOfCam, nil
 	}
 	return "", fmt.Errorf("clipselect: no %s clip among %d file(s)", cam, len(files))
+}
+
+// Candidates returns the trigger-covering clip for every camera represented
+// in files. It deliberately ignores Tesla's unreliable camera code; callers
+// can score every view and retain several candidates. Results are sorted by
+// camera for deterministic scoring and metadata.
+func Candidates(files []string, meta Metadata) ([]Candidate, error) {
+	eventTime, err := time.Parse(tsLayout, meta.Timestamp)
+	if err != nil {
+		return nil, fmt.Errorf("clipselect: parsing event timestamp: %w", err)
+	}
+	type choice struct {
+		path        string
+		stamp       string
+		started     time.Time
+		beforeEvent bool
+	}
+	byCamera := map[string]choice{}
+	for _, file := range files {
+		stamp, camera, ok := parseClipName(filepath.Base(file))
+		if !ok {
+			continue
+		}
+		started, err := time.Parse(stampLayout, stamp)
+		if err != nil {
+			continue
+		}
+		before := !started.After(eventTime)
+		current, exists := byCamera[camera]
+		if !exists || (before && !current.beforeEvent) ||
+			(before == current.beforeEvent && stamp > current.stamp) {
+			byCamera[camera] = choice{path: file, stamp: stamp, started: started, beforeEvent: before}
+		}
+	}
+	if len(byCamera) == 0 {
+		return nil, fmt.Errorf("clipselect: no camera clips among %d file(s)", len(files))
+	}
+	cameras := make([]string, 0, len(byCamera))
+	for camera := range byCamera {
+		cameras = append(cameras, camera)
+	}
+	sort.Strings(cameras)
+	out := make([]Candidate, 0, len(cameras))
+	for _, camera := range cameras {
+		selected := byCamera[camera]
+		offset := eventTime.Sub(selected.started).Seconds()
+		if offset < 0 {
+			offset = 0
+		}
+		out = append(out, Candidate{Path: selected.path, Camera: camera, EventOffsetSeconds: offset})
+	}
+	return out, nil
 }
 
 // parseClipName splits "<stamp>-<camera>.mp4" into its stamp and camera. The

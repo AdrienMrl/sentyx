@@ -1,6 +1,7 @@
 package clipselect
 
 import (
+	"path/filepath"
 	"testing"
 )
 
@@ -114,6 +115,39 @@ func TestSelect(t *testing.T) {
 				t.Fatalf("Select = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestCandidatesSelectsEveryCameraAtEventTime(t *testing.T) {
+	meta := Metadata{Timestamp: "2026-07-12T12:29:46", Camera: "6"}
+	files := []string{
+		"/e/2026-07-12_12-28-00-back.mp4",
+		"/e/2026-07-12_12-29-00-back.mp4",
+		"/e/2026-07-12_12-30-00-back.mp4",
+		"/e/2026-07-12_12-29-20-front.mp4",
+		"/e/2026-07-12_12-29-00-left_pillar.mp4",
+	}
+	got, err := Candidates(files, meta)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("Candidates returned %d: %+v", len(got), got)
+	}
+	if got[0].Camera != "back" || filepath.Base(got[0].Path) != "2026-07-12_12-29-00-back.mp4" || got[0].EventOffsetSeconds != 46 {
+		t.Fatalf("back candidate = %+v", got[0])
+	}
+	if got[1].Camera != "front" || got[1].EventOffsetSeconds != 26 {
+		t.Fatalf("front candidate = %+v", got[1])
+	}
+}
+
+func TestCandidatesRejectsMissingTimestampOrClips(t *testing.T) {
+	if _, err := Candidates([]string{"x.mp4"}, Metadata{Timestamp: "bad"}); err == nil {
+		t.Fatal("invalid timestamp accepted")
+	}
+	if _, err := Candidates([]string{"event.json"}, Metadata{Timestamp: "2026-07-12T12:29:46"}); err == nil {
+		t.Fatal("missing clips accepted")
 	}
 }
 
