@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestCommandScorer(t *testing.T) {
@@ -74,6 +75,27 @@ func TestCommandScorerSerializesNativeInference(t *testing.T) {
 	wg.Wait()
 	if _, err := os.Stat(overlap); !os.IsNotExist(err) {
 		t.Fatal("native scorer commands overlapped")
+	}
+}
+
+func TestCommandScorerBoundsEachNativeInvocation(t *testing.T) {
+	command := filepath.Join(t.TempDir(), "score")
+	if err := os.WriteFile(command, []byte("#!/bin/sh\nsleep 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	scorer, err := NewCommandScorer(CommandConfig{
+		Path: command, ModelParam: "p", ModelBin: "b", Window: 1, SampleFPS: 1, Threads: 1,
+		Timeout: 20 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := time.Now()
+	if _, err := scorer.Score(context.Background(), Candidate{Camera: "back", LocalPath: "v", EventOffsetSeconds: 1}); err == nil {
+		t.Fatal("Score succeeded")
+	}
+	if elapsed := time.Since(started); elapsed > 500*time.Millisecond {
+		t.Fatalf("native timeout took %v", elapsed)
 	}
 }
 

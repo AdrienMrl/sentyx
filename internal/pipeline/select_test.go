@@ -327,3 +327,42 @@ func TestScoredSelectorRestoresPersistedSelectionWithoutInference(t *testing.T) 
 		t.Fatalf("restored enqueue set = %v", got)
 	}
 }
+
+func TestScoredSelectorRetriesInterruptedPersistedSelection(t *testing.T) {
+	localDir := t.TempDir()
+	metadata := cameraselect.Metadata{
+		Version: 1,
+		Ranked: []cameraselect.Score{
+			{Camera: "back", Error: context.Canceled.Error()},
+			{Camera: "front", Error: context.Canceled.Error()},
+		},
+		Selected: []string{"back", "front"},
+	}
+	data, err := json.Marshal(metadata)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(localDir, cameraselect.MetadataName), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	scorer := &countingScorer{}
+	sel := newScoredClipSelector(context.Background(), time.Hour, time.Millisecond, scorer, discard, func(_, _ string) {})
+	for _, camera := range []string{"back", "front"} {
+		file := "2026-07-12_12-29-00-" + camera + ".mp4"
+		imagePath := evDir + "/" + file
+		sel.onStable(imagePath)
+		sel.onFile(filepath.Join(localDir, file), imagePath)
+	}
+	eventJSON := filepath.Join(localDir, "event.json")
+	if err := os.WriteFile(eventJSON, []byte(`{"timestamp":"2026-07-12T12:29:46","camera":"6"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sel.onFile(eventJSON, evDir+"/event.json")
+	deadline := time.Now().Add(time.Second)
+	for scorer.calls.Load() < 2 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if scorer.calls.Load() != 2 {
+		t.Fatalf("interrupted selection triggered %d scorer calls, want 2", scorer.calls.Load())
+	}
+}

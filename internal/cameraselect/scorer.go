@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type Candidate struct {
@@ -27,6 +28,8 @@ type CommandConfig struct {
 	Window     float64
 	SampleFPS  float64
 	Threads    int
+	Timeout    time.Duration
+	Cooldown   time.Duration
 }
 
 // CommandScorer invokes the small native NCNN/OpenCV helper used on the Pi.
@@ -44,6 +47,9 @@ func NewCommandScorer(cfg CommandConfig) (*CommandScorer, error) {
 	if cfg.Window <= 0 || cfg.SampleFPS <= 0 || cfg.Threads <= 0 {
 		return nil, fmt.Errorf("camera scorer window, sample FPS and threads must be positive")
 	}
+	if cfg.Timeout < 0 || cfg.Cooldown < 0 {
+		return nil, fmt.Errorf("camera scorer timeout and cooldown cannot be negative")
+	}
 	return &CommandScorer{cfg: cfg, slots: make(chan struct{}, 1)}, nil
 }
 
@@ -56,7 +62,17 @@ func (s *CommandScorer) Score(ctx context.Context, candidate Candidate) (Score, 
 	// memory, and thermal load.
 	select {
 	case s.slots <- struct{}{}:
-		defer func() { <-s.slots }()
+		defer func() {
+			if s.cfg.Cooldown > 0 {
+				timer := time.NewTimer(s.cfg.Cooldown)
+				select {
+				case <-timer.C:
+				case <-ctx.Done():
+					timer.Stop()
+				}
+			}
+			<-s.slots
+		}()
 	case <-ctx.Done():
 		return Score{}, ctx.Err()
 	}
@@ -69,7 +85,13 @@ func (s *CommandScorer) Score(ctx context.Context, candidate Candidate) (Score, 
 		"--threads", strconv.Itoa(s.cfg.Threads),
 		candidate.LocalPath,
 	}
-	cmd := exec.CommandContext(ctx, s.cfg.Path, args...)
+	commandCtx := ctx
+	cancel := func() {}
+	if s.cfg.Timeout > 0 {
+		commandCtx, cancel = context.WithTimeout(ctx, s.cfg.Timeout)
+	}
+	defer cancel()
+	cmd := exec.CommandContext(commandCtx, s.cfg.Path, args...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := cmd.Run(); err != nil {

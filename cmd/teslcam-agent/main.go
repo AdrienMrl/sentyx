@@ -56,6 +56,8 @@ func main() {
 	cameraScoreWindow := flag.Float64("camera-score-window", 12, "seconds around the Tesla event timestamp scored per camera")
 	cameraScoreFPS := flag.Float64("camera-score-fps", 2, "class-agnostic motion samples per second")
 	cameraScoreThreads := flag.Int("camera-score-threads", 2, "CPU threads used by camera scoring")
+	cameraScoreTimeout := flag.Duration("camera-score-timeout", 90*time.Second, "maximum native inference time per camera")
+	cameraScoreCooldown := flag.Duration("camera-score-cooldown", 3*time.Second, "idle time between cameras to limit sustained Pi temperature")
 	compressVideo := flag.Bool("compress-video", true, "compress suitable H.264 MP4s before upload")
 	videoRatio := flag.Float64("video-target-ratio", videocompress.DefaultTargetRatio, "target fraction of the source video bitrate")
 	videoMinMB := flag.Int64("video-min-mb", videocompress.DefaultMinInputBytes>>20, "only compress videos at least this many MiB")
@@ -157,6 +159,7 @@ func main() {
 		cameraScorer, err = cameraselect.NewCommandScorer(cameraselect.CommandConfig{
 			Path: *cameraScorerPath, ModelParam: *cameraModelParam, ModelBin: *cameraModelBin,
 			Window: *cameraScoreWindow, SampleFPS: *cameraScoreFPS, Threads: *cameraScoreThreads,
+			Timeout: *cameraScoreTimeout, Cooldown: *cameraScoreCooldown,
 		})
 		if err != nil {
 			log.Fatal(err)

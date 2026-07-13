@@ -270,6 +270,12 @@ func (s *clipSelector) restoreSelectionLocked(sourceID string, ev *heldEvent, ev
 		s.logf("camera selection: ignoring invalid persisted metadata for %s", sourceID)
 		return
 	}
+	for _, score := range selection.Ranked {
+		if score.Error == context.Canceled.Error() || score.Error == context.DeadlineExceeded.Error() {
+			s.logf("camera selection: retrying interrupted persisted result for %s", sourceID)
+			return
+		}
+	}
 	ev.selection = &selection
 	ev.scored = true
 	imagePath := strings.TrimSuffix(eventImagePath, filepath.Base(eventImagePath)) + cameraselect.MetadataName
@@ -304,12 +310,20 @@ func (s *clipSelector) armScoreTimerLocked(sourceID string, ev *heldEvent) {
 }
 
 func (s *clipSelector) scoreEvent(sourceID string, target *heldEvent, meta clipselect.Metadata, candidates []scoringCandidate) {
-	ctx, cancel := context.WithTimeout(s.ctx, 3*time.Minute)
+	ctx, cancel := context.WithTimeout(s.ctx, 15*time.Minute)
 	defer cancel()
 	scores := make([]cameraselect.Score, 0, len(candidates))
 	for _, candidate := range candidates {
 		score, err := s.scorer.Score(ctx, candidate.Candidate)
 		if err != nil {
+			if ctx.Err() != nil {
+				s.mu.Lock()
+				if ev := s.events[sourceID]; ev == target {
+					ev.scoring = false
+				}
+				s.mu.Unlock()
+				return
+			}
 			s.logf("camera selection: scoring %s/%s failed: %v", sourceID, candidate.Camera, err)
 			score = cameraselect.Score{Camera: candidate.Camera, Error: err.Error()}
 		} else {
