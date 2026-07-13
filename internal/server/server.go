@@ -7,11 +7,14 @@ package server
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/AdrienMrl/teslcam/internal/logging"
 )
 
 // Config for a Server. All fields are required except AnalyzeCmd/Analyzer.
@@ -41,6 +44,10 @@ type Config struct {
 	// FFmpegPath extracts the Gemini-selected notification frame. Empty uses
 	// "ffmpeg" from PATH.
 	FFmpegPath string
+	// Logger receives all operational messages. Required: the server never
+	// assumes a default sink (see internal/logging). Subsystem loggers are
+	// derived from it with a component attribute.
+	Logger *slog.Logger
 }
 
 type Server struct {
@@ -48,11 +55,18 @@ type Server struct {
 	store    *store
 	analyzer Analyzer // nil = record only
 	notifier Notifier // nil = no notifications
+
+	log         *slog.Logger // base logger (binary attribute attached)
+	analyzerLog *slog.Logger // component=analyzer
+	httpLog     *slog.Logger // component=http
 }
 
 func New(cfg Config) (*Server, error) {
 	if cfg.DataDir == "" || cfg.ListenAddr == "" {
 		return nil, fmt.Errorf("server: DataDir and ListenAddr are both required")
+	}
+	if cfg.Logger == nil {
+		return nil, fmt.Errorf("server: Config.Logger is required")
 	}
 	if cfg.Analyzer != nil && len(cfg.AnalyzeCmd) > 0 {
 		return nil, fmt.Errorf("server: Analyzer and AnalyzeCmd are mutually exclusive")
@@ -71,12 +85,20 @@ func New(cfg Config) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Server{cfg: cfg, store: st, analyzer: analyzer, notifier: cfg.Notifier}, nil
+	return &Server{
+		cfg:         cfg,
+		store:       st,
+		analyzer:    analyzer,
+		notifier:    cfg.Notifier,
+		log:         cfg.Logger,
+		analyzerLog: cfg.Logger.With(logging.KeyComponent, "analyzer"),
+		httpLog:     cfg.Logger.With(logging.KeyComponent, "http"),
+	}, nil
 }
 
 // Run serves the ingest API and drives event completion until ctx is
-// cancelled. logf receives operational messages.
-func (c *Server) Run(ctx context.Context, logf func(format string, args ...any)) error {
+// cancelled. Operational messages go to the configured Logger.
+func (c *Server) Run(ctx context.Context) error {
 	ln, err := net.Listen("tcp", c.cfg.ListenAddr)
 	if err != nil {
 		return err
@@ -84,9 +106,9 @@ func (c *Server) Run(ctx context.Context, logf func(format string, args ...any))
 	srv := &http.Server{Handler: c.Handler()}
 	errc := make(chan error, 1)
 	go func() { errc <- srv.Serve(ln) }()
-	go c.analyzeLoop(ctx, logf)
+	go c.analyzeLoop(ctx)
 
-	logf("server listening on %s (data in %s)", ln.Addr(), c.cfg.DataDir)
+	c.log.Info("server listening", "addr", ln.Addr().String(), logging.KeyPath, c.cfg.DataDir)
 	select {
 	case <-ctx.Done():
 		shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -98,7 +120,7 @@ func (c *Server) Run(ctx context.Context, logf func(format string, args ...any))
 	}
 }
 
-func (c *Server) analyzeLoop(ctx context.Context, logf func(string, ...any)) {
+func (c *Server) analyzeLoop(ctx context.Context) {
 	tick := time.NewTicker(250 * time.Millisecond)
 	defer tick.Stop()
 	for {
@@ -112,10 +134,10 @@ func (c *Server) analyzeLoop(ctx context.Context, logf func(string, ...any)) {
 			continue
 		}
 		if err != nil {
-			logf("claiming analysis job: %v", err)
+			c.analyzerLog.Error("claiming analysis job", logging.KeyError, err)
 			continue
 		}
-		c.analyzeEvent(ctx, job.EventID, logf)
+		c.analyzeEvent(ctx, job.EventID, job.Generation)
 		ev, loadErr := c.store.event(job.EventID)
 		state := "failed"
 		var jobErr error
@@ -134,7 +156,8 @@ func (c *Server) analyzeLoop(ctx context.Context, logf func(string, ...any)) {
 			}
 		}
 		if err := c.store.finishAnalysisJob(*job, state, jobErr); err != nil {
-			logf("finishing analysis job for %s: %v", job.EventID, err)
+			c.analyzerLog.Error("finishing analysis job",
+				logging.KeyEventID, job.EventID, logging.KeyGeneration, job.Generation, logging.KeyError, err)
 		}
 	}
 }

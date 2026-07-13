@@ -49,6 +49,17 @@ func (s *store) upsertHighLevelEvent(key string, in protocol.EventUpsert) error 
 	return err
 }
 
+// eventExists reports whether an event row already exists, so the upsert
+// handler can distinguish a newly created event from a metadata update.
+func (s *store) eventExists(id string) (bool, error) {
+	var exists int
+	err := s.db.QueryRow(`SELECT 1 FROM events WHERE id = ?`, id).Scan(&exists)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
 func (s *store) recordBlob(sha string, size int64, storedPath string) error {
 	_, err := s.db.Exec(`
 		INSERT INTO blobs (sha256, size, stored_path, received_at)

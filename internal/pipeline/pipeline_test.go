@@ -2,21 +2,32 @@ package pipeline
 
 import (
 	"context"
+	"io"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/AdrienMrl/teslcam/internal/logging"
 	"github.com/AdrienMrl/teslcam/internal/videocompress"
 )
 
-func discard(string, ...any) {}
+// testLogger builds a discarding logger for tests that only care about behaviour,
+// not log output.
+func testLogger() *slog.Logger {
+	lg, err := logging.New(logging.Config{Writer: io.Discard, Format: logging.FormatText, Level: slog.LevelInfo, Binary: "test"})
+	if err != nil {
+		panic(err)
+	}
+	return lg
+}
 
 func TestRunValidatesConfig(t *testing.T) {
 	base := Config{
 		ImagePath:   "/nonexistent.img",
 		Interval:    time.Second,
 		StablePolls: 2,
-		Logf:        discard,
+		Logger:      testLogger(),
 	}
 	cases := []struct {
 		name    string
@@ -24,7 +35,7 @@ func TestRunValidatesConfig(t *testing.T) {
 		wantErr string
 	}{
 		{"missing image", func(c *Config) { c.ImagePath = "" }, "required"},
-		{"missing logf", func(c *Config) { c.Logf = nil }, "required"},
+		{"missing logger", func(c *Config) { c.Logger = nil }, "required"},
 		{"copy-to without prefix", func(c *Config) { c.CopyTo = "/tmp/x" }, "together"},
 		{"prefix without copy-to", func(c *Config) { c.CopyPrefix = "/TeslaCam" }, "together"},
 		{"post-to without copy-to", func(c *Config) { c.PostTo = "http://x" }, "requires CopyTo"},

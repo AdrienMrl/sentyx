@@ -18,6 +18,7 @@ import (
 	"syscall"
 
 	"github.com/AdrienMrl/teslcam/internal/gemini"
+	"github.com/AdrienMrl/teslcam/internal/logging"
 	"github.com/AdrienMrl/teslcam/internal/server"
 	"github.com/AdrienMrl/teslcam/internal/telegram"
 	"github.com/AdrienMrl/teslcam/internal/tokenfile"
@@ -32,9 +33,25 @@ func main() {
 	tokenFile := flag.String("token-file", "", "file holding the bearer token required on the API (all endpoints but /healthz); empty = no auth")
 	telegramTokenFile := flag.String("telegram-token-file", "", "file holding the Telegram bot token; set (with -telegram-chat-id) to send live alerts on completed analyses")
 	telegramChatID := flag.String("telegram-chat-id", "", "Telegram chat ID to alert on completed analyses; required with -telegram-token-file")
+	logFormat := flag.String("log-format", "text", `log output format: "text" or "json"`)
+	logLevel := flag.String("log-level", "info", `minimum log level: debug, info, warn or error`)
 	flag.Parse()
 	if *dataDir == "" || *listen == "" {
 		log.Fatal("both -data and -listen are required")
+	}
+	format, err := logging.ParseFormat(*logFormat)
+	if err != nil {
+		log.Fatal(err)
+	}
+	level, err := logging.ParseLevel(*logLevel)
+	if err != nil {
+		log.Fatal(err)
+	}
+	logger, err := logging.New(logging.Config{
+		Writer: os.Stderr, Format: format, Level: level, Binary: "teslcam-server",
+	})
+	if err != nil {
+		log.Fatal(err)
 	}
 	if *geminiModel != "" && *analyze != "" {
 		log.Fatal("-gemini-model and -analyze are mutually exclusive")
@@ -56,7 +73,7 @@ func main() {
 		log.Fatal(err)
 	}
 	if token == "" {
-		log.Print("WARNING: no -token-file — the API is unauthenticated; do not expose it beyond a trusted network")
+		logger.Warn("API is unauthenticated; do not expose it beyond a trusted network (no -token-file)")
 	}
 
 	// Telegram notifications are off unless configured, and require BOTH the
@@ -99,6 +116,7 @@ func main() {
 		Token:              token,
 		Notifier:           notifier,
 		DebugNotifications: telegramDebug,
+		Logger:             logger,
 	})
 	if err != nil {
 		log.Fatal(err)
@@ -106,10 +124,11 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	err = c.Run(ctx, log.Printf)
+	err = c.Run(ctx)
 	if ctx.Err() != nil {
-		log.Print("shutting down")
+		logger.Info("shutting down")
 		return
 	}
-	log.Fatal(err)
+	logger.Error("server exited", logging.KeyError, err)
+	os.Exit(1)
 }

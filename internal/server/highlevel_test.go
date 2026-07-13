@@ -19,7 +19,7 @@ import (
 )
 
 func TestHighLevelAPIRequiresVerifiedManifest(t *testing.T) {
-	c, err := New(Config{DataDir: t.TempDir(), ListenAddr: "unused:0"})
+	c, err := New(Config{DataDir: t.TempDir(), ListenAddr: "unused:0", Logger: testLogger(t)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,6 +89,7 @@ func TestEventUploaderToDurableAnalysis(t *testing.T) {
 	c, err := New(Config{
 		DataDir: t.TempDir(), ListenAddr: "unused:0",
 		AnalyzeCmd: []string{analyzer}, Token: "secret",
+		Logger: testLogger(t),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -108,7 +109,7 @@ func TestEventUploaderToDurableAnalysis(t *testing.T) {
 	go client.Run(ctx, func(eventupload.Item) {}, func(it eventupload.Item, err error) {
 		t.Logf("uploader retry for %s: %v", it.ImagePath, err)
 	}, func(string, int) {})
-	go c.analyzeLoop(ctx, t.Logf)
+	go c.analyzeLoop(ctx)
 
 	dir := t.TempDir()
 	clip := filepath.Join(dir, "clip.mp4")
@@ -165,7 +166,7 @@ func TestEventUploaderToDurableAnalysis(t *testing.T) {
 
 func TestRunningAnalysisJobIsRecoveredAfterRestart(t *testing.T) {
 	data := t.TempDir()
-	c, err := New(Config{DataDir: data, ListenAddr: "unused:0"})
+	c, err := New(Config{DataDir: data, ListenAddr: "unused:0", Logger: testLogger(t)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -185,7 +186,7 @@ func TestRunningAnalysisJobIsRecoveredAfterRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	restarted, err := New(Config{DataDir: data, ListenAddr: "unused:0"})
+	restarted, err := New(Config{DataDir: data, ListenAddr: "unused:0", Logger: testLogger(t)})
 	if err != nil {
 		t.Fatal(err)
 	}

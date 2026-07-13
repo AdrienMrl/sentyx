@@ -16,6 +16,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/AdrienMrl/teslcam/internal/logging"
 	"github.com/AdrienMrl/teslcam/internal/sim"
 )
 
@@ -28,7 +29,23 @@ func main() {
 	sentryAfter := flag.Int("sentry-after", -1, "trigger a sentry event after N minutes (0 = never)")
 	journalOut := flag.String("journal", "", "write the file journal (JSON) here on exit; empty = don't")
 	journalStream := flag.String("journal-stream", "", "append each journal record (JSONL) here as it happens — survives a kill -9; empty = don't")
+	logFormat := flag.String("log-format", "text", `log output format: "text" or "json"`)
+	logLevel := flag.String("log-level", "info", `minimum log level: "debug", "info", "warn" or "error"`)
 	flag.Parse()
+
+	format, err := logging.ParseFormat(*logFormat)
+	if err != nil {
+		log.Fatal(err)
+	}
+	level, err := logging.ParseLevel(*logLevel)
+	if err != nil {
+		log.Fatal(err)
+	}
+	logger, err := logging.New(logging.Config{Writer: os.Stderr, Format: format, Level: level, Binary: "teslcam-sim"})
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	if *mount == "" || *minutes <= 0 || *mbPerCamMin <= 0 || *timescale <= 0 || *recentCap <= 0 || *sentryAfter < 0 {
 		log.Fatal("all of -mount, -minutes, -mb-per-cam-min, -timescale, -recent-cap, -sentry-after are required")
 	}
@@ -61,8 +78,8 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	log.Printf("recording %d minutes at %.0fx into %s (%dMB/cam/min, cap %d, sentry after %d)",
-		*minutes, *timescale, *mount, *mbPerCamMin, *recentCap, *sentryAfter)
+	logger.Info("recording", "minutes", *minutes, "timescale", *timescale, "mount", *mount,
+		"mb_per_cam_min", *mbPerCamMin, "recent_cap", *recentCap, "sentry_after", *sentryAfter)
 	runErr := s.Run(ctx, *minutes)
 
 	if *journalOut != "" {
@@ -73,10 +90,10 @@ func main() {
 		if err := os.WriteFile(*journalOut, data, 0o644); err != nil {
 			log.Fatal(err)
 		}
-		log.Printf("journal: %s (%d files)", *journalOut, len(s.Journal()))
+		logger.Info("journal written", logging.KeyPath, *journalOut, "files", len(s.Journal()))
 	}
 	if runErr != nil && ctx.Err() == nil {
 		log.Fatal(runErr)
 	}
-	log.Print("done")
+	logger.Info("done")
 }

@@ -130,25 +130,25 @@ func openStore(path string) (*store, error) {
 
 // EventSummary is the API view of one event.
 type EventSummary struct {
-	ID            string     `json:"id"`
-	FirstSeen     time.Time  `json:"first_seen"`
-	LastFileAt    time.Time  `json:"last_file_at"`
-	CompletedAt   *time.Time `json:"completed_at,omitempty"`
-	EventTS       string     `json:"event_ts,omitempty"`
-	City          string     `json:"city,omitempty"`
-	Reason        string     `json:"reason,omitempty"`
-	Camera        string     `json:"camera,omitempty"`
-	AnalysisState string     `json:"analysis_state"`
-	AnalyzedClip  string     `json:"analyzed_clip,omitempty"`
-	ThreatLevel   string     `json:"threat_level,omitempty"`
-	AnalysisJSON  string     `json:"analysis_json,omitempty"`
-	AnalysisError string     `json:"analysis_error,omitempty"`
+	ID            string      `json:"id"`
+	FirstSeen     time.Time   `json:"first_seen"`
+	LastFileAt    time.Time   `json:"last_file_at"`
+	CompletedAt   *time.Time  `json:"completed_at,omitempty"`
+	EventTS       string      `json:"event_ts,omitempty"`
+	City          string      `json:"city,omitempty"`
+	Reason        string      `json:"reason,omitempty"`
+	Camera        string      `json:"camera,omitempty"`
+	AnalysisState string      `json:"analysis_state"`
+	AnalyzedClip  string      `json:"analyzed_clip,omitempty"`
+	ThreatLevel   string      `json:"threat_level,omitempty"`
+	AnalysisJSON  string      `json:"analysis_json,omitempty"`
+	AnalysisError string      `json:"analysis_error,omitempty"`
 	Usage         *TokenUsage `json:"usage,omitempty"`
-	FileCount     int        `json:"file_count"`
-	State         string     `json:"state"`
-	Generation    int        `json:"generation"`
-	DeviceID      string     `json:"device_id,omitempty"`
-	SourceEventID string     `json:"source_event_id,omitempty"`
+	FileCount     int         `json:"file_count"`
+	State         string      `json:"state"`
+	Generation    int         `json:"generation"`
+	DeviceID      string      `json:"device_id,omitempty"`
+	SourceEventID string      `json:"source_event_id,omitempty"`
 }
 
 // FileInfo is the API view of one received file.

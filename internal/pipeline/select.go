@@ -3,6 +3,7 @@ package pipeline
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/AdrienMrl/teslcam/internal/cameraselect"
 	"github.com/AdrienMrl/teslcam/internal/clipselect"
+	"github.com/AdrienMrl/teslcam/internal/logging"
 )
 
 // clipSelector implements the -select-clips gate: rather than uploading every
@@ -33,11 +35,12 @@ import (
 // but the per-event fallback timers fire on their own goroutines.
 type clipSelector struct {
 	ctx       context.Context
+	deviceID  string // used to build full "device:event" IDs for log correlation
 	timeout   time.Duration
 	scoreWait time.Duration
 	scorer    cameraselect.Scorer
 	policy    cameraselect.Policy
-	logf      func(format string, v ...any)
+	log       *slog.Logger
 	// enqueue routes a decided file to the real upload path (compression queue
 	// or uploader) exactly as the upload-everything path would.
 	enqueue func(localPath, imagePath string)
@@ -67,21 +70,31 @@ type mp4Ref struct {
 	localPath string
 }
 
-func newClipSelector(timeout time.Duration, logf func(string, ...any), enqueue func(localPath, imagePath string)) *clipSelector {
-	return newScoredClipSelector(context.Background(), timeout, 0, nil, logf, enqueue)
+func newClipSelector(deviceID string, timeout time.Duration, log *slog.Logger, enqueue func(localPath, imagePath string)) *clipSelector {
+	return newScoredClipSelector(context.Background(), deviceID, timeout, 0, nil, log, enqueue)
 }
 
-func newScoredClipSelector(ctx context.Context, timeout, scoreWait time.Duration, scorer cameraselect.Scorer, logf func(string, ...any), enqueue func(localPath, imagePath string)) *clipSelector {
+func newScoredClipSelector(ctx context.Context, deviceID string, timeout, scoreWait time.Duration, scorer cameraselect.Scorer, log *slog.Logger, enqueue func(localPath, imagePath string)) *clipSelector {
 	return &clipSelector{
 		ctx:       ctx,
+		deviceID:  deviceID,
 		timeout:   timeout,
 		scoreWait: scoreWait,
 		scorer:    scorer,
 		policy:    cameraselect.DefaultPolicy(),
-		logf:      logf,
+		log:       log,
 		enqueue:   enqueue,
 		events:    map[string]*heldEvent{},
 	}
+}
+
+// eventID builds the full ingestion event ID ("device:event-dir") so selector
+// log lines correlate with the uploader's on the same key.
+func (s *clipSelector) eventID(sourceID string) string {
+	if s.deviceID == "" {
+		return sourceID
+	}
+	return s.deviceID + ":" + sourceID
 }
 
 // onStable records an MP4 as soon as the watcher declares it stable, before
@@ -124,9 +137,11 @@ func (s *clipSelector) onFile(localPath, imagePath string) []string {
 		// metadata and is tiny. It also unlocks selection for this event.
 		s.enqueueLocked(ev, localPath, imagePath)
 		if data, err := os.ReadFile(localPath); err != nil {
-			s.logf("clip selection: reading %s failed, cannot select for %s: %v", imagePath, sourceID, err)
+			s.log.Warn("reading event.json failed; cannot select clip",
+				logging.KeyEventID, s.eventID(sourceID), logging.KeyPath, imagePath, logging.KeyError, err)
 		} else if meta, err := clipselect.ParseEventJSON(data); err != nil {
-			s.logf("clip selection: parsing %s failed, cannot select for %s: %v", imagePath, sourceID, err)
+			s.log.Warn("parsing event.json failed; cannot select clip",
+				logging.KeyEventID, s.eventID(sourceID), logging.KeyPath, imagePath, logging.KeyError, err)
 		} else {
 			ev.meta = &meta
 			if s.scorer != nil {
@@ -267,12 +282,12 @@ func (s *clipSelector) restoreSelectionLocked(sourceID string, ev *heldEvent, ev
 	}
 	var selection cameraselect.Metadata
 	if json.Unmarshal(data, &selection) != nil || selection.Version != 1 || len(selection.Ranked) == 0 || len(selection.Selected) == 0 {
-		s.logf("camera selection: ignoring invalid persisted metadata for %s", sourceID)
+		s.log.Warn("ignoring invalid persisted camera selection metadata", logging.KeyEventID, s.eventID(sourceID))
 		return
 	}
 	for _, score := range selection.Ranked {
 		if score.Error == context.Canceled.Error() || score.Error == context.DeadlineExceeded.Error() {
-			s.logf("camera selection: retrying interrupted persisted result for %s", sourceID)
+			s.log.Info("retrying interrupted persisted camera selection", logging.KeyEventID, s.eventID(sourceID))
 			return
 		}
 	}
@@ -280,8 +295,8 @@ func (s *clipSelector) restoreSelectionLocked(sourceID string, ev *heldEvent, ev
 	ev.scored = true
 	imagePath := strings.TrimSuffix(eventImagePath, filepath.Base(eventImagePath)) + cameraselect.MetadataName
 	s.enqueueLocked(ev, selectionPath, imagePath)
-	s.logf("camera selection: restored persisted result for %s ranked=%v selected=%v",
-		sourceID, cameraNames(selection.Ranked), selection.Selected)
+	s.log.Info("restored persisted camera selection", logging.KeyEventID, s.eventID(sourceID),
+		"ranked", cameraNames(selection.Ranked), "selected", selection.Selected)
 }
 
 type scoringCandidate struct {
@@ -324,11 +339,13 @@ func (s *clipSelector) scoreEvent(sourceID string, target *heldEvent, meta clips
 				s.mu.Unlock()
 				return
 			}
-			s.logf("camera selection: scoring %s/%s failed: %v", sourceID, candidate.Camera, err)
+			s.log.Warn("camera scoring failed", logging.KeyEventID, s.eventID(sourceID),
+				logging.KeyCamera, candidate.Camera, logging.KeyError, err)
 			score = cameraselect.Score{Camera: candidate.Camera, Error: err.Error()}
 		} else {
-			s.logf("camera selection: %s/%s score=%.3f objects=%.3f motion=%.3f novelty=%.3f occlusion=%.3f reasons=%v",
-				sourceID, candidate.Camera, score.Combined, score.Objects, score.Motion, score.Novelty, score.Occlusion, score.Reasons)
+			s.log.Info("camera scored", logging.KeyEventID, s.eventID(sourceID), logging.KeyCamera, candidate.Camera,
+				"combined", score.Combined, "objects", score.Objects, "motion", score.Motion,
+				"novelty", score.Novelty, "occlusion", score.Occlusion, "reasons", score.Reasons)
 		}
 		scores = append(scores, score)
 	}
@@ -359,7 +376,8 @@ func (s *clipSelector) scoreEvent(sourceID string, target *heldEvent, meta clips
 		return // safety fallback already uploaded every held clip
 	}
 	if err != nil {
-		s.logf("camera selection: writing metadata for %s failed; uploading all held clips: %v", sourceID, err)
+		s.log.Warn("writing camera selection metadata failed; uploading all held clips",
+			logging.KeyEventID, s.eventID(sourceID), logging.KeyError, err)
 		for _, held := range ev.held {
 			s.enqueueLocked(ev, held.localPath, held.imagePath)
 		}
@@ -376,7 +394,8 @@ func (s *clipSelector) scoreEvent(sourceID string, target *heldEvent, meta clips
 		}
 	}
 	s.enqueueLocked(ev, metadataLocal, metadataImage)
-	s.logf("camera selection: %s ranked=%v selected=%v", sourceID, cameraNames(selection.Ranked), selection.Selected)
+	s.log.Info("camera selection complete", logging.KeyEventID, s.eventID(sourceID),
+		"ranked", cameraNames(selection.Ranked), "selected", selection.Selected)
 }
 
 func cameraNames(scores []cameraselect.Score) []string {
@@ -415,11 +434,11 @@ func (s *clipSelector) onTimeout(sourceID string) {
 	}
 	ev.timedOut = true
 	if ev.meta == nil {
-		s.logf("clip selection: WARNING no event.json for %s within %s; uploading all %d held clip(s)",
-			sourceID, s.timeout, len(ev.held))
+		s.log.Warn("no event.json within timeout; uploading all held clips",
+			logging.KeyEventID, s.eventID(sourceID), "timeout", s.timeout, "held", len(ev.held))
 	} else {
-		s.logf("camera selection: WARNING scoring did not complete for %s within %s; uploading all %d held clip(s)",
-			sourceID, s.timeout, len(ev.held))
+		s.log.Warn("camera scoring did not complete within timeout; uploading all held clips",
+			logging.KeyEventID, s.eventID(sourceID), "timeout", s.timeout, "held", len(ev.held))
 	}
 	for _, m := range ev.held {
 		s.enqueueLocked(ev, m.localPath, m.imagePath)

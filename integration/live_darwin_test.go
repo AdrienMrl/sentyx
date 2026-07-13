@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -26,10 +27,20 @@ import (
 	"github.com/AdrienMrl/teslcam/internal/copyout"
 	"github.com/AdrienMrl/teslcam/internal/eventupload"
 	"github.com/AdrienMrl/teslcam/internal/exfat"
+	"github.com/AdrienMrl/teslcam/internal/logging"
 	"github.com/AdrienMrl/teslcam/internal/server"
 	"github.com/AdrienMrl/teslcam/internal/sim"
 	"github.com/AdrienMrl/teslcam/internal/watch"
 )
+
+// testLogWriter forwards server log lines to the test log so they show up
+// interleaved with the test's own output on failure.
+type testLogWriter struct{ t *testing.T }
+
+func (w testLogWriter) Write(p []byte) (int, error) {
+	w.t.Logf("%s", strings.TrimRight(string(p), "\n"))
+	return len(p), nil
+}
 
 // freePort reserves an ephemeral port and releases it for immediate reuse.
 func freePort(t *testing.T) string {
@@ -107,17 +118,25 @@ func TestLiveWriterReaderHarness(t *testing.T) {
 		t.Fatal(err)
 	}
 	serverAddr := freePort(t)
+	srvLog, err := logging.New(logging.Config{
+		Writer: testLogWriter{t}, Format: logging.FormatText,
+		Level: slog.LevelInfo, Binary: "teslcam-server",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	srv, err := server.New(server.Config{
 		DataDir:    t.TempDir(),
 		ListenAddr: serverAddr,
 		AnalyzeCmd: []string{analyzer},
+		Logger:     srvLog,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	cctx, ccancel := context.WithCancel(context.Background())
 	defer ccancel()
-	go srv.Run(cctx, t.Logf)
+	go srv.Run(cctx)
 
 	// Uploader pushes extracted files to the server as they appear.
 	up, err := eventupload.New(eventupload.Config{

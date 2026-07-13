@@ -74,7 +74,7 @@ const evDir = "/TeslaCam/SentryClips/2026-07-12_12-29-46"
 // covering segment is enqueued (plus event.json and thumb.png, immediately).
 func TestSelectorHoldsUntilMetadataThenSelectsOneClip(t *testing.T) {
 	r := &recorder{}
-	sel := newClipSelector(time.Hour, discard, r.enqueue)
+	sel := newClipSelector("dev", time.Hour, testLogger(), r.enqueue)
 
 	// Several clips across cameras stabilize before event.json flushes.
 	for _, f := range []string{
@@ -115,7 +115,7 @@ func TestSelectorHoldsUntilMetadataThenSelectsOneClip(t *testing.T) {
 // therefore choose a still-pending clip for the copy worker to promote.
 func TestSelectorChoosesStableUncopiedClip(t *testing.T) {
 	r := &recorder{}
-	sel := newClipSelector(time.Hour, discard, r.enqueue)
+	sel := newClipSelector("dev", time.Hour, testLogger(), r.enqueue)
 	want := evDir + "/2026-07-12_12-29-00-left_repeater.mp4"
 	for _, path := range []string{
 		evDir + "/2026-07-12_12-28-00-left_repeater.mp4",
@@ -147,7 +147,7 @@ func TestSelectorChoosesStableUncopiedClip(t *testing.T) {
 // at-or-before the trigger) is enqueued too; the earlier pick is not un-sent.
 func TestSelectorLateBetterClipEnqueued(t *testing.T) {
 	r := &recorder{}
-	sel := newClipSelector(time.Hour, discard, r.enqueue)
+	sel := newClipSelector("dev", time.Hour, testLogger(), r.enqueue)
 
 	// Only the 12-29 segment is stable when event.json lands (trigger 12:30:30).
 	sel.onFile("/local/a.mp4", evDir+"/2026-07-12_12-29-00-left_repeater.mp4")
@@ -173,7 +173,7 @@ func TestSelectorLateBetterClipEnqueued(t *testing.T) {
 // When event.json never arrives, the fallback timeout uploads every held clip.
 func TestSelectorFallbackUploadsAllOnTimeout(t *testing.T) {
 	r := &recorder{}
-	sel := newClipSelector(40*time.Millisecond, discard, r.enqueue)
+	sel := newClipSelector("dev", 40*time.Millisecond, testLogger(), r.enqueue)
 
 	held := []string{
 		"2026-07-12_12-29-00-left_repeater.mp4",
@@ -211,7 +211,7 @@ func TestSelectorFallbackUploadsAllOnTimeout(t *testing.T) {
 // selected clip is uploaded, not the whole held set.
 func TestSelectorMetadataBeatsTimeout(t *testing.T) {
 	r := &recorder{}
-	sel := newClipSelector(5*time.Second, discard, r.enqueue)
+	sel := newClipSelector("dev", 5*time.Second, testLogger(), r.enqueue)
 
 	for _, f := range []string{
 		"2026-07-12_12-29-00-left_repeater.mp4",
@@ -241,7 +241,7 @@ func TestScoredSelectorUploadsGenerousRankedSetAndMetadata(t *testing.T) {
 		"left_repeater":  {Camera: "left_repeater", Motion: .62, Novelty: .55},
 		"right_repeater": {Camera: "right_repeater", Motion: .10},
 	}}
-	sel := newScoredClipSelector(context.Background(), time.Hour, 10*time.Millisecond, scorer, discard, r.enqueue)
+	sel := newScoredClipSelector(context.Background(), "dev", time.Hour, 10*time.Millisecond, scorer, testLogger(), r.enqueue)
 
 	files := []string{
 		"2026-07-12_12-29-00-back.mp4",
@@ -304,7 +304,7 @@ func TestScoredSelectorRestoresPersistedSelectionWithoutInference(t *testing.T) 
 		t.Fatal(err)
 	}
 	scorer := &countingScorer{}
-	sel := newScoredClipSelector(context.Background(), time.Hour, 10*time.Millisecond, scorer, discard, r.enqueue)
+	sel := newScoredClipSelector(context.Background(), "dev", time.Hour, 10*time.Millisecond, scorer, testLogger(), r.enqueue)
 	for _, camera := range []string{"back", "front"} {
 		file := "2026-07-12_12-29-00-" + camera + ".mp4"
 		imagePath := evDir + "/" + file
@@ -346,7 +346,7 @@ func TestScoredSelectorRetriesInterruptedPersistedSelection(t *testing.T) {
 		t.Fatal(err)
 	}
 	scorer := &countingScorer{}
-	sel := newScoredClipSelector(context.Background(), time.Hour, time.Millisecond, scorer, discard, func(_, _ string) {})
+	sel := newScoredClipSelector(context.Background(), "dev", time.Hour, time.Millisecond, scorer, testLogger(), func(_, _ string) {})
 	for _, camera := range []string{"back", "front"} {
 		file := "2026-07-12_12-29-00-" + camera + ".mp4"
 		imagePath := evDir + "/" + file

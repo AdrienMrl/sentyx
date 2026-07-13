@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/AdrienMrl/teslcam/internal/logging"
 	"github.com/AdrienMrl/teslcam/internal/protocol"
 )
 
@@ -36,6 +37,11 @@ func (c *Server) handlePutEventV1(w http.ResponseWriter, r *http.Request) {
 	if in.DetectedAt.IsZero() {
 		in.DetectedAt = time.Now().UTC()
 	}
+	existed, err := c.store.eventExists(key)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	if err := c.store.upsertHighLevelEvent(key, in); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -44,6 +50,12 @@ func (c *Server) handlePutEventV1(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
+	}
+	lg := c.httpLog.With(logging.KeyEventID, key, logging.KeyDevice, in.DeviceID)
+	if existed {
+		lg.Debug("event upsert updated existing", "directory", in.Source.DirectoryName)
+	} else {
+		lg.Info("event created", "directory", in.Source.DirectoryName)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"id": key, "state": ev.State, "generation": ev.Generation,
@@ -122,6 +134,7 @@ func (c *Server) handlePutBlobV1(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	c.httpLog.Debug("blob stored", "sha256", want, "size", n)
 	writeJSON(w, http.StatusOK, map[string]any{"sha256": want, "size": n, "status": "stored"})
 }
 
@@ -155,6 +168,9 @@ func (c *Server) handlePutManifestV1(w http.ResponseWriter, r *http.Request) {
 	if len(missing) > 0 {
 		status = "incomplete"
 	}
+	c.httpLog.Info("manifest received",
+		logging.KeyEventID, r.PathValue("event"), logging.KeyGeneration, generation,
+		"artifact_count", len(m.Artifacts), "missing_count", len(missing), "status", status)
 	writeJSON(w, http.StatusOK, protocol.ManifestStatus{
 		EventID: r.PathValue("event"), Generation: generation,
 		Status: status, MissingBlobs: missing,
@@ -172,31 +188,50 @@ func (c *Server) handleFinalizeManifestV1(w http.ResponseWriter, r *http.Request
 			return
 		}
 	}
-	missing, err := c.store.finalizeManifest(r.PathValue("event"), generation)
+	eventID := r.PathValue("event")
+	lg := c.httpLog.With(logging.KeyEventID, eventID, logging.KeyGeneration, generation)
+	missing, err := c.store.finalizeManifest(eventID, generation)
 	switch {
 	case errors.Is(err, errEventNotFound), errors.Is(err, errManifestNotFound):
+		lg.Warn("finalize rejected: event or manifest not found", logging.KeyError, err)
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return
 	case errors.Is(err, errOldGeneration):
+		lg.Warn("finalize rejected: generation older than current", logging.KeyError, err)
 		http.Error(w, err.Error(), http.StatusConflict)
 		return
 	case errors.Is(err, errNoVideoArtifact):
+		lg.Warn("finalize rejected: manifest has no video artifact", logging.KeyError, err)
 		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
 		return
 	case err != nil:
+		lg.Error("finalize failed", logging.KeyError, err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	case len(missing) > 0:
+		lg.Warn("finalize rejected: blobs still missing", "missing_count", len(missing))
 		writeJSON(w, http.StatusConflict, protocol.ManifestStatus{
-			EventID: r.PathValue("event"), Generation: generation,
+			EventID: eventID, Generation: generation,
 			Status: "incomplete", MissingBlobs: missing,
 		})
 		return
 	}
+	// Report the materialized file count so operators can see the event's size
+	// at the moment it became analyzable. A generation > 1 is a re-finalization
+	// (a late camera segment produced a new complete manifest).
+	files, ferr := c.store.eventFiles(eventID)
+	if ferr != nil {
+		lg.Warn("counting finalized files for log", logging.KeyError, ferr)
+	}
+	if generation > 1 {
+		lg.Info("event re-finalized (new generation)", "file_count", len(files))
+	} else {
+		lg.Info("event finalized", "file_count", len(files))
+	}
 	writeJSON(w, http.StatusOK, protocol.ManifestStatus{
-		EventID: r.PathValue("event"), Generation: generation, Status: "ready",
+		EventID: eventID, Generation: generation, Status: "ready",
 	})
-	c.notifyUploadReceived(r.PathValue("event"), generation)
+	c.notifyUploadReceived(eventID, generation)
 }
 
 func decodeJSON(w http.ResponseWriter, r *http.Request, dst any) error {

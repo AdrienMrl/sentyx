@@ -29,13 +29,14 @@ echo '{"concern_detected":true,"threat_level":"medium","what_happened":"manual t
 	s, err := New(Config{
 		DataDir: t.TempDir(), ListenAddr: "unused:0",
 		AnalyzeCmd: []string{analyzer}, Token: "secret",
+		Logger: testLogger(t),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	go s.analyzeLoop(ctx, t.Logf)
+	go s.analyzeLoop(ctx)
 
 	clip := filepath.Join(t.TempDir(), "real-sentry.mp4")
 	if err := os.WriteFile(clip, []byte("representative video bytes"), 0o644); err != nil {

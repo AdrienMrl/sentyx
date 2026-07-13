@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"mime"
 	"net/http"
 	"net/url"
@@ -23,6 +24,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/AdrienMrl/teslcam/internal/logging"
 	"github.com/AdrienMrl/teslcam/internal/protocol"
 )
 
@@ -38,11 +40,11 @@ type Config struct {
 	// persisted so a reboot or a long offline stretch does not forget spooled
 	// work, and the spool is capped to SpoolMaxBytes. SpoolDBPath is opt-in
 	// (empty = in-memory only, preserving the original behaviour), but if it is
-	// set then SpoolMaxBytes (> 0) and Logf are both required — the enforcement
+	// set then SpoolMaxBytes (> 0) and Logger are both required — the enforcement
 	// that these are always supplied in the agent lives in pipeline.Run.
 	SpoolDBPath   string
 	SpoolMaxBytes int64
-	Logf          func(format string, v ...any)
+	Logger        *slog.Logger
 }
 
 type Item struct {
@@ -53,6 +55,7 @@ type Item struct {
 
 type Client struct {
 	cfg Config
+	log *slog.Logger // component-scoped; only used when the durable spool is on
 
 	mu         sync.Mutex
 	pending    []Item
@@ -94,9 +97,10 @@ func New(cfg Config) (*Client, error) {
 		events: map[string]*eventState{},
 	}
 	if cfg.SpoolDBPath != "" {
-		if cfg.SpoolMaxBytes <= 0 || cfg.Logf == nil {
-			return nil, fmt.Errorf("eventupload: SpoolMaxBytes (> 0) and Logf are required when SpoolDBPath is set")
+		if cfg.SpoolMaxBytes <= 0 || cfg.Logger == nil {
+			return nil, fmt.Errorf("eventupload: SpoolMaxBytes (> 0) and Logger are required when SpoolDBPath is set")
 		}
+		c.log = cfg.Logger.With(logging.KeyComponent, "uploader")
 		store, err := openSpoolStore(cfg.SpoolDBPath)
 		if err != nil {
 			return nil, err
@@ -129,7 +133,7 @@ func (c *Client) Enqueue(it Item) bool {
 	// fatal — the in-memory queue still drains it.
 	if c.store != nil {
 		if err := c.store.add(it); err != nil {
-			c.cfg.Logf("eventupload: persisting %s failed: %v", it.ImagePath, err)
+			c.log.Warn("persisting spool item failed", logging.KeyPath, it.ImagePath, logging.KeyError, err)
 		}
 	}
 	return true
@@ -173,7 +177,7 @@ func (c *Client) Run(ctx context.Context, onDone func(Item), onError func(Item, 
 				// the whole in-flight/retry window so a crash mid-upload re-enqueues.
 				if c.store != nil {
 					if err := c.store.markUploaded(it); err != nil {
-						c.cfg.Logf("eventupload: retiring %s failed: %v", it.ImagePath, err)
+						c.log.Warn("retiring uploaded spool item failed", logging.KeyPath, it.ImagePath, logging.KeyError, err)
 					}
 					c.evict()
 				}
@@ -212,7 +216,7 @@ func (c *Client) Run(ctx context.Context, onDone func(Item), onError func(Item, 
 func (c *Client) reconcile() {
 	events, err := c.store.unfinalizedEvents()
 	if err != nil {
-		c.cfg.Logf("eventupload: reconciling spool events failed: %v", err)
+		c.log.Error("reconciling spool events failed", logging.KeyError, err)
 		return
 	}
 	for _, dev := range events {
@@ -231,18 +235,18 @@ func (c *Client) reconcile() {
 		c.dirtyCount.Add(1)
 		ev.due = time.Now().Add(c.cfg.SettleDelay)
 		c.events[dev.sourceID] = ev
-		c.cfg.Logf("eventupload: reconciling unfinalized event %s (%d uploaded artifact(s))",
-			dev.sourceID, len(dev.artifacts))
+		c.log.Info("reconciling unfinalized event",
+			logging.KeyEventID, ev.key, "uploaded_artifacts", len(dev.artifacts))
 	}
 	items, err := c.store.pending()
 	if err != nil {
-		c.cfg.Logf("eventupload: reconciling spool queue failed: %v", err)
+		c.log.Error("reconciling spool queue failed", logging.KeyError, err)
 		return
 	}
 	if len(items) == 0 {
 		return
 	}
-	c.cfg.Logf("eventupload: reconciling %d pending upload(s) from durable spool", len(items))
+	c.log.Info("reconciling pending uploads from durable spool", "pending", len(items))
 	for _, it := range items {
 		c.Enqueue(it)
 	}
@@ -256,17 +260,17 @@ func (c *Client) reconcile() {
 func (c *Client) evict() {
 	reclaimed, total, overCap, err := c.store.evict(c.cfg.SpoolMaxBytes)
 	if err != nil {
-		c.cfg.Logf("eventupload: spool eviction failed: %v", err)
+		c.log.Warn("spool eviction failed", logging.KeyError, err)
 		return
 	}
 	if reclaimed > 0 {
-		c.cfg.Logf("eventupload: evicted %d uploaded file(s); spool now %d bytes (cap %d)",
-			reclaimed, total, c.cfg.SpoolMaxBytes)
+		c.log.Info("evicted uploaded spool files",
+			"reclaimed", reclaimed, "spool_bytes", total, "cap_bytes", c.cfg.SpoolMaxBytes)
 	}
 	if overCap && time.Since(c.lastEvictWarn) > time.Minute {
 		c.lastEvictWarn = time.Now()
-		c.cfg.Logf("eventupload: WARNING spool at %d bytes exceeds cap %d but all remaining files are un-uploaded or belong to unfinalized events; retaining to avoid dropping clips",
-			total, c.cfg.SpoolMaxBytes)
+		c.log.Warn("spool over cap but all remaining files are un-uploaded or belong to unfinalized events; retaining to avoid dropping clips",
+			"spool_bytes", total, "cap_bytes", c.cfg.SpoolMaxBytes)
 	}
 }
 
@@ -396,7 +400,8 @@ func (c *Client) finalize(ctx context.Context, ev *eventState) error {
 	// the next restart, which the server treats as idempotent.
 	if c.store != nil {
 		if err := c.store.markFinalized(ev.sourceID, generation); err != nil {
-			c.cfg.Logf("eventupload: recording finalize of %s failed: %v", ev.sourceID, err)
+			c.log.Warn("recording finalize failed", logging.KeyEventID, ev.key,
+				logging.KeyGeneration, generation, logging.KeyError, err)
 		}
 		c.evict()
 	}

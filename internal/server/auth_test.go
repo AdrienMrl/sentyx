@@ -13,6 +13,7 @@ func TestBearerTokenAuth(t *testing.T) {
 		DataDir:    t.TempDir(),
 		ListenAddr: "127.0.0.1:0", // unused: we serve via httptest
 		Token:      "s3cret",
+		Logger:     testLogger(t),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -70,6 +71,7 @@ func TestNoTokenMeansNoAuth(t *testing.T) {
 	c, err := New(Config{
 		DataDir:    t.TempDir(),
 		ListenAddr: "127.0.0.1:0",
+		Logger:     testLogger(t),
 	})
 	if err != nil {
 		t.Fatal(err)

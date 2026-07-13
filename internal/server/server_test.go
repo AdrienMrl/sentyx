@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -19,14 +20,29 @@ import (
 	"time"
 
 	"github.com/AdrienMrl/teslcam/internal/cameraselect"
+	"github.com/AdrienMrl/teslcam/internal/logging"
 	"github.com/AdrienMrl/teslcam/internal/protocol"
 )
+
+// testLogger builds a discarding logger so New's required-Logger check is
+// satisfied without polluting test output.
+func testLogger(t *testing.T) *slog.Logger {
+	t.Helper()
+	lg, err := logging.New(logging.Config{
+		Writer: io.Discard, Format: logging.FormatText, Level: slog.LevelInfo, Binary: "test",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return lg
+}
 
 func TestNewRequiresConfig(t *testing.T) {
 	for _, cfg := range []Config{
 		{},
-		{DataDir: "x"},     // no ListenAddr
-		{ListenAddr: ":0"}, // no DataDir
+		{DataDir: "x"},                   // no ListenAddr
+		{ListenAddr: ":0"},               // no DataDir
+		{DataDir: "x", ListenAddr: ":0"}, // no Logger (required)
 	} {
 		if _, err := New(cfg); err == nil {
 			t.Errorf("New(%+v): expected error", cfg)
@@ -248,6 +264,7 @@ func TestIngestCompleteAnalyze(t *testing.T) {
 		DataDir:    t.TempDir(),
 		ListenAddr: "127.0.0.1:0", // unused: we serve via httptest
 		AnalyzeCmd: fakeAnalyzer(t),
+		Logger:     testLogger(t),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -272,7 +289,7 @@ func TestIngestCompleteAnalyze(t *testing.T) {
 	})
 
 	// Finalize enqueued the analysis job; run it synchronously here.
-	c.analyzeEvent(context.Background(), event, t.Logf)
+	c.analyzeEvent(context.Background(), event, 1)
 
 	var got struct {
 		EventSummary
@@ -336,6 +353,7 @@ func TestAnalyzePassesLogicalNameForExtensionlessBlob(t *testing.T) {
 	analyzer := &recordingAnalyzer{}
 	c, err := New(Config{
 		DataDir: t.TempDir(), ListenAddr: "127.0.0.1:0", Analyzer: analyzer,
+		Logger: testLogger(t),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -353,7 +371,7 @@ func TestAnalyzePassesLogicalNameForExtensionlessBlob(t *testing.T) {
 		{"2026-07-04_10-01-31-front.mp4", []byte("clip bytes")},
 	})
 
-	c.analyzeEvent(context.Background(), event, t.Logf)
+	c.analyzeEvent(context.Background(), event, 1)
 	if analyzer.clip.Name != "2026-07-04_10-01-31-front.mp4" {
 		t.Fatalf("logical clip name = %q", analyzer.clip.Name)
 	}
@@ -395,6 +413,7 @@ func TestDebugNotifiesWhenUploadFinalizes(t *testing.T) {
 		ListenAddr:         "127.0.0.1:0",
 		Notifier:           notif,
 		DebugNotifications: true,
+		Logger:             testLogger(t),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -423,6 +442,7 @@ func TestNotifyOnDoneIsNonFatal(t *testing.T) {
 		ListenAddr: "127.0.0.1:0",
 		AnalyzeCmd: fakeAnalyzer(t),
 		Notifier:   notif,
+		Logger:     testLogger(t),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -442,7 +462,7 @@ func TestNotifyOnDoneIsNonFatal(t *testing.T) {
 		{"event.json", []byte(`{"timestamp":"2026-07-04T10:01:31","city":"North Las Vegas","reason":"sentry","camera":"5"}`)},
 	})
 
-	c.analyzeEvent(context.Background(), event, t.Logf)
+	c.analyzeEvent(context.Background(), event, 1)
 
 	// The notifier errored, but analysis must still be persisted as done.
 	ev, err := c.store.event(event)
@@ -477,6 +497,7 @@ func TestAnalyzerFailureRecorded(t *testing.T) {
 		DataDir:    t.TempDir(),
 		ListenAddr: "127.0.0.1:0",
 		AnalyzeCmd: []string{script},
+		Logger:     testLogger(t),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -495,7 +516,7 @@ func TestAnalyzerFailureRecorded(t *testing.T) {
 		{"event.json", []byte(`{"timestamp":"2026-07-04T11:00:00","camera":"0"}`)},
 	})
 
-	c.analyzeEvent(context.Background(), event, t.Logf)
+	c.analyzeEvent(context.Background(), event, 1)
 
 	ev, err := c.store.event(event)
 	if err != nil || ev == nil {

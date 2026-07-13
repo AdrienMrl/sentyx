@@ -26,6 +26,7 @@ import (
 
 	"github.com/AdrienMrl/teslcam/internal/cameraselect"
 	"github.com/AdrienMrl/teslcam/internal/gadget"
+	"github.com/AdrienMrl/teslcam/internal/logging"
 	"github.com/AdrienMrl/teslcam/internal/pipeline"
 	"github.com/AdrienMrl/teslcam/internal/tokenfile"
 	"github.com/AdrienMrl/teslcam/internal/videocompress"
@@ -67,7 +68,23 @@ func main() {
 	videoEncoder := flag.String("video-encoder", "h264_v4l2m2m", "ffmpeg video encoder (Pi default uses hardware H.264)")
 	ffmpegPath := flag.String("ffmpeg", "ffmpeg", "ffmpeg executable used for video compression")
 	ffprobePath := flag.String("ffprobe", "ffprobe", "ffprobe executable used to inspect videos")
+	logFormat := flag.String("log-format", "text", `log output format: "text" or "json"`)
+	logLevel := flag.String("log-level", "info", `minimum log level: "debug", "info", "warn" or "error"`)
 	flag.Parse()
+
+	format, err := logging.ParseFormat(*logFormat)
+	if err != nil {
+		log.Fatal(err)
+	}
+	level, err := logging.ParseLevel(*logLevel)
+	if err != nil {
+		log.Fatal(err)
+	}
+	logger, err := logging.New(logging.Config{Writer: os.Stderr, Format: format, Level: level, Binary: "teslcam-agent"})
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	if *imagePath == "" || *udc == "" {
 		log.Fatal("both -image and -udc are required")
 	}
@@ -109,7 +126,7 @@ func main() {
 		if err != nil {
 			log.Fatal(err)
 		}
-		log.Printf("udc: auto-detected %s", udcName)
+		logger.Info("udc auto-detected", "udc", udcName)
 	}
 
 	g, err := gadget.New(gadget.Config{
@@ -130,7 +147,7 @@ func main() {
 	// A gadget left over from a crashed run would keep the old LUN config;
 	// replace it so the car always sees the image this process was given.
 	if g.Exists() {
-		log.Printf("gadget: removing leftover %s/%s", *configfs, *gadgetName)
+		logger.Info("removing leftover gadget", logging.KeyPath, *configfs+"/"+*gadgetName)
 		if err := g.Teardown(); err != nil {
 			log.Fatalf("gadget: leftover teardown: %v", err)
 		}
@@ -138,7 +155,7 @@ func main() {
 	if err := g.Setup(); err != nil {
 		log.Fatal(err)
 	}
-	log.Printf("gadget: %s exposed on %s", *imagePath, udcName)
+	logger.Info("gadget exposed", logging.KeyPath, *imagePath, "udc", udcName)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -184,16 +201,16 @@ func main() {
 		SelectMetadataTimeout: *selectMetadataTimeout,
 		CameraScorer:          cameraScorer,
 		CameraScoreWait:       *cameraScoreWait,
-		Logf:                  log.Printf,
+		Logger:                logger,
 	})
 
 	if err := g.Teardown(); err != nil {
-		log.Printf("gadget: teardown: %v", err)
+		logger.Error("gadget teardown failed", logging.KeyError, err)
 	} else {
-		log.Print("gadget: torn down")
+		logger.Info("gadget torn down")
 	}
 	if ctx.Err() != nil {
-		log.Print("shutting down")
+		logger.Info("shutting down")
 		return
 	}
 	if runErr != nil {

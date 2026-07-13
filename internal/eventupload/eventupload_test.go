@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -14,8 +15,18 @@ import (
 	"testing"
 	"time"
 
+	"github.com/AdrienMrl/teslcam/internal/logging"
 	"github.com/AdrienMrl/teslcam/internal/protocol"
 )
+
+// testLogger builds a discarding logger for tests.
+func testLogger() *slog.Logger {
+	lg, err := logging.New(logging.Config{Writer: io.Discard, Format: logging.FormatText, Level: slog.LevelInfo, Binary: "test"})
+	if err != nil {
+		panic(err)
+	}
+	return lg
+}
 
 // writeSpool creates a spooled file of size bytes under dir and returns its path.
 func writeSpool(t *testing.T, dir, name string, size int64) string {
@@ -32,7 +43,7 @@ func durableCfg(dir string) Config {
 		BaseURL: "http://example.test", DeviceID: "pi-1",
 		RetryDelay: time.Second, SettleDelay: time.Second,
 		SpoolDBPath: filepath.Join(dir, "spool.db"), SpoolMaxBytes: 1 << 20,
-		Logf: func(string, ...any) {},
+		Logger: testLogger(),
 	}
 }
 

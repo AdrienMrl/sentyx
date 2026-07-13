@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,21 +14,24 @@ import (
 	"time"
 
 	"github.com/AdrienMrl/teslcam/internal/cameraselect"
+	"github.com/AdrienMrl/teslcam/internal/logging"
 )
 
 // analyzeEvent selects the most relevant clip for a completed event, runs
 // the configured Analyzer on it, and stores the verdict plus token usage.
 // All outcomes land in the store (done/failed/skipped) so nothing is
-// silently dropped.
-func (c *Server) analyzeEvent(ctx context.Context, eventID string, logf func(string, ...any)) {
+// silently dropped. generation identifies which finalized manifest is being
+// analyzed, so re-analysis of an event is visible in the logs.
+func (c *Server) analyzeEvent(ctx context.Context, eventID string, generation int) {
+	lg := c.analyzerLog.With(logging.KeyEventID, eventID, logging.KeyGeneration, generation)
 	if c.analyzer == nil {
 		c.store.setAnalysis(eventID, "skipped", "", "", "", "", nil)
 		return
 	}
 	fail := func(clip string, err error) {
-		logf("analysis of %s failed: %v", eventID, err)
+		lg.Error("analysis failed", logging.KeyClip, clip, logging.KeyError, err)
 		if serr := c.store.setAnalysis(eventID, "failed", clip, "", "", err.Error(), nil); serr != nil {
-			logf("recording analysis failure for %s: %v", eventID, serr)
+			lg.Error("recording analysis failure", logging.KeyError, serr)
 		}
 	}
 
@@ -43,7 +47,7 @@ func (c *Server) analyzeEvent(ctx context.Context, eventID string, logf func(str
 	}
 	rankedCameras, selectionErr := loadCameraSelection(c.cfg.DataDir, files)
 	if selectionErr != nil {
-		logf("camera selection metadata for %s is invalid; using Tesla fallback: %v", eventID, selectionErr)
+		lg.Warn("camera selection metadata invalid; using Tesla fallback", logging.KeyError, selectionErr)
 	}
 	clip, err := selectClipRanked(files, ev.EventTS, ev.Camera, rankedCameras)
 	if err != nil {
@@ -51,11 +55,11 @@ func (c *Server) analyzeEvent(ctx context.Context, eventID string, logf func(str
 		return
 	}
 	if err := c.store.setAnalysis(eventID, "running", clip.Name, "", "", "", nil); err != nil {
-		logf("marking %s running: %v", eventID, err)
+		lg.Error("marking analysis running", logging.KeyClip, clip.Name, logging.KeyError, err)
 	}
 
 	clipPath := filepath.Join(c.cfg.DataDir, clip.StoredPath)
-	logf("analyzing %s clip %s", eventID, clip.Name)
+	lg.Info("analyzing clip", logging.KeyClip, clip.Name)
 	runCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
 	res, err := c.analyzer.Analyze(runCtx, AnalysisClip{Path: clipPath, Name: clip.Name})
@@ -75,10 +79,10 @@ func (c *Server) analyzeEvent(ctx context.Context, eventID string, logf func(str
 		return
 	}
 	if err := c.store.setAnalysis(eventID, "done", clip.Name, parsed.ThreatLevel, string(res.VerdictJSON), "", res.Usage); err != nil {
-		logf("storing analysis for %s: %v", eventID, err)
+		lg.Error("storing analysis", logging.KeyClip, clip.Name, logging.KeyError, err)
 		return
 	}
-	logf("event %s analyzed: threat_level=%s (clip %s)", eventID, parsed.ThreatLevel, clip.Name)
+	lg.Info("event analyzed", "threat_level", parsed.ThreatLevel, logging.KeyClip, clip.Name)
 	var framePath string
 	if c.notifier != nil {
 		frameCtx, cancelFrame := context.WithTimeout(ctx, 30*time.Second)
@@ -86,7 +90,7 @@ func (c *Server) analyzeEvent(ctx context.Context, eventID string, logf func(str
 		framePath, frameErr = extractEventFrame(frameCtx, c.cfg.FFmpegPath, clipPath, parsed.EventTimestampSecond)
 		cancelFrame()
 		if frameErr != nil {
-			logf("extracting notification frame for %s: %v", eventID, frameErr)
+			lg.Warn("extracting notification frame", logging.KeyError, frameErr)
 		} else {
 			defer os.Remove(framePath)
 		}
@@ -107,7 +111,7 @@ func (c *Server) analyzeEvent(ctx context.Context, eventID string, logf func(str
 		Usage:             res.Usage,
 		EstimatedCostUSD:  res.EstimatedCostUSD,
 		FramePath:         framePath,
-	}, logf)
+	}, lg)
 }
 
 // extractEventFrame decodes the exact moment selected by Gemini. Seeking after
@@ -144,7 +148,7 @@ func extractEventFrame(ctx context.Context, ffmpegPath, clipPath string, seconds
 // is configured. Delivery is bounded so a slow or unreachable notifier can't
 // stall the analysis worker, and any error is only logged: the verdict is
 // already persisted.
-func (c *Server) notify(ctx context.Context, n Notification, logf func(string, ...any)) {
+func (c *Server) notify(ctx context.Context, n Notification, lg *slog.Logger) {
 	if c.notifier == nil {
 		return
 	}
@@ -156,8 +160,10 @@ func (c *Server) notify(ctx context.Context, n Notification, logf func(string, .
 	nctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	if err := c.notifier.Notify(nctx, n); err != nil {
-		logf("notifying about %s: %v", n.EventID, err)
+		lg.Error("notification delivery failed", logging.KeyError, err)
+		return
 	}
+	lg.Info("notification sent", "threat_level", n.ThreatLevel, logging.KeyCamera, n.Camera)
 }
 
 // prettyCamera turns a Tesla camera code into a human-readable name for

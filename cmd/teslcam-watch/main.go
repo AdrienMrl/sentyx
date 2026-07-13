@@ -19,6 +19,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/AdrienMrl/teslcam/internal/logging"
 	"github.com/AdrienMrl/teslcam/internal/pipeline"
 	"github.com/AdrienMrl/teslcam/internal/tokenfile"
 	"github.com/AdrienMrl/teslcam/internal/videocompress"
@@ -43,7 +44,22 @@ func main() {
 	videoEncoder := flag.String("video-encoder", defaultVideoEncoder(), "ffmpeg video encoder")
 	ffmpegPath := flag.String("ffmpeg", "ffmpeg", "ffmpeg executable used for video compression")
 	ffprobePath := flag.String("ffprobe", "ffprobe", "ffprobe executable used to inspect videos")
+	logFormat := flag.String("log-format", "text", `log output format: "text" or "json"`)
+	logLevel := flag.String("log-level", "info", `minimum log level: "debug", "info", "warn" or "error"`)
 	flag.Parse()
+
+	format, err := logging.ParseFormat(*logFormat)
+	if err != nil {
+		log.Fatal(err)
+	}
+	level, err := logging.ParseLevel(*logLevel)
+	if err != nil {
+		log.Fatal(err)
+	}
+	logger, err := logging.New(logging.Config{Writer: os.Stderr, Format: format, Level: level, Binary: "teslcam-watch"})
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	token, err := tokenfile.Read(*tokenFile)
 	if err != nil {
@@ -83,10 +99,10 @@ func main() {
 		RetryDelay:       5 * time.Second,
 		EventSettleDelay: *eventSettle,
 		VideoCompression: videoCompression,
-		Logf:             log.Printf,
+		Logger:           logger,
 	})
 	if ctx.Err() != nil {
-		log.Print("shutting down")
+		logger.Info("shutting down")
 		return
 	}
 	if err != nil {

@@ -7,6 +7,7 @@ package pipeline
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"path/filepath"
 	"strings"
 	"time"
@@ -14,6 +15,7 @@ import (
 	"github.com/AdrienMrl/teslcam/internal/cameraselect"
 	"github.com/AdrienMrl/teslcam/internal/copyout"
 	"github.com/AdrienMrl/teslcam/internal/eventupload"
+	"github.com/AdrienMrl/teslcam/internal/logging"
 	"github.com/AdrienMrl/teslcam/internal/videocompress"
 	"github.com/AdrienMrl/teslcam/internal/watch"
 )
@@ -25,7 +27,7 @@ const (
 	copyPrioritySelected = 300
 )
 
-// Config for a pipeline run. ImagePath, Interval, StablePolls and Logf are
+// Config for a pipeline run. ImagePath, Interval, StablePolls and Logger are
 // required; CopyTo/CopyPrefix (together) enable extraction, PostTo (requires
 // CopyTo) enables upload, matching the flags of teslcam-watch.
 type Config struct {
@@ -62,14 +64,14 @@ type Config struct {
 	CameraScorer    cameraselect.Scorer
 	CameraScoreWait time.Duration
 
-	Logf func(format string, v ...any)
+	Logger *slog.Logger
 }
 
 // Run watches the image and drives copy-out/upload until ctx is cancelled.
 // It returns nil on cancellation and the watcher's error otherwise.
 func Run(ctx context.Context, cfg Config) error {
-	if cfg.ImagePath == "" || cfg.Interval <= 0 || cfg.StablePolls <= 0 || cfg.Logf == nil {
-		return fmt.Errorf("pipeline: ImagePath, Interval, StablePolls and Logf are all required")
+	if cfg.ImagePath == "" || cfg.Interval <= 0 || cfg.StablePolls <= 0 || cfg.Logger == nil {
+		return fmt.Errorf("pipeline: ImagePath, Interval, StablePolls and Logger are all required")
 	}
 	if (cfg.CopyTo == "") != (cfg.CopyPrefix == "") {
 		return fmt.Errorf("pipeline: CopyTo and CopyPrefix must be set together")
@@ -103,6 +105,8 @@ func Run(ctx context.Context, cfg Config) error {
 		return fmt.Errorf("pipeline: CameraScorer requires SelectClips")
 	}
 
+	log := cfg.Logger.With(logging.KeyComponent, "pipeline")
+
 	var compressor *videocompress.Compressor
 	if cfg.VideoCompression != nil {
 		var err error
@@ -126,23 +130,23 @@ func Run(ctx context.Context, cfg Config) error {
 		uploader, err = eventupload.New(eventupload.Config{
 			BaseURL: cfg.PostTo, RetryDelay: cfg.RetryDelay,
 			SettleDelay: cfg.EventSettleDelay, DeviceID: cfg.DeviceID, Token: cfg.PostToken,
-			SpoolDBPath: cfg.SpoolDBPath, SpoolMaxBytes: cfg.SpoolMaxBytes, Logf: cfg.Logf,
+			SpoolDBPath: cfg.SpoolDBPath, SpoolMaxBytes: cfg.SpoolMaxBytes, Logger: cfg.Logger,
 		})
 		if err != nil {
 			return err
 		}
 		go uploader.Run(ctx,
 			func(it eventupload.Item) {
-				cfg.Logf("upload: %s -> %s", it.ImagePath, cfg.PostTo)
+				log.Info("upload", append(eventAttrs(cfg.DeviceID, it.ImagePath), "url", cfg.PostTo)...)
 			},
 			func(it eventupload.Item, err error) {
-				cfg.Logf("upload error for %s (will retry): %v", it.ImagePath, err)
+				log.Warn("upload failed; will retry", append(eventAttrs(cfg.DeviceID, it.ImagePath), logging.KeyError, err)...)
 			},
 			func(eventID string, generation int) {
-				cfg.Logf("event finalized: %s generation %d", eventID, generation)
+				log.Info("event finalized", logging.KeyEventID, eventID, logging.KeyGeneration, generation)
 			},
 		)
-		cfg.Logf("publishing high-level events to %s as device %s", cfg.PostTo, cfg.DeviceID)
+		log.Info("publishing high-level events", "url", cfg.PostTo, logging.KeyDevice, cfg.DeviceID)
 	}
 
 	type compressionJob struct {
@@ -160,14 +164,15 @@ func Run(ctx context.Context, cfg Config) error {
 				case job := <-compressionJobs:
 					result, err := compressor.Compress(ctx, job.localPath)
 					if err != nil {
-						cfg.Logf("compression error for %s (uploading original): %v", job.imagePath, err)
+						log.Warn("compression failed; uploading original", append(eventAttrs(cfg.DeviceID, job.imagePath), logging.KeyError, err)...)
 						uploader.Enqueue(eventupload.Item{LocalPath: job.localPath, ImagePath: job.imagePath})
 						continue
 					}
 					if result.Compressed {
 						saved := 100 * (1 - float64(result.OutputBytes)/float64(result.OriginalBytes))
-						cfg.Logf("compression: %s %d -> %d bytes (%.0f%% saved, %d kbps)",
-							job.imagePath, result.OriginalBytes, result.OutputBytes, saved, result.TargetBitrate/1000)
+						log.Info("compression", append(eventAttrs(cfg.DeviceID, job.imagePath),
+							"original_bytes", result.OriginalBytes, "output_bytes", result.OutputBytes,
+							"saved_percent", saved, "kbps", result.TargetBitrate/1000)...)
 						uploader.Enqueue(eventupload.Item{
 							LocalPath:         result.Path,
 							ImagePath:         job.imagePath,
@@ -175,14 +180,14 @@ func Run(ctx context.Context, cfg Config) error {
 						})
 						continue
 					}
-					cfg.Logf("compression skipped for %s: %s", job.imagePath, result.Reason)
+					log.Info("compression skipped", append(eventAttrs(cfg.DeviceID, job.imagePath), "reason", result.Reason)...)
 					uploader.Enqueue(eventupload.Item{LocalPath: job.localPath, ImagePath: job.imagePath})
 				}
 			}
 		}()
-		cfg.Logf("video compression enabled (%s, ratio %.2f, %d-%d kbps)",
-			cfg.VideoCompression.Encoder, cfg.VideoCompression.TargetRatio,
-			cfg.VideoCompression.MinBitrate/1000, cfg.VideoCompression.MaxBitrate/1000)
+		log.Info("video compression enabled",
+			"encoder", cfg.VideoCompression.Encoder, "target_ratio", cfg.VideoCompression.TargetRatio,
+			"min_kbps", cfg.VideoCompression.MinBitrate/1000, "max_kbps", cfg.VideoCompression.MaxBitrate/1000)
 	}
 
 	// enqueueFile routes one extracted file into the real upload path: MP4s go
@@ -204,13 +209,15 @@ func Run(ctx context.Context, cfg Config) error {
 	// enqueues the trigger camera's relevant one once event.json is known.
 	var selector *clipSelector
 	if cfg.SelectClips {
+		scorerLog := cfg.Logger.With(logging.KeyComponent, "scorer")
 		if cfg.CameraScorer != nil {
-			selector = newScoredClipSelector(ctx, cfg.SelectMetadataTimeout, cfg.CameraScoreWait, cfg.CameraScorer, cfg.Logf, enqueueFile)
-			cfg.Logf("camera scoring enabled: uploading a recall-biased camera set (wait %s, fallback timeout %s)",
-				cfg.CameraScoreWait, cfg.SelectMetadataTimeout)
+			selector = newScoredClipSelector(ctx, cfg.DeviceID, cfg.SelectMetadataTimeout, cfg.CameraScoreWait, cfg.CameraScorer, scorerLog, enqueueFile)
+			log.Info("camera scoring enabled: uploading a recall-biased camera set",
+				"score_wait", cfg.CameraScoreWait, "fallback_timeout", cfg.SelectMetadataTimeout)
 		} else {
-			selector = newClipSelector(cfg.SelectMetadataTimeout, cfg.Logf, enqueueFile)
-			cfg.Logf("clip selection enabled: uploading only the Tesla trigger clip per event (metadata timeout %s)", cfg.SelectMetadataTimeout)
+			selector = newClipSelector(cfg.DeviceID, cfg.SelectMetadataTimeout, scorerLog, enqueueFile)
+			log.Info("clip selection enabled: uploading only the Tesla trigger clip per event",
+				"metadata_timeout", cfg.SelectMetadataTimeout)
 		}
 	}
 
@@ -227,9 +234,9 @@ func Run(ctx context.Context, cfg Config) error {
 		go copier.Run(ctx,
 			func(r copyout.Result) {
 				if r.Skipped {
-					cfg.Logf("copy: %s already up to date at %s", r.Path, r.Dest)
+					log.Info("copy skipped; already up to date", logging.KeyPath, r.Path, "dest", r.Dest)
 				} else {
-					cfg.Logf("copy: %s -> %s (%d bytes)", r.Path, r.Dest, r.Bytes)
+					log.Info("copy", logging.KeyPath, r.Path, "dest", r.Dest, "bytes", r.Bytes)
 				}
 				if uploader == nil {
 					return
@@ -237,7 +244,7 @@ func Run(ctx context.Context, cfg Config) error {
 				if selector != nil {
 					for _, selected := range selector.onFile(r.Dest, r.Path) {
 						if copier.Promote(selected, copyPrioritySelected) {
-							cfg.Logf("copy priority: candidate clip %s promoted ahead of background retention", selected)
+							log.Info("candidate clip promoted ahead of background retention", logging.KeyPath, selected)
 						}
 					}
 				} else {
@@ -245,18 +252,18 @@ func Run(ctx context.Context, cfg Config) error {
 				}
 			},
 			func(path string, err error) {
-				cfg.Logf("copy error for %s (will retry on next stabilize): %v", path, err)
+				log.Warn("copy failed; will retry on next stabilize", logging.KeyPath, path, logging.KeyError, err)
 			},
 		)
-		cfg.Logf("copying stable files under %s to %s", cfg.CopyPrefix, cfg.CopyTo)
+		log.Info("copying stable files", "prefix", cfg.CopyPrefix, "dest", cfg.CopyTo)
 	}
 
-	cfg.Logf("watching %s every %s (stable after %d polls)", cfg.ImagePath, cfg.Interval, cfg.StablePolls)
+	log.Info("watching image", logging.KeyPath, cfg.ImagePath, "interval", cfg.Interval, "stable_polls", cfg.StablePolls)
 	err = w.Run(ctx,
 		func(ev watch.Event) {
-			cfg.Logf("%s", ev)
+			logWatchEvent(log, ev)
 			if ev.Type == watch.DirAdded && IsSentryEventDir(ev.Path) {
-				cfg.Logf(">>> NEW SENTRY EVENT: %s", ev.Path)
+				log.Info("new sentry event", logging.KeyPath, ev.Path)
 			}
 			if copier != nil && ev.Type == watch.FileStable {
 				priority := initialCopyPriority(ev.Path)
@@ -270,19 +277,45 @@ func Run(ctx context.Context, cfg Config) error {
 				copier.EnqueuePriority(ev.Path, priority)
 				for _, candidate := range selected {
 					if candidate != ev.Path && copier.Promote(candidate, copyPrioritySelected) {
-						cfg.Logf("copy priority: candidate clip %s promoted after stabilizing %s", candidate, ev.Path)
+						log.Info("candidate clip promoted after stabilizing sibling", logging.KeyPath, candidate, "after", ev.Path)
 					}
 				}
 			}
 		},
 		func(err error) {
-			cfg.Logf("poll error (will retry): %v", err)
+			log.Warn("poll failed; will retry", logging.KeyError, err)
 		},
 	)
 	if ctx.Err() != nil {
 		return nil
 	}
 	return err
+}
+
+// logWatchEvent renders a watcher event structurally, preserving the fields of
+// the old "%-12s path (valid/size bytes valid)" line as attributes so an event's
+// filesystem history stays greppable.
+func logWatchEvent(log *slog.Logger, ev watch.Event) {
+	if ev.IsDir {
+		log.Info(string(ev.Type), logging.KeyPath, ev.Path, "is_dir", true)
+		return
+	}
+	log.Info(string(ev.Type), logging.KeyPath, ev.Path, "valid_bytes", ev.ValidSize, "size_bytes", ev.Size)
+}
+
+// eventAttrs derives the correlation attributes (image path, ingestion event ID,
+// and clip name for MP4s) shared by every upload/compression line, so one event's
+// full client-side history can be selected on KeyEventID.
+func eventAttrs(deviceID, imagePath string) []any {
+	sourceID, name := eventKeyAndName(imagePath)
+	attrs := []any{logging.KeyPath, imagePath}
+	if sourceID != "" {
+		attrs = append(attrs, logging.KeyEventID, deviceID+":"+sourceID)
+	}
+	if strings.EqualFold(filepath.Ext(name), ".mp4") {
+		attrs = append(attrs, logging.KeyClip, name)
+	}
+	return attrs
 }
 
 func containsPath(paths []string, want string) bool {
