@@ -33,7 +33,8 @@ type CommandConfig struct {
 // Keeping inference out of the Go process isolates native failures and makes
 // the selection policy independently testable.
 type CommandScorer struct {
-	cfg CommandConfig
+	cfg   CommandConfig
+	slots chan struct{}
 }
 
 func NewCommandScorer(cfg CommandConfig) (*CommandScorer, error) {
@@ -43,12 +44,21 @@ func NewCommandScorer(cfg CommandConfig) (*CommandScorer, error) {
 	if cfg.Window <= 0 || cfg.SampleFPS <= 0 || cfg.Threads <= 0 {
 		return nil, fmt.Errorf("camera scorer window, sample FPS and threads must be positive")
 	}
-	return &CommandScorer{cfg: cfg}, nil
+	return &CommandScorer{cfg: cfg, slots: make(chan struct{}, 1)}, nil
 }
 
 func (s *CommandScorer) Score(ctx context.Context, candidate Candidate) (Score, error) {
 	if candidate.Camera == "" || candidate.LocalPath == "" || candidate.EventOffsetSeconds < 0 {
 		return Score{}, fmt.Errorf("camera, local path and non-negative event offset are required")
+	}
+	// A Pi may rediscover several retained events after reboot. Serialize native
+	// inference across them so separate event goroutines cannot multiply CPU,
+	// memory, and thermal load.
+	select {
+	case s.slots <- struct{}{}:
+		defer func() { <-s.slots }()
+	case <-ctx.Done():
+		return Score{}, ctx.Err()
 	}
 	args := []string{
 		"--model-param", s.cfg.ModelParam,

@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -41,6 +42,38 @@ func TestCommandScorer(t *testing.T) {
 		if !strings.Contains(string(args), want) {
 			t.Errorf("args missing %q:\n%s", want, args)
 		}
+	}
+}
+
+func TestCommandScorerSerializesNativeInference(t *testing.T) {
+	dir := t.TempDir()
+	command := filepath.Join(dir, "score")
+	script := "#!/bin/sh\nif ! mkdir \"$LOCK_DIR\" 2>/dev/null; then touch \"$OVERLAP_FILE\"; fi\nsleep 0.1\nrmdir \"$LOCK_DIR\" 2>/dev/null || true\necho '{\"objects\":0.1,\"motion\":0,\"novelty\":0,\"occlusion\":0}'\n"
+	if err := os.WriteFile(command, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("LOCK_DIR", filepath.Join(dir, "lock"))
+	overlap := filepath.Join(dir, "overlap")
+	t.Setenv("OVERLAP_FILE", overlap)
+	scorer, err := NewCommandScorer(CommandConfig{
+		Path: command, ModelParam: "p", ModelBin: "b", Window: 1, SampleFPS: 1, Threads: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	for _, camera := range []string{"back", "front"} {
+		wg.Add(1)
+		go func(camera string) {
+			defer wg.Done()
+			if _, err := scorer.Score(context.Background(), Candidate{Camera: camera, LocalPath: camera, EventOffsetSeconds: 1}); err != nil {
+				t.Errorf("Score(%s): %v", camera, err)
+			}
+		}(camera)
+	}
+	wg.Wait()
+	if _, err := os.Stat(overlap); !os.IsNotExist(err) {
+		t.Fatal("native scorer commands overlapped")
 	}
 }
 

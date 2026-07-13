@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -34,6 +35,13 @@ func (r *recorder) snapshot() []string {
 
 type fixedScorer struct {
 	scores map[string]cameraselect.Score
+}
+
+type countingScorer struct{ calls atomic.Int32 }
+
+func (s *countingScorer) Score(_ context.Context, candidate cameraselect.Candidate) (cameraselect.Score, error) {
+	s.calls.Add(1)
+	return cameraselect.Score{Camera: candidate.Camera, Motion: 1}, nil
 }
 
 func (s fixedScorer) Score(_ context.Context, candidate cameraselect.Candidate) (cameraselect.Score, error) {
@@ -277,5 +285,45 @@ func TestScoredSelectorUploadsGenerousRankedSetAndMetadata(t *testing.T) {
 	}
 	if metadata.Ranked[0].Camera != "back" || len(metadata.Selected) != 3 {
 		t.Fatalf("selection metadata = %+v", metadata)
+	}
+}
+
+func TestScoredSelectorRestoresPersistedSelectionWithoutInference(t *testing.T) {
+	r := &recorder{}
+	localDir := t.TempDir()
+	metadata := cameraselect.Metadata{
+		Version:  1,
+		Ranked:   []cameraselect.Score{{Camera: "back", Combined: .9}, {Camera: "front", Combined: .1}},
+		Selected: []string{"back"},
+	}
+	data, err := json.Marshal(metadata)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(localDir, cameraselect.MetadataName), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	scorer := &countingScorer{}
+	sel := newScoredClipSelector(context.Background(), time.Hour, 10*time.Millisecond, scorer, discard, r.enqueue)
+	for _, camera := range []string{"back", "front"} {
+		file := "2026-07-12_12-29-00-" + camera + ".mp4"
+		imagePath := evDir + "/" + file
+		sel.onStable(imagePath)
+		sel.onFile(filepath.Join(localDir, file), imagePath)
+	}
+	eventJSON := filepath.Join(localDir, "event.json")
+	if err := os.WriteFile(eventJSON, []byte(`{"timestamp":"2026-07-12T12:29:46","camera":"6"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sel.onFile(eventJSON, evDir+"/event.json")
+	time.Sleep(30 * time.Millisecond)
+	if scorer.calls.Load() != 0 {
+		t.Fatalf("persisted selection triggered %d scorer calls", scorer.calls.Load())
+	}
+	got := r.snapshot()
+	if !contains(got, evDir+"/2026-07-12_12-29-00-back.mp4") ||
+		contains(got, evDir+"/2026-07-12_12-29-00-front.mp4") ||
+		!contains(got, evDir+"/"+cameraselect.MetadataName) {
+		t.Fatalf("restored enqueue set = %v", got)
 	}
 }

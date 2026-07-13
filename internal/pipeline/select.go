@@ -59,6 +59,7 @@ type heldEvent struct {
 	scoreReady bool
 	scoring    bool
 	scored     bool
+	selection  *cameraselect.Metadata
 }
 
 type mp4Ref struct {
@@ -128,6 +129,9 @@ func (s *clipSelector) onFile(localPath, imagePath string) []string {
 			s.logf("clip selection: parsing %s failed, cannot select for %s: %v", imagePath, sourceID, err)
 		} else {
 			ev.meta = &meta
+			if s.scorer != nil {
+				s.restoreSelectionLocked(sourceID, ev, localPath, imagePath)
+			}
 		}
 		if s.scorer == nil {
 			if ev.timer != nil {
@@ -194,6 +198,25 @@ func (s *clipSelector) runSelectionLocked(sourceID string, ev *heldEvent) []stri
 			return nil
 		}
 		promote := make([]string, 0, len(candidates))
+		if ev.selection != nil {
+			selected := make(map[string]bool, len(ev.selection.Selected))
+			for _, camera := range ev.selection.Selected {
+				selected[camera] = true
+			}
+			for _, candidate := range candidates {
+				if !selected[candidate.Camera] {
+					continue
+				}
+				promote = append(promote, candidate.Path)
+				for _, held := range ev.held {
+					if held.imagePath == candidate.Path {
+						s.enqueueLocked(ev, held.localPath, held.imagePath)
+						break
+					}
+				}
+			}
+			return promote
+		}
 		for _, candidate := range candidates {
 			promote = append(promote, candidate.Path)
 		}
@@ -234,6 +257,25 @@ func (s *clipSelector) runSelectionLocked(sourceID string, ev *heldEvent) []stri
 		}
 	}
 	return []string{sel}
+}
+
+func (s *clipSelector) restoreSelectionLocked(sourceID string, ev *heldEvent, eventLocalPath, eventImagePath string) {
+	selectionPath := filepath.Join(filepath.Dir(eventLocalPath), cameraselect.MetadataName)
+	data, err := os.ReadFile(selectionPath)
+	if err != nil {
+		return
+	}
+	var selection cameraselect.Metadata
+	if json.Unmarshal(data, &selection) != nil || selection.Version != 1 || len(selection.Ranked) == 0 || len(selection.Selected) == 0 {
+		s.logf("camera selection: ignoring invalid persisted metadata for %s", sourceID)
+		return
+	}
+	ev.selection = &selection
+	ev.scored = true
+	imagePath := strings.TrimSuffix(eventImagePath, filepath.Base(eventImagePath)) + cameraselect.MetadataName
+	s.enqueueLocked(ev, selectionPath, imagePath)
+	s.logf("camera selection: restored persisted result for %s ranked=%v selected=%v",
+		sourceID, cameraNames(selection.Ranked), selection.Selected)
 }
 
 type scoringCandidate struct {
@@ -309,6 +351,7 @@ func (s *clipSelector) scoreEvent(sourceID string, target *heldEvent, meta clips
 		}
 		return
 	}
+	ev.selection = &selection
 	selected := make(map[string]bool, len(selection.Selected))
 	for _, camera := range selection.Selected {
 		selected[camera] = true
