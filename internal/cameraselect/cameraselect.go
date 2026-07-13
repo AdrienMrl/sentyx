@@ -74,7 +74,10 @@ func (p Policy) Select(scores []Score, hintedCamera string) Metadata {
 		return meta
 	}
 	selectAll := ranked[0].Combined < p.LowConfidence
-	if len(ranked) > 1 && ranked[0].Combined-ranked[1].Combined < p.AmbiguousGap {
+	// A close tie is only uncertainty when both scores are modest. Two strong
+	// tied cameras are positive evidence for selecting both, not a reason to
+	// discard the useful ranking and upload every view.
+	if len(ranked) > 1 && ranked[0].Combined < p.StrongSignal && ranked[0].Combined-ranked[1].Combined < p.AmbiguousGap {
 		selectAll = true
 	}
 	for _, s := range ranked {

@@ -43,7 +43,7 @@ func TestSelectAllWhenWeakAmbiguousOrIncomplete(t *testing.T) {
 			{Camera: "front", Motion: .10}, {Camera: "back", Motion: .08}, {Camera: "left", Motion: .02},
 		},
 		"ambiguous": {
-			{Camera: "front", Motion: .50}, {Camera: "back", Motion: .48}, {Camera: "left", Motion: .02},
+			{Camera: "front", Motion: .32}, {Camera: "back", Motion: .30}, {Camera: "left", Motion: .02},
 		},
 		"error": {
 			{Camera: "front", Motion: .80}, {Camera: "back", Error: "decode failed"}, {Camera: "left"},
@@ -56,6 +56,19 @@ func TestSelectAllWhenWeakAmbiguousOrIncomplete(t *testing.T) {
 				t.Fatalf("selected %v, want all %d", got.Selected, len(scores))
 			}
 		})
+	}
+}
+
+func TestSelectStrongTieKeepsTiedCamerasWithoutForcingAll(t *testing.T) {
+	scores := []Score{
+		{Camera: "back", Motion: 1},
+		{Camera: "left_repeater", Motion: 1},
+		{Camera: "right_repeater", Novelty: .55},
+		{Camera: "front", Objects: .20},
+	}
+	got := DefaultPolicy().Select(scores, "")
+	if len(got.Selected) != 3 || contains(got.Selected, "front") {
+		t.Fatalf("strong tie selected %v, want three evidence-bearing cameras", got.Selected)
 	}
 }
 
