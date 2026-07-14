@@ -159,6 +159,34 @@ func TestCommandScorerSkipsInferenceAboveTemperatureLimit(t *testing.T) {
 	}
 }
 
+func TestCommandScorerStopsInferenceAtTemperatureLimit(t *testing.T) {
+	dir := t.TempDir()
+	temperature := filepath.Join(dir, "temp")
+	if err := os.WriteFile(temperature, []byte("71000\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	command := filepath.Join(dir, "score")
+	script := "#!/bin/sh\nprintf '76000\\n' > \"$TEMP_FILE\"\nwhile :; do :; done\n"
+	if err := os.WriteFile(command, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TEMP_FILE", temperature)
+	scorer, err := NewCommandScorer(CommandConfig{
+		Path: command, ModelParam: "p", ModelBin: "b", Window: 1, SampleFPS: 1, Threads: 1,
+		MaxTemperatureC: 75, ThermalPath: temperature, ThermalPoll: 10 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := time.Now()
+	if _, err := scorer.Score(context.Background(), Candidate{Camera: "back", LocalPath: "v", EventOffsetSeconds: 1}); err == nil || !strings.Contains(err.Error(), "stopped at 76.0 C") {
+		t.Fatalf("Score error = %v", err)
+	}
+	if elapsed := time.Since(started); elapsed > 500*time.Millisecond {
+		t.Fatalf("thermal stop took %v", elapsed)
+	}
+}
+
 func TestCommandScorerRejectsFailureAndInvalidJSON(t *testing.T) {
 	for name, body := range map[string]string{
 		"failure":      "#!/bin/sh\necho broken >&2\nexit 2\n",

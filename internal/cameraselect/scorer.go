@@ -35,6 +35,7 @@ type CommandConfig struct {
 	TasksetPath     string
 	MaxTemperatureC float64
 	ThermalPath     string
+	ThermalPoll     time.Duration
 }
 
 // CommandScorer invokes the small native NCNN/OpenCV helper used on the Pi.
@@ -52,8 +53,8 @@ func NewCommandScorer(cfg CommandConfig) (*CommandScorer, error) {
 	if cfg.Window <= 0 || cfg.SampleFPS <= 0 || cfg.Threads <= 0 {
 		return nil, fmt.Errorf("camera scorer window, sample FPS and threads must be positive")
 	}
-	if cfg.Timeout < 0 || cfg.Cooldown < 0 {
-		return nil, fmt.Errorf("camera scorer timeout and cooldown cannot be negative")
+	if cfg.Timeout < 0 || cfg.Cooldown < 0 || cfg.ThermalPoll < 0 {
+		return nil, fmt.Errorf("camera scorer timeout, cooldown and thermal poll interval cannot be negative")
 	}
 	if cfg.MaxTemperatureC < 0 {
 		return nil, fmt.Errorf("camera scorer maximum temperature cannot be negative")
@@ -72,6 +73,9 @@ func NewCommandScorer(cfg CommandConfig) (*CommandScorer, error) {
 	}
 	if cfg.MaxTemperatureC > 0 && cfg.ThermalPath == "" {
 		cfg.ThermalPath = "/sys/class/thermal/thermal_zone0/temp"
+	}
+	if cfg.MaxTemperatureC > 0 && cfg.ThermalPoll == 0 {
+		cfg.ThermalPoll = time.Second
 	}
 	return &CommandScorer{cfg: cfg, slots: make(chan struct{}, 1)}, nil
 }
@@ -118,21 +122,58 @@ func (s *CommandScorer) Score(ctx context.Context, candidate Candidate) (Score, 
 		candidate.LocalPath,
 	}
 	commandCtx := ctx
-	cancel := func() {}
+	cancelTimeout := func() {}
 	if s.cfg.Timeout > 0 {
-		commandCtx, cancel = context.WithTimeout(ctx, s.cfg.Timeout)
+		commandCtx, cancelTimeout = context.WithTimeout(ctx, s.cfg.Timeout)
 	}
-	defer cancel()
+	defer cancelTimeout()
+	runCtx, cancelRun := context.WithCancel(commandCtx)
+	defer cancelRun()
 	commandPath := s.cfg.Path
 	if s.cfg.CPUSet != "" {
 		args = append([]string{"-c", s.cfg.CPUSet, s.cfg.Path}, args...)
 		commandPath = s.cfg.TasksetPath
 	}
-	cmd := exec.CommandContext(commandCtx, commandPath, args...)
+	cmd := exec.CommandContext(runCtx, commandPath, args...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
-	if err := cmd.Run(); err != nil {
+	if err := cmd.Start(); err != nil {
 		return Score{}, fmt.Errorf("camera scorer: %w: %s", err, strings.TrimSpace(stderr.String()))
+	}
+	wait := make(chan error, 1)
+	go func() { wait <- cmd.Wait() }()
+	var runErr error
+	if s.cfg.MaxTemperatureC == 0 {
+		runErr = <-wait
+	} else {
+		ticker := time.NewTicker(s.cfg.ThermalPoll)
+		defer ticker.Stop()
+		done := false
+		for !done {
+			select {
+			case runErr = <-wait:
+				done = true
+			case <-commandCtx.Done():
+				cancelRun()
+				<-wait
+				return Score{}, commandCtx.Err()
+			case <-ticker.C:
+				temperature, err := readTemperatureC(s.cfg.ThermalPath)
+				if err != nil {
+					cancelRun()
+					<-wait
+					return Score{}, fmt.Errorf("camera scorer temperature: %w", err)
+				}
+				if temperature >= s.cfg.MaxTemperatureC {
+					cancelRun()
+					<-wait
+					return Score{}, fmt.Errorf("camera scorer stopped at %.1f C (limit %.1f C)", temperature, s.cfg.MaxTemperatureC)
+				}
+			}
+		}
+	}
+	if runErr != nil {
+		return Score{}, fmt.Errorf("camera scorer: %w: %s", runErr, strings.TrimSpace(stderr.String()))
 	}
 	var score Score
 	dec := json.NewDecoder(&stdout)
