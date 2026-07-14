@@ -99,6 +99,66 @@ func TestCommandScorerBoundsEachNativeInvocation(t *testing.T) {
 	}
 }
 
+func TestCommandScorerPinsNativeProcessToConfiguredCPUSet(t *testing.T) {
+	dir := t.TempDir()
+	command := filepath.Join(dir, "score")
+	if err := os.WriteFile(command, []byte("#!/bin/sh\necho '{\"objects\":0.1}'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	taskset := filepath.Join(dir, "taskset")
+	argsFile := filepath.Join(dir, "taskset-args")
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$TASKSET_ARGS\"\nshift 2\nexec \"$@\"\n"
+	if err := os.WriteFile(taskset, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TASKSET_ARGS", argsFile)
+	scorer, err := NewCommandScorer(CommandConfig{
+		Path: command, ModelParam: "p", ModelBin: "b", Window: 1, SampleFPS: 1, Threads: 1,
+		CPUSet: "0", TasksetPath: taskset,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := scorer.Score(context.Background(), Candidate{Camera: "back", LocalPath: "v", EventOffsetSeconds: 1}); err != nil {
+		t.Fatal(err)
+	}
+	args, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(string(args), "-c\n0\n"+command+"\n") {
+		t.Fatalf("taskset args = %q", args)
+	}
+}
+
+func TestCommandScorerSkipsInferenceAboveTemperatureLimit(t *testing.T) {
+	dir := t.TempDir()
+	ranFile := filepath.Join(dir, "ran")
+	command := filepath.Join(dir, "score")
+	script := "#!/bin/sh\ntouch \"$RAN_FILE\"\necho '{\"objects\":0.1}'\n"
+	if err := os.WriteFile(command, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	temperature := filepath.Join(dir, "temp")
+	if err := os.WriteFile(temperature, []byte("73000\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("RAN_FILE", ranFile)
+	scorer, err := NewCommandScorer(CommandConfig{
+		Path: command, ModelParam: "p", ModelBin: "b", Window: 1, SampleFPS: 1, Threads: 1,
+		MaxTemperatureC: 72, ThermalPath: temperature,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := scorer.Score(context.Background(), Candidate{Camera: "back", LocalPath: "v", EventOffsetSeconds: 1}); err == nil || !strings.Contains(err.Error(), "skipped at 73.0 C") {
+		t.Fatalf("Score error = %v", err)
+	}
+	if _, err := os.Stat(ranFile); !os.IsNotExist(err) {
+		t.Fatal("native scorer ran despite thermal guard")
+	}
+}
+
 func TestCommandScorerRejectsFailureAndInvalidJSON(t *testing.T) {
 	for name, body := range map[string]string{
 		"failure":      "#!/bin/sh\necho broken >&2\nexit 2\n",

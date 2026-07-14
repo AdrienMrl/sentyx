@@ -58,6 +58,8 @@ func main() {
 	cameraScoreThreads := flag.Int("camera-score-threads", 2, "CPU threads used by camera scoring")
 	cameraScoreTimeout := flag.Duration("camera-score-timeout", 90*time.Second, "maximum native inference time per camera")
 	cameraScoreCooldown := flag.Duration("camera-score-cooldown", 3*time.Second, "idle time between cameras to limit sustained Pi temperature")
+	cameraScoreCPUSet := flag.String("camera-score-cpu-set", "", "Linux CPU set for the native scorer, for example 0; empty disables affinity")
+	cameraScoreMaxTemp := flag.Float64("camera-score-max-temp", 0, "skip neural scoring at or above this CPU temperature in C; zero disables the guard")
 	compressVideo := flag.Bool("compress-video", true, "compress suitable H.264 MP4s before upload")
 	videoRatio := flag.Float64("video-target-ratio", videocompress.DefaultTargetRatio, "target fraction of the source video bitrate")
 	videoMinMB := flag.Int64("video-min-mb", videocompress.DefaultMinInputBytes>>20, "only compress videos at least this many MiB")
@@ -160,6 +162,7 @@ func main() {
 			Path: *cameraScorerPath, ModelParam: *cameraModelParam, ModelBin: *cameraModelBin,
 			Window: *cameraScoreWindow, SampleFPS: *cameraScoreFPS, Threads: *cameraScoreThreads,
 			Timeout: *cameraScoreTimeout, Cooldown: *cameraScoreCooldown,
+			CPUSet: *cameraScoreCPUSet, MaxTemperatureC: *cameraScoreMaxTemp,
 		})
 		if err != nil {
 			log.Fatal(err)

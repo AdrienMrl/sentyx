@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -22,14 +23,18 @@ type Scorer interface {
 }
 
 type CommandConfig struct {
-	Path       string
-	ModelParam string
-	ModelBin   string
-	Window     float64
-	SampleFPS  float64
-	Threads    int
-	Timeout    time.Duration
-	Cooldown   time.Duration
+	Path            string
+	ModelParam      string
+	ModelBin        string
+	Window          float64
+	SampleFPS       float64
+	Threads         int
+	Timeout         time.Duration
+	Cooldown        time.Duration
+	CPUSet          string
+	TasksetPath     string
+	MaxTemperatureC float64
+	ThermalPath     string
 }
 
 // CommandScorer invokes the small native NCNN/OpenCV helper used on the Pi.
@@ -49,6 +54,24 @@ func NewCommandScorer(cfg CommandConfig) (*CommandScorer, error) {
 	}
 	if cfg.Timeout < 0 || cfg.Cooldown < 0 {
 		return nil, fmt.Errorf("camera scorer timeout and cooldown cannot be negative")
+	}
+	if cfg.MaxTemperatureC < 0 {
+		return nil, fmt.Errorf("camera scorer maximum temperature cannot be negative")
+	}
+	if cfg.CPUSet != "" {
+		if strings.ContainsAny(cfg.CPUSet, " \t\r\n") {
+			return nil, fmt.Errorf("camera scorer CPU set cannot contain whitespace")
+		}
+		if cfg.TasksetPath == "" {
+			path, err := exec.LookPath("taskset")
+			if err != nil {
+				return nil, fmt.Errorf("camera scorer CPU set requires taskset: %w", err)
+			}
+			cfg.TasksetPath = path
+		}
+	}
+	if cfg.MaxTemperatureC > 0 && cfg.ThermalPath == "" {
+		cfg.ThermalPath = "/sys/class/thermal/thermal_zone0/temp"
 	}
 	return &CommandScorer{cfg: cfg, slots: make(chan struct{}, 1)}, nil
 }
@@ -76,6 +99,15 @@ func (s *CommandScorer) Score(ctx context.Context, candidate Candidate) (Score, 
 	case <-ctx.Done():
 		return Score{}, ctx.Err()
 	}
+	if s.cfg.MaxTemperatureC > 0 {
+		temperature, err := readTemperatureC(s.cfg.ThermalPath)
+		if err != nil {
+			return Score{}, fmt.Errorf("camera scorer temperature: %w", err)
+		}
+		if temperature >= s.cfg.MaxTemperatureC {
+			return Score{}, fmt.Errorf("camera scorer skipped at %.1f C (limit %.1f C)", temperature, s.cfg.MaxTemperatureC)
+		}
+	}
 	args := []string{
 		"--model-param", s.cfg.ModelParam,
 		"--model-bin", s.cfg.ModelBin,
@@ -91,7 +123,12 @@ func (s *CommandScorer) Score(ctx context.Context, candidate Candidate) (Score, 
 		commandCtx, cancel = context.WithTimeout(ctx, s.cfg.Timeout)
 	}
 	defer cancel()
-	cmd := exec.CommandContext(commandCtx, s.cfg.Path, args...)
+	commandPath := s.cfg.Path
+	if s.cfg.CPUSet != "" {
+		args = append([]string{"-c", s.cfg.CPUSet, s.cfg.Path}, args...)
+		commandPath = s.cfg.TasksetPath
+	}
+	cmd := exec.CommandContext(commandCtx, commandPath, args...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := cmd.Run(); err != nil {
@@ -105,4 +142,16 @@ func (s *CommandScorer) Score(ctx context.Context, candidate Candidate) (Score, 
 	}
 	score.Camera = candidate.Camera
 	return normalize(score), nil
+}
+
+func readTemperatureC(path string) (float64, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0, err
+	}
+	milliC, err := strconv.ParseFloat(strings.TrimSpace(string(data)), 64)
+	if err != nil {
+		return 0, fmt.Errorf("parse %q: %w", strings.TrimSpace(string(data)), err)
+	}
+	return milliC / 1000, nil
 }

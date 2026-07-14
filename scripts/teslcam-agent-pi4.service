@@ -27,7 +27,9 @@ ExecStart=/usr/local/bin/teslcam-agent \
   -camera-score-fps 2 \
   -camera-score-threads 1 \
   -camera-score-timeout 90s \
-  -camera-score-cooldown 3s
+  -camera-score-cooldown 3s \
+  -camera-score-cpu-set 0 \
+  -camera-score-max-temp 72
 Restart=on-failure
 RestartSec=5
 
