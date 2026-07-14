@@ -3,6 +3,7 @@ package eventupload
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"time"
@@ -203,13 +204,15 @@ func (s *spoolStore) markFinalized(sourceID string, generation int) error {
 	return nil
 }
 
-// durableEvent is one not-yet-finalized event loaded for startup reconciliation.
+// durableEvent is one event loaded from the spool, for startup reconciliation
+// (unfinalizedEvents) or for classifying a re-seen file (savedEvent).
 type durableEvent struct {
 	sourceID   string
 	detectedAt time.Time
 	generation int
 	metadata   spoolMetadata
 	artifacts  []durableArtifact
+	finalized  bool
 }
 
 type durableArtifact struct {
@@ -258,6 +261,38 @@ func (s *spoolStore) unfinalizedEvents() ([]durableEvent, error) {
 		out[i].artifacts = arts
 	}
 	return out, nil
+}
+
+// savedEvent loads one event's durable record regardless of finalize state;
+// found is false if the event was never recorded (or already GC'd). It lets a
+// restart tell a genuinely new file apart from an already-finalized upload the
+// watcher's baseline scan re-detected on the still-mounted image.
+func (s *spoolStore) savedEvent(sourceID string) (ev durableEvent, found bool, err error) {
+	var detected int64
+	var meta string
+	var finalized sql.NullInt64
+	err = s.db.QueryRow(`
+		SELECT detected_at, generation, COALESCE(metadata_json, ''), finalized_at
+		FROM spool_events WHERE source_id = ?`, sourceID).
+		Scan(&detected, &ev.generation, &meta, &finalized)
+	if errors.Is(err, sql.ErrNoRows) {
+		return durableEvent{}, false, nil
+	}
+	if err != nil {
+		return durableEvent{}, false, fmt.Errorf("eventupload: loading event %q: %w", sourceID, err)
+	}
+	ev.sourceID = sourceID
+	ev.detectedAt = time.UnixMilli(detected).UTC()
+	ev.finalized = finalized.Valid
+	if meta != "" {
+		if err := json.Unmarshal([]byte(meta), &ev.metadata); err != nil {
+			return durableEvent{}, false, fmt.Errorf("eventupload: decoding metadata for %q: %w", sourceID, err)
+		}
+	}
+	if ev.artifacts, err = s.eventArtifacts(sourceID); err != nil {
+		return durableEvent{}, false, err
+	}
+	return ev, true, nil
 }
 
 func (s *spoolStore) eventArtifacts(sourceID string) ([]durableArtifact, error) {

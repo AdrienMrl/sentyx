@@ -294,6 +294,33 @@ func (c *Client) processItem(ctx context.Context, it Item) error {
 			key: c.cfg.DeviceID + ":" + sourceID, sourceID: sourceID,
 			detectedAt: time.Now().UTC(), artifacts: map[string]protocol.Artifact{},
 		}
+		if c.store != nil {
+			dev, found, err := c.store.savedEvent(sourceID)
+			if err != nil {
+				return err
+			}
+			if found {
+				// The event's finalize was already confirmed and this exact
+				// artifact was part of it. The watcher's baseline scan re-detects
+				// every file still on the image after a reboot; re-driving one
+				// would clear finalized_at, re-finalize at a bumped generation and
+				// re-trigger analysis + alerts server-side for an event the user
+				// already saw. Report it done without touching the event.
+				if dev.finalized && hasArtifact(dev.artifacts, name) {
+					c.cfg.Logf("eventupload: %s already in finalized event; skipping re-upload", it.ImagePath)
+					return nil
+				}
+				// A genuinely new file re-opens the event: carry the durable state
+				// over so the next manifest declares the COMPLETE artifact set (not
+				// just this file) and the upsert does not wipe trigger/location.
+				ev.detectedAt = dev.detectedAt
+				ev.generation = dev.generation
+				ev.trigger, ev.location = dev.metadata.Trigger, dev.metadata.Location
+				for _, a := range dev.artifacts {
+					ev.artifacts[a.name] = artifactFor(a.name, a.sha, a.size)
+				}
+			}
+		}
 		c.events[sourceID] = ev
 	}
 	if strings.EqualFold(name, "event.json") {
@@ -472,6 +499,15 @@ func coordinate(v any) float64 {
 	default:
 		return 0
 	}
+}
+
+func hasArtifact(arts []durableArtifact, name string) bool {
+	for _, a := range arts {
+		if a.name == name {
+			return true
+		}
+	}
+	return false
 }
 
 func parseImagePath(p string) (eventID, name string, err error) {

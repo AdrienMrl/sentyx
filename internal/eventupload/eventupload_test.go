@@ -499,6 +499,143 @@ func TestRestartRebuildsFullManifestAfterPartialUpload(t *testing.T) {
 	}
 }
 
+// finalizeOnce drives one client life to a confirmed finalize of the given
+// items and returns after the process "dies" (Run stopped, store closed).
+func finalizeOnce(t *testing.T, cfg Config, items []Item) {
+	t.Helper()
+	c, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	uploads, finalized, stop := runClient(c)
+	defer stop()
+	for _, it := range items {
+		if !c.Enqueue(it) {
+			t.Fatalf("Enqueue(%q) rejected", it.ImagePath)
+		}
+	}
+	for range items {
+		select {
+		case <-uploads:
+		case <-time.After(5 * time.Second):
+			t.Fatal("timed out waiting for first-life uploads")
+		}
+	}
+	select {
+	case <-finalized:
+	case <-time.After(5 * time.Second):
+		t.Fatal("event was never finalized in its first life")
+	}
+}
+
+// TestRestartSkipsFinalizedEvent simulates every Pi boot: the watcher's
+// baseline scan re-detects the files of an event whose finalize was already
+// confirmed, and they get re-enqueued. The restarted client must not re-upload
+// them or re-finalize the event — a re-finalize bumps the generation
+// server-side, which re-runs analysis and re-sends alerts for an event the
+// user already saw.
+func TestRestartSkipsFinalizedEvent(t *testing.T) {
+	dir := t.TempDir()
+	srv := &fakeIngest{blobsAllowed: -1}
+	hs := httptest.NewServer(srv.handler())
+	defer hs.Close()
+
+	cfg := durableCfg(dir)
+	cfg.BaseURL = hs.URL
+	cfg.SettleDelay = 100 * time.Millisecond
+	items := []Item{
+		{LocalPath: writeSpool(t, dir, "front.mp4", 100), ImagePath: "/TeslaCam/SentryClips/2026-07-11_10-00-00/2026-07-11_10-00-00-front.mp4"},
+		{LocalPath: writeSpool(t, dir, "event.json", 30), ImagePath: "/TeslaCam/SentryClips/2026-07-11_10-00-00/event.json"},
+	}
+	finalizeOnce(t, cfg, items)
+
+	c2, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	uploads2, finalized2, stop2 := runClient(c2)
+	defer stop2()
+	for _, it := range items {
+		if !c2.Enqueue(it) {
+			t.Fatalf("Enqueue(%q) rejected after restart", it.ImagePath)
+		}
+	}
+	// The skip path still confirms each item, so the queue drains normally.
+	for range items {
+		select {
+		case <-uploads2:
+		case <-time.After(5 * time.Second):
+			t.Fatal("timed out draining re-detected items")
+		}
+	}
+	// Give a wrongly re-opened event ample time past the settle window to fire.
+	time.Sleep(5 * cfg.SettleDelay)
+	select {
+	case key := <-finalized2:
+		t.Fatalf("re-detected files re-finalized event %q", key)
+	default:
+	}
+	srv.mu.Lock()
+	blobPuts, finalizes := srv.blobPuts, srv.finalizes
+	srv.mu.Unlock()
+	if blobPuts != len(items) {
+		t.Errorf("blob PUTs = %d, want %d (no re-uploads after restart)", blobPuts, len(items))
+	}
+	if finalizes != 1 {
+		t.Errorf("finalizes = %d, want 1 (no re-finalize after restart)", finalizes)
+	}
+}
+
+// TestRestartNewFileReopensFinalizedEvent: a file that genuinely appears for an
+// already-finalized event must still upload, and the re-finalized manifest must
+// declare the complete artifact set — the durably recorded ones plus the new
+// file — at the next generation, not a one-file manifest that would replace it.
+func TestRestartNewFileReopensFinalizedEvent(t *testing.T) {
+	dir := t.TempDir()
+	srv := &fakeIngest{blobsAllowed: -1}
+	hs := httptest.NewServer(srv.handler())
+	defer hs.Close()
+
+	cfg := durableCfg(dir)
+	cfg.BaseURL = hs.URL
+	cfg.SettleDelay = 100 * time.Millisecond
+	items := []Item{
+		{LocalPath: writeSpool(t, dir, "front.mp4", 100), ImagePath: "/TeslaCam/SentryClips/2026-07-11_10-00-00/2026-07-11_10-00-00-front.mp4"},
+		{LocalPath: writeSpool(t, dir, "event.json", 30), ImagePath: "/TeslaCam/SentryClips/2026-07-11_10-00-00/event.json"},
+	}
+	finalizeOnce(t, cfg, items)
+
+	c2, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, finalized2, stop2 := runClient(c2)
+	defer stop2()
+	// Old files first (skipped while the event is still finalized), then the
+	// new file re-opens the event.
+	newItem := Item{LocalPath: writeSpool(t, dir, "thumb.png", 20), ImagePath: "/TeslaCam/SentryClips/2026-07-11_10-00-00/thumb.png"}
+	for _, it := range append(append([]Item{}, items...), newItem) {
+		if !c2.Enqueue(it) {
+			t.Fatalf("Enqueue(%q) rejected after restart", it.ImagePath)
+		}
+	}
+	select {
+	case <-finalized2:
+	case <-time.After(5 * time.Second):
+		t.Fatal("new file never re-finalized the event")
+	}
+	names := srv.lastManifestNames()
+	if len(names) != 3 {
+		t.Fatalf("re-finalized manifest declares %v, want the full 3-artifact set", names)
+	}
+	srv.mu.Lock()
+	gen := srv.manifests[len(srv.manifests)-1].Generation
+	srv.mu.Unlock()
+	if gen != 2 {
+		t.Errorf("re-finalized at generation %d, want 2 (durable generation carried over)", gen)
+	}
+}
+
 func TestArtifactVideoMetadata(t *testing.T) {
 	a := artifactFor("2026-07-11_14-32-00-left_pillar.mp4", "abc", 42)
 	if a.Kind != "video" || a.Segment == nil {
