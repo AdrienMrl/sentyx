@@ -173,3 +173,60 @@ func TestCompressSkipsSmallAndNonMP4Files(t *testing.T) {
 		}
 	}
 }
+
+// A failing primary encoder retries once on the fallback and reports which
+// encoder produced the output.
+func TestCompressFallsBackToSecondEncoder(t *testing.T) {
+	cfg := testConfig(t, "h264", 1_000_000)
+	// Fake ffmpeg: exit 1 when invoked with the primary encoder, succeed with
+	// the fallback.
+	body := `#!/bin/sh
+for a do
+  case "$a" in hw-encoder) exit 1;; esac
+done
+for last do :; done
+head -c 1000000 /dev/zero > "$last"
+`
+	if err := os.WriteFile(cfg.FFmpegPath, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg.Encoder = "hw-encoder"
+	cfg.FallbackEncoder = "sw-encoder"
+	c, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := writeInput(t, "clip.mp4", 30_000_000)
+	got, err := c.Compress(context.Background(), input)
+	if err != nil {
+		t.Fatalf("Compress with fallback: %v", err)
+	}
+	if !got.Compressed || got.Encoder != "sw-encoder" {
+		t.Fatalf("Compress = %+v, want compressed via sw-encoder", got)
+	}
+}
+
+// Without a fallback the primary encoder's failure surfaces as an error.
+func TestCompressNoFallbackPropagatesEncoderError(t *testing.T) {
+	cfg := testConfig(t, "h264", 1_000_000)
+	if err := os.WriteFile(cfg.FFmpegPath, []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	c, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := writeInput(t, "clip.mp4", 30_000_000)
+	if _, err := c.Compress(context.Background(), input); err == nil {
+		t.Fatal("expected encoder failure to propagate without a fallback")
+	}
+}
+
+// Fallback equal to the primary encoder is a configuration error.
+func TestNewRejectsSameFallbackEncoder(t *testing.T) {
+	cfg := testConfig(t, "h264", 1)
+	cfg.FallbackEncoder = cfg.Encoder
+	if _, err := New(cfg); err == nil {
+		t.Fatal("expected FallbackEncoder == Encoder to be rejected")
+	}
+}

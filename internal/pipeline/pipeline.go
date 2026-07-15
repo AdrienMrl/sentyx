@@ -175,8 +175,8 @@ func Run(ctx context.Context, cfg Config) error {
 					}
 					if result.Compressed {
 						saved := 100 * (1 - float64(result.OutputBytes)/float64(result.OriginalBytes))
-						cfg.Logf("compression: %s %d -> %d bytes (%.0f%% saved, %d kbps)",
-							job.imagePath, result.OriginalBytes, result.OutputBytes, saved, result.TargetBitrate/1000)
+						cfg.Logf("compression: %s %d -> %d bytes (%.0f%% saved, %d kbps, %s)",
+							job.imagePath, result.OriginalBytes, result.OutputBytes, saved, result.TargetBitrate/1000, result.Encoder)
 						uploader.Enqueue(eventupload.Item{
 							LocalPath:         result.Path,
 							ImagePath:         job.imagePath,

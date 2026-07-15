@@ -80,6 +80,7 @@ func main() {
 	videoMaxWidth := flag.Int("video-max-width", videocompress.DefaultMaxWidth, "downscale upload video to at most this width, preserving aspect (0 keeps source)")
 	videoMinSavings := flag.Float64("video-min-savings", videocompress.DefaultMinSavings, "minimum fractional size reduction required to use a transcode")
 	videoEncoder := flag.String("video-encoder", "libx264", "ffmpeg video encoder; libx264 (software) has reliable rate control at low bitrates. Use h264_v4l2m2m for the Pi's hardware encoder if available.")
+	videoFallbackEncoder := flag.String("video-fallback-encoder", "", "encoder retried once when -video-encoder fails on a clip; empty disables the retry")
 	ffmpegPath := flag.String("ffmpeg", "ffmpeg", "ffmpeg executable used for video compression")
 	ffprobePath := flag.String("ffprobe", "ffprobe", "ffprobe executable used to inspect videos")
 	bleOnboard := flag.Bool("ble-onboard", false, "serve BLE onboarding alongside the pipeline (requires the -ble-* flags below)")
@@ -229,6 +230,7 @@ func main() {
 		cfg.MinSavingsRatio = *videoMinSavings
 		cfg.FrameRate = *videoFPS
 		cfg.MaxWidth = *videoMaxWidth
+		cfg.FallbackEncoder = *videoFallbackEncoder
 		videoCompression = &cfg
 	}
 	var cameraScorer cameraselect.Scorer
