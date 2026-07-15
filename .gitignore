@@ -25,3 +25,6 @@ testdata/fixtures/*.img
 # real TeslaCam sample clips pulled off a USB drive for local testing
 # (large video + contains real GPS/location metadata — never commit)
 testdata/sentry-samples/
+
+# cloned upstream repos kept for reference (each has its own .git)
+third_party/
