@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <cstdlib>
 #include <iomanip>
 #include <iostream>
@@ -174,8 +175,9 @@ Signals score_video(const Config& cfg) {
 
     cv::VideoCapture video(cfg.video);
     if (!video.isOpened()) throw std::runtime_error("cannot open video");
-    const double duration = video.get(cv::CAP_PROP_FRAME_COUNT) /
-                            std::max(1.0, video.get(cv::CAP_PROP_FPS));
+    const double source_fps = std::max(1.0, video.get(cv::CAP_PROP_FPS));
+    const double frame_count = video.get(cv::CAP_PROP_FRAME_COUNT);
+    const double duration = frame_count / source_fps;
     const double start = std::max(0.0, cfg.offset - cfg.window / 2.0);
     const double end = std::min(duration, cfg.offset + cfg.window / 2.0);
     if (end <= start) throw std::runtime_error("event window is outside video");
@@ -183,11 +185,24 @@ Signals score_video(const Config& cfg) {
     Signals signals;
     cv::Mat first_gray, previous_gray;
     const int samples = std::max(2, static_cast<int>(std::floor((end - start) * cfg.fps)) + 1);
+    // Seek once, then decode forward. Seeking for every sample made FFmpeg
+    // repeatedly restart at an H.264 keyframe; on the high-bitrate front
+    // camera that was several times slower than decoding this short window.
+    video.set(cv::CAP_PROP_POS_FRAMES, std::floor(start * source_fps));
+    int64_t decoded_frame = static_cast<int64_t>(std::round(video.get(cv::CAP_PROP_POS_FRAMES))) - 1;
     for (int i = 0; i < samples; ++i) {
         const double second = std::min(end, start + i / cfg.fps);
-        video.set(cv::CAP_PROP_POS_MSEC, second * 1000.0);
+        const int64_t target_frame = std::min(
+            static_cast<int64_t>(std::max(0.0, frame_count - 1)),
+            static_cast<int64_t>(std::round(second * source_fps)));
+        while (decoded_frame < target_frame) {
+            if (!video.grab()) break;
+            const int64_t reported_frame =
+                static_cast<int64_t>(std::round(video.get(cv::CAP_PROP_POS_FRAMES))) - 1;
+            decoded_frame = std::max(decoded_frame + 1, reported_frame);
+        }
         cv::Mat frame;
-        if (!video.read(frame) || frame.empty()) continue;
+        if (decoded_frame < target_frame || !video.retrieve(frame) || frame.empty()) continue;
 
         const cv::Mat gray = motion_frame(frame);
         if (first_gray.empty()) first_gray = gray.clone();
