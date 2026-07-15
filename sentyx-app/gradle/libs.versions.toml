@@ -12,6 +12,7 @@ androidx-activityCompose = "1.10.1"
 lifecycle = "2.9.1"
 kotlinx-coroutines = "1.10.2"
 kotlinx-serialization = "1.9.0"
+kotlinx-datetime = "0.6.2"
 ktor = "3.2.3"
 kable = "0.43.1"
 
@@ -25,6 +26,7 @@ lifecycle-runtime-compose = { module = "org.jetbrains.androidx.lifecycle:lifecyc
 
 kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "kotlinx-coroutines" }
 kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinx-serialization" }
+kotlinx-datetime = { module = "org.jetbrains.kotlinx:kotlinx-datetime", version.ref = "kotlinx-datetime" }
 
 # Ktor client (Sentyx backend + local Pi API)
 ktor-client-core = { module = "io.ktor:ktor-client-core", version.ref = "ktor" }

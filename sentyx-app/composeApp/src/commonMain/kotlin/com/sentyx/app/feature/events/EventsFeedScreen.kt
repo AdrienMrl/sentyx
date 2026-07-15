@@ -26,17 +26,21 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
+import androidx.compose.ui.graphics.ImageBitmap
+import com.sentyx.app.data.thumbnail.EventThumbnailLoader
+import org.jetbrains.compose.resources.painterResource
+import sentyxapp.composeapp.generated.resources.Res
+import sentyxapp.composeapp.generated.resources.device_car
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.sentyx.app.core.designsystem.SxCard
 import com.sentyx.app.core.designsystem.SxChip
@@ -114,6 +118,7 @@ fun EventsFeedScreen(
                     groups = state.displayGroups,
                     selectMode = state.selectMode,
                     selected = state.selected,
+                    thumbnails = vm.thumbnails,
                     onCardTap = { id ->
                         if (state.selectMode) vm.toggleSelection(id) else onOpenEvent(id)
                     },
@@ -250,41 +255,17 @@ private fun StatCell(label: String, value: String, modifier: Modifier, divider: 
     }
 }
 
-/** Simple car line-drawing approximating the design's SVG, on a striped tile. */
+/** Product illustration of the paired vehicle, on a rounded tile. */
 @Composable
 private fun CarRender() {
-    Box(
-        Modifier
+    Image(
+        painter = painterResource(Res.drawable.device_car),
+        contentDescription = null,
+        contentScale = ContentScale.Crop,
+        modifier = Modifier
             .size(width = 110.dp, height = 64.dp)
-            .clip(RoundedCornerShape(12.dp))
-            .background(Color(0xFFEDE7DA)),
-        contentAlignment = Alignment.Center,
-    ) {
-        Canvas(Modifier.size(width = 70.dp, height = 30.dp)) {
-            val w = size.width
-            val h = size.height
-            val line = SxColors.Muted
-            val stroke = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round)
-            val body = androidx.compose.ui.graphics.Path().apply {
-                moveTo(0.05f * w, 0.73f * h)
-                quadraticTo(0.10f * w, 0.40f * h, 0.30f * w, 0.33f * h)
-                lineTo(0.64f * w, 0.27f * h)
-                quadraticTo(0.83f * w, 0.30f * h, 0.92f * w, 0.66f * h)
-                lineTo(0.93f * w, 0.73f * h)
-            }
-            drawPath(body, line, style = stroke)
-            drawCircle(line, radius = 5.dp.toPx(), center = Offset(0.28f * w, 0.77f * h), style = Stroke(width = 2.dp.toPx()))
-            drawCircle(line, radius = 5.dp.toPx(), center = Offset(0.72f * w, 0.77f * h), style = Stroke(width = 2.dp.toPx()))
-        }
-        Text(
-            "CAR RENDER",
-            color = SxColors.Hint,
-            fontSize = 6.5.sp,
-            fontFamily = monoFamily,
-            fontWeight = FontWeight.Medium,
-            modifier = Modifier.align(Alignment.BottomStart).padding(start = 7.dp, bottom = 5.dp),
-        )
-    }
+            .clip(RoundedCornerShape(12.dp)),
+    )
 }
 
 @Composable
@@ -340,6 +321,7 @@ private fun LoadedFeed(
     groups: List<FeedGroup>,
     selectMode: Boolean,
     selected: Set<String>,
+    thumbnails: EventThumbnailLoader,
     onCardTap: (String) -> Unit,
     onLoadEarlier: () -> Unit,
 ) {
@@ -359,6 +341,7 @@ private fun LoadedFeed(
                         item = item,
                         selectMode = selectMode,
                         selected = item.event.id in selected,
+                        thumbnails = thumbnails,
                         onTap = { onCardTap(item.event.id) },
                     )
                 }
@@ -384,6 +367,7 @@ private fun TimelineRow(
     item: EventWithMeta,
     selectMode: Boolean,
     selected: Boolean,
+    thumbnails: EventThumbnailLoader,
     onTap: () -> Unit,
 ) {
     val severity = item.severity
@@ -403,7 +387,7 @@ private fun TimelineRow(
             )
             Box(Modifier.width(2.dp).weight(1f).background(TimelineConnector))
         }
-        EventCard(item = item, selectMode = selectMode, selected = selected, onTap = onTap, modifier = Modifier.weight(1f))
+        EventCard(item = item, selectMode = selectMode, selected = selected, thumbnails = thumbnails, onTap = onTap, modifier = Modifier.weight(1f))
     }
 }
 
@@ -412,6 +396,7 @@ private fun EventCard(
     item: EventWithMeta,
     selectMode: Boolean,
     selected: Boolean,
+    thumbnails: EventThumbnailLoader,
     onTap: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -478,7 +463,7 @@ private fun EventCard(
             }
         }
         if (event.state != com.sentyx.app.domain.model.AnalysisState.Writing) {
-            FeedThumb(event.durationLabel)
+            FeedThumb(eventId = event.id, duration = event.durationLabel, loader = thumbnails)
         }
     }
 }
@@ -498,7 +483,13 @@ private fun SelectCheck(selected: Boolean) {
 }
 
 @Composable
-private fun FeedThumb(duration: String) {
+private fun FeedThumb(eventId: String, duration: String, loader: EventThumbnailLoader) {
+    // Re-fetches when the card is bound to a different event; the loader decodes
+    // off the main thread and caches, so a scroll-back is a cache hit. Null (not
+    // yet uploaded/analyzed, or fetch failed) falls back to the striped placeholder.
+    val bitmap: ImageBitmap? by produceState<ImageBitmap?>(initialValue = null, eventId) {
+        value = loader.load(eventId)
+    }
     Box(
         Modifier
             .size(width = 66.dp, height = 88.dp)
@@ -506,7 +497,18 @@ private fun FeedThumb(duration: String) {
             .background(Color(0xFFE7E0D2)),
         contentAlignment = Alignment.BottomCenter,
     ) {
-        com.sentyx.app.core.designsystem.StripedThumb(Modifier.fillMaxSize())
+        bitmap.let { bmp ->
+            if (bmp != null) {
+                Image(
+                    bitmap = bmp,
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            } else {
+                com.sentyx.app.core.designsystem.StripedThumb(Modifier.fillMaxSize())
+            }
+        }
         Text(
             duration,
             color = SxColors.Hint,

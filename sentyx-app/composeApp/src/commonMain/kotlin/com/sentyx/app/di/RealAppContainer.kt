@@ -7,8 +7,10 @@ import com.sentyx.app.data.ble.BleDeviceWifiService
 import com.sentyx.app.data.ble.BlePairingService
 import com.sentyx.app.data.demo.DemoAppSettingsRepository
 import com.sentyx.app.data.demo.DemoAuthRepository
-import com.sentyx.app.data.demo.DemoEventRepository
 import com.sentyx.app.data.device.RealDeviceRepository
+import com.sentyx.app.data.event.RealEventRepository
+import com.sentyx.app.data.thumbnail.EventThumbnailLoader
+import com.sentyx.app.data.thumbnail.SentyxThumbnailLoader
 import com.sentyx.app.data.demo.DemoNotificationSettingsRepository
 import com.sentyx.app.data.demo.DemoStateController
 import com.sentyx.app.data.demo.DemoSubscriptionRepository
@@ -25,10 +27,11 @@ import com.sentyx.app.domain.repository.TransferRepository
 import kotlinx.coroutines.CoroutineScope
 
 /**
- * Real composition root: [pairing] is the live BLE + backend implementation and
- * [device] polls the backend for real Pi status (see [RealDeviceRepository]);
- * the remaining repositories still reuse the demo implementation (real
- * event/transfer wiring lands in a later step). [demoState] is null per the
+ * Real composition root: [pairing] is the live BLE + backend implementation,
+ * [device] polls the backend for real Pi status (see [RealDeviceRepository]),
+ * and [events] polls the backend event feed (see [RealEventRepository]); the
+ * remaining repositories still reuse the demo implementation (real transfer
+ * wiring lands in a later step). [demoState] is null per the
  * [AppContainer] contract, so demo-only UI (the "Prototype states" screen) is
  * unavailable in this flavor.
  *
@@ -51,8 +54,10 @@ class RealAppContainer(
 
     override val toasts: ToastController by lazy { ToastController(scope) }
 
+    override val thumbnails: EventThumbnailLoader by lazy { SentyxThumbnailLoader(api) }
+
     override val events: EventRepository by lazy {
-        DemoEventRepository(scope, demoStateController)
+        RealEventRepository(scope, api, keyValueStore)
     }
 
     override val device: DeviceRepository by lazy {

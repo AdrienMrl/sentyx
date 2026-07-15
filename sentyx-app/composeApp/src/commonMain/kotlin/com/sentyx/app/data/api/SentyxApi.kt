@@ -13,8 +13,10 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
+import io.ktor.http.encodeURLPathPart
 import io.ktor.http.isSuccess
 import io.ktor.serialization.kotlinx.json.json
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
@@ -68,6 +70,55 @@ class SentyxApi(
                 "Device status failed (${response.status}): ${response.bodyAsText()}",
             )
         }
+        return response.body()
+    }
+
+    /**
+     * List all events for the operator, newest-first ordering left to the
+     * caller. `GET {base}/events` with the operator bearer token; a non-2xx
+     * response throws [SentyxApiException].
+     */
+    suspend fun events(): List<EventSummaryDto> {
+        val response: HttpResponse = client.get("$base/events") {
+            header(HttpHeaders.Authorization, "Bearer $operatorToken")
+        }
+        if (!response.status.isSuccess()) {
+            throw SentyxApiException(
+                "Events list failed (${response.status}): ${response.bodyAsText()}",
+            )
+        }
+        return response.body()
+    }
+
+    /**
+     * Fetch one event with its received files. `GET {base}/events/{id}` with the
+     * operator bearer token. A 404 throws [SentyxApiException] like any other
+     * non-2xx (the feed is the source of truth for which ids exist).
+     */
+    suspend fun event(id: String): EventDetailDto {
+        val response: HttpResponse = client.get("$base/events/$id") {
+            header(HttpHeaders.Authorization, "Bearer $operatorToken")
+        }
+        if (!response.status.isSuccess()) {
+            throw SentyxApiException(
+                "Event fetch failed (${response.status}): ${response.bodyAsText()}",
+            )
+        }
+        return response.body()
+    }
+
+    /**
+     * Fetch the thumbnail image bytes for [id]. `GET {base}/events/{id}/thumb`
+     * with the operator bearer token; returns `image/jpeg` or `image/png` bytes
+     * on success. Returns null for a 404 (no thumbnail yet — event still
+     * uploading or analyzing) or any other non-2xx. The id is URL-path-encoded
+     * because event ids contain `:`.
+     */
+    suspend fun eventThumb(id: String): ByteArray? {
+        val response: HttpResponse = client.get("$base/events/${id.encodeURLPathPart()}/thumb") {
+            header(HttpHeaders.Authorization, "Bearer $operatorToken")
+        }
+        if (!response.status.isSuccess()) return null
         return response.body()
     }
 
@@ -148,3 +199,92 @@ data class HeartbeatDto(
     val recordingNow: Boolean? = null,
     val sentryActive: Boolean? = null,
 )
+
+/**
+ * Server → app event summary (`GET /events`), mirroring the server's
+ * `EventSummary`. Field names are the server's snake_case JSON keys. Unknown
+ * keys are ignored by the shared codec, and every non-identifying field is
+ * defaulted so a sparse row (e.g. still uploading, not yet analyzed) decodes.
+ *
+ * [analysisJson] is the raw Gemini verdict document as a string (parsed
+ * separately by the mapping layer); [eventTs] is the car's local wall-clock
+ * ("2006-01-02T15:04:05", no zone) and [firstSeen] is the server-side receipt
+ * instant (RFC3339) used for ordering.
+ */
+@Serializable
+data class EventSummaryDto(
+    val id: String,
+    @SerialName("first_seen") val firstSeen: String? = null,
+    @SerialName("last_file_at") val lastFileAt: String? = null,
+    @SerialName("completed_at") val completedAt: String? = null,
+    @SerialName("event_ts") val eventTs: String = "",
+    val city: String = "",
+    val reason: String = "",
+    val camera: String = "",
+    @SerialName("analysis_state") val analysisState: String,
+    @SerialName("analyzed_clip") val analyzedClip: String = "",
+    @SerialName("threat_level") val threatLevel: String = "",
+    @SerialName("analysis_json") val analysisJson: String = "",
+    @SerialName("analysis_error") val analysisError: String = "",
+    @SerialName("file_count") val fileCount: Int = 0,
+    val state: String = "",
+    val generation: Int = 0,
+    @SerialName("device_id") val deviceId: String = "",
+    @SerialName("source_event_id") val sourceEventId: String = "",
+)
+
+/** One received file for an event (`GET /events/{id}` → `files[]`). */
+@Serializable
+data class FileInfoDto(
+    val name: String,
+    val size: Long = 0,
+    val sha256: String = "",
+    @SerialName("stored_path") val storedPath: String = "",
+    @SerialName("received_at") val receivedAt: String? = null,
+)
+
+/** Server → app single-event view: the summary plus its files. */
+@Serializable
+data class EventDetailDto(
+    val id: String,
+    @SerialName("first_seen") val firstSeen: String? = null,
+    @SerialName("last_file_at") val lastFileAt: String? = null,
+    @SerialName("completed_at") val completedAt: String? = null,
+    @SerialName("event_ts") val eventTs: String = "",
+    val city: String = "",
+    val reason: String = "",
+    val camera: String = "",
+    @SerialName("analysis_state") val analysisState: String,
+    @SerialName("analyzed_clip") val analyzedClip: String = "",
+    @SerialName("threat_level") val threatLevel: String = "",
+    @SerialName("analysis_json") val analysisJson: String = "",
+    @SerialName("analysis_error") val analysisError: String = "",
+    @SerialName("file_count") val fileCount: Int = 0,
+    val state: String = "",
+    val generation: Int = 0,
+    @SerialName("device_id") val deviceId: String = "",
+    @SerialName("source_event_id") val sourceEventId: String = "",
+    val files: List<FileInfoDto> = emptyList(),
+) {
+    /** The summary portion, so mapping can treat detail and list rows alike. */
+    fun toSummary(): EventSummaryDto = EventSummaryDto(
+        id = id,
+        firstSeen = firstSeen,
+        lastFileAt = lastFileAt,
+        completedAt = completedAt,
+        eventTs = eventTs,
+        city = city,
+        reason = reason,
+        camera = camera,
+        analysisState = analysisState,
+        analyzedClip = analyzedClip,
+        threatLevel = threatLevel,
+        analysisJson = analysisJson,
+        analysisError = analysisError,
+        fileCount = fileCount,
+        state = state,
+        generation = generation,
+        deviceId = deviceId,
+        sourceEventId = sourceEventId,
+    )
+}

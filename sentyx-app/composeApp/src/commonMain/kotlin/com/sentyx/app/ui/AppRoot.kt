@@ -245,7 +245,7 @@ private fun RouteContent(navigator: Navigator, c: AppContainer) {
 
         // ---------- Events (tab root) ----------
         Route.Events -> EventsFeedScreen(
-            vm = viewModel { EventsFeedViewModel(c.events, c.device, c.toasts) },
+            vm = viewModel { EventsFeedViewModel(c.events, c.device, c.toasts, c.thumbnails) },
             onOpenEvent = { id -> navigator.go(Route.EventDetail(id)) },
             onOpenDevice = { navigator.switchTab(Route.Device) },
             onGoToTransfers = { navigator.switchTab(Route.Transfers) },

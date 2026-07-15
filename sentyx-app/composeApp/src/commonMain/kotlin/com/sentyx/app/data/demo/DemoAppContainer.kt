@@ -1,6 +1,8 @@
 package com.sentyx.app.data.demo
 
 import com.sentyx.app.core.ui.ToastController
+import com.sentyx.app.data.thumbnail.EventThumbnailLoader
+import com.sentyx.app.data.thumbnail.NoopThumbnailLoader
 import com.sentyx.app.di.AppContainer
 import com.sentyx.app.domain.repository.AppSettingsRepository
 import com.sentyx.app.domain.repository.AuthRepository
@@ -26,6 +28,8 @@ class DemoAppContainer(private val scope: CoroutineScope) : AppContainer {
     override val demoState: DemoStateController get() = demoStateController
 
     override val toasts: ToastController by lazy { ToastController(scope) }
+
+    override val thumbnails: EventThumbnailLoader = NoopThumbnailLoader
 
     override val events: EventRepository by lazy {
         DemoEventRepository(scope, demoStateController)

@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.sentyx.app.core.ui.ToastController
 import com.sentyx.app.core.ui.ToastData
+import com.sentyx.app.data.thumbnail.EventThumbnailLoader
 import com.sentyx.app.core.ui.ToastTone
 import com.sentyx.app.domain.model.DeviceSnapshot
 import com.sentyx.app.domain.model.EventWithMeta
@@ -55,6 +56,8 @@ class EventsFeedViewModel(
     private val events: EventRepository,
     private val device: DeviceRepository,
     private val toasts: ToastController,
+    /** Feed cards fetch/decode their thumbnails through this; no-op in demo builds. */
+    val thumbnails: EventThumbnailLoader,
 ) : ViewModel() {
 
     private val local = MutableStateFlow(FeedLocalUi())

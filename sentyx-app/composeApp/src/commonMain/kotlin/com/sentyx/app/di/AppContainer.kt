@@ -3,6 +3,7 @@ package com.sentyx.app.di
 import androidx.compose.runtime.staticCompositionLocalOf
 import com.sentyx.app.core.ui.ToastController
 import com.sentyx.app.data.demo.DemoStateController
+import com.sentyx.app.data.thumbnail.EventThumbnailLoader
 import com.sentyx.app.domain.repository.AppSettingsRepository
 import com.sentyx.app.domain.repository.AuthRepository
 import com.sentyx.app.domain.repository.DeviceRepository
@@ -30,6 +31,9 @@ interface AppContainer {
     val pairing: PairingService
     val deviceWifi: DeviceWifiService
     val toasts: ToastController
+
+    /** Decodes/caches event feed thumbnails; a no-op in demo builds. */
+    val thumbnails: EventThumbnailLoader
 
     /** Present only in demo builds; null once real data sources exist. */
     val demoState: DemoStateController?
