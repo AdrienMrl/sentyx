@@ -85,6 +85,8 @@ import com.sentyx.app.feature.settings.PrivacyScreen
 import com.sentyx.app.feature.settings.PrivacyViewModel
 import com.sentyx.app.feature.settings.PrototypeStatesScreen
 import com.sentyx.app.feature.settings.PrototypeStatesViewModel
+import com.sentyx.app.feature.settings.SavedWifiNetworksScreen
+import com.sentyx.app.feature.settings.SavedWifiNetworksViewModel
 import com.sentyx.app.feature.settings.SecurityScreen
 import com.sentyx.app.feature.settings.SessionsScreen
 import com.sentyx.app.feature.settings.SettingsHubScreen
@@ -287,7 +289,13 @@ private fun RouteContent(navigator: Navigator, c: AppContainer) {
             onBack = { navigator.back() },
             onOpenFirmware = { navigator.go(Route.FirmwareFlow) },
             onOpenDiagnostics = { navigator.go(Route.Diagnostics) },
+            onOpenWifi = { navigator.go(Route.SavedWifiNetworks) },
             onFactoryReset = { navigator.go(Route.FactoryReset) },
+        )
+
+        Route.SavedWifiNetworks -> SavedWifiNetworksScreen(
+            vm = viewModel { SavedWifiNetworksViewModel(c.deviceWifi, c.toasts) },
+            onBack = { navigator.back() },
         )
 
         Route.FirmwareFlow -> FirmwareFlowScreen(
@@ -320,6 +328,7 @@ private fun RouteContent(navigator: Navigator, c: AppContainer) {
             vm = viewModel { SettingsHubViewModel(c.auth, c.subscription, c.toasts) },
             onOpenDevice = { navigator.go(Route.Device) },
             onOpenDeviceSettings = { navigator.go(Route.DeviceSettings) },
+            onOpenWifi = { navigator.go(Route.SavedWifiNetworks) },
             onOpenTransferSettings = { navigator.go(Route.TransferSettings) },
             onOpenAlerts = { navigator.go(Route.Alerts) },
             onOpenSubscription = { navigator.go(Route.Subscription) },

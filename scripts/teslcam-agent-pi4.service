@@ -38,8 +38,7 @@ ExecStart=/usr/local/bin/teslcam-agent \
   -ble-onboard \
   -ble-adapter hci0 \
   -ble-name Sentyx-Pi4 \
-  -ble-config-dir /etc/teslcam \
-  -ble-provisioned-window 10m
+  -ble-config-dir /etc/teslcam
 Restart=on-failure
 RestartSec=5
 

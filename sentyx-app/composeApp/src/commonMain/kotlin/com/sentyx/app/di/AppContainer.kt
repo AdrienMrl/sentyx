@@ -6,6 +6,7 @@ import com.sentyx.app.data.demo.DemoStateController
 import com.sentyx.app.domain.repository.AppSettingsRepository
 import com.sentyx.app.domain.repository.AuthRepository
 import com.sentyx.app.domain.repository.DeviceRepository
+import com.sentyx.app.domain.repository.DeviceWifiService
 import com.sentyx.app.domain.repository.EventRepository
 import com.sentyx.app.domain.repository.NotificationSettingsRepository
 import com.sentyx.app.domain.repository.PairingService
@@ -27,6 +28,7 @@ interface AppContainer {
     val subscription: SubscriptionRepository
     val appSettings: AppSettingsRepository
     val pairing: PairingService
+    val deviceWifi: DeviceWifiService
     val toasts: ToastController
 
     /** Present only in demo builds; null once real data sources exist. */

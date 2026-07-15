@@ -5,13 +5,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"time"
 
 	"github.com/godbus/dbus/v5"
+
+	"github.com/AdrienMrl/teslcam/internal/wifi"
 )
 
-// Config configures the BLE onboarding service. All fields are required
-// except ProvisionedWindow semantics noted below.
+// Config configures the BLE service. All fields are required except Wifi.
 type Config struct {
 	Adapter      string // BlueZ adapter, e.g. "hci0"
 	Name         string // advertised LocalName, e.g. "Sentyx-664F"
@@ -20,12 +20,10 @@ type Config struct {
 	AgentVersion string
 	ConfigDir    string // where agent.env + server.token are persisted, e.g. /etc/teslcam
 
-	// ProvisionedWindow bounds advertising on an already-provisioned device:
-	// onboarding stays open this long after agent start (a power-cycle is the
-	// only physical interaction a Pi buried in a car supports), then shuts
-	// down. Zero means a provisioned device never advertises. An
-	// unprovisioned device advertises until onboarding completes.
-	ProvisionedWindow time.Duration
+	// Wifi handles the post-onboarding Wi-Fi management commands. Nil disables
+	// them: every Wi-Fi command then answers ok:false "wifi management
+	// unavailable" rather than silently no-opping.
+	Wifi wifi.Manager
 
 	// Restart applies persisted config, typically exec'ing
 	// "systemctl restart teslcam-agent". Required.
@@ -52,9 +50,11 @@ func (c Config) validate() error {
 	return nil
 }
 
-// Run serves BLE onboarding until ctx is cancelled, onboarding completes
-// (the Restart hook then applies it), or the provisioned-device window
-// elapses. Returns nil on a clean shutdown.
+// Run serves the BLE service until ctx is cancelled or onboarding completes
+// (the Restart hook then applies it). The GATT service stays advertised and
+// connectable full-time: an unprovisioned device for onboarding, a provisioned
+// device for post-onboarding management (Wi-Fi). Returns nil on a clean
+// shutdown.
 func Run(ctx context.Context, cfg Config) error {
 	if err := cfg.validate(); err != nil {
 		return err
@@ -65,14 +65,7 @@ func Run(ctx context.Context, cfg Config) error {
 		provisioned = true
 	}
 	if provisioned {
-		if cfg.ProvisionedWindow <= 0 {
-			cfg.Logf("blepair: device provisioned and window disabled; not advertising")
-			return nil
-		}
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, cfg.ProvisionedWindow)
-		defer cancel()
-		cfg.Logf("blepair: device provisioned; onboarding open for %s", cfg.ProvisionedWindow)
+		cfg.Logf("blepair: device provisioned; management service running full-time")
 	} else {
 		cfg.Logf("blepair: device unprovisioned; onboarding open until completed")
 	}
@@ -86,11 +79,15 @@ func Run(ctx context.Context, cfg Config) error {
 	sess := newSession(sessionDeps{
 		Sink:    store,
 		Tester:  newHTTPConnTester(),
+		Wifi:    cfg.Wifi,
 		Restart: cfg.Restart,
 		Logf:    cfg.Logf,
 		Notify: func(st Status) {
 			b, _ := json.Marshal(st)
 			g.notify(servicePath+"/char2", b)
+		},
+		NotifyWifi: func(frame []byte) {
+			g.notify(servicePath+"/char5", frame)
 		},
 		Identity: deviceInfo{
 			DeviceID:    cfg.DeviceID,
@@ -109,6 +106,10 @@ func Run(ctx context.Context, cfg Config) error {
 			read: sess.StatusValue, server: g},
 		{path: servicePath + "/char3", uuid: UUIDConfig, flags: []string{"encrypt-write"},
 			write: sess.HandleConfigFrame, server: g},
+		{path: servicePath + "/char4", uuid: UUIDWifiCmd, flags: []string{"encrypt-write"},
+			write: sess.HandleWifiFrame, server: g},
+		{path: servicePath + "/char5", uuid: UUIDWifiResult, flags: []string{"encrypt-read", "notify"},
+			read: sess.WifiResultValue, server: g},
 	}
 
 	adv := &advertisement{name: cfg.Name, logf: cfg.Logf}

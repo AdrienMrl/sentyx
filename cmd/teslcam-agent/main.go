@@ -36,6 +36,7 @@ import (
 	"github.com/AdrienMrl/teslcam/internal/pipeline"
 	"github.com/AdrienMrl/teslcam/internal/tokenfile"
 	"github.com/AdrienMrl/teslcam/internal/videocompress"
+	"github.com/AdrienMrl/teslcam/internal/wifi"
 )
 
 // version is the agent version reported over BLE onboarding. Override at build
@@ -84,7 +85,6 @@ func main() {
 	bleAdapter := flag.String("ble-adapter", "", "BlueZ adapter for onboarding, e.g. hci0 (required with -ble-onboard)")
 	bleName := flag.String("ble-name", "", "advertised BLE LocalName, e.g. Sentyx-Pi4 (required with -ble-onboard)")
 	bleConfigDir := flag.String("ble-config-dir", "", "directory where onboarding writes agent.env + server.token, e.g. /etc/teslcam (required with -ble-onboard)")
-	bleProvisionedWindow := flag.Duration("ble-provisioned-window", 0, "how long an already-provisioned device advertises after start; 0 explicitly means never advertise when provisioned (the flag must be set explicitly with -ble-onboard)")
 	heartbeat := flag.Bool("heartbeat", false, "POST periodic device-status heartbeats to the server (requires -post-to, -token-file and -heartbeat-interval)")
 	heartbeatInterval := flag.Duration("heartbeat-interval", 0, "heartbeat POST interval, e.g. 30s (required, > 0, with -heartbeat; no implicit default)")
 	flag.Parse()
@@ -121,9 +121,8 @@ func main() {
 	if *heartbeat && *heartbeatInterval <= 0 {
 		log.Fatal("-heartbeat-interval (> 0) is required with -heartbeat")
 	}
-	// Track which -ble-* flags were explicitly set. -ble-provisioned-window has
-	// a meaningful zero value (never advertise when provisioned), so we can't
-	// infer "was it configured?" from the value — only flag.Visit tells us.
+	// Track which -ble-* flags were explicitly set, so a stray one can be
+	// rejected when the master switch is off.
 	bleSet := map[string]bool{}
 	flag.Visit(func(f *flag.Flag) {
 		if len(f.Name) >= 4 && f.Name[:4] == "ble-" {
@@ -131,8 +130,9 @@ func main() {
 		}
 	})
 	if *bleOnboard {
-		// With onboarding on, every BLE parameter is required and explicit: no
-		// implicit adapter, name, config dir, LED, or advertising window.
+		// With BLE on, every BLE parameter is required and explicit: no implicit
+		// adapter, name, or config dir. The GATT service then runs full-time —
+		// onboarding while unprovisioned, Wi-Fi management once provisioned.
 		if *bleAdapter == "" {
 			log.Fatal("-ble-adapter is required with -ble-onboard")
 		}
@@ -141,9 +141,6 @@ func main() {
 		}
 		if *bleConfigDir == "" {
 			log.Fatal("-ble-config-dir is required with -ble-onboard")
-		}
-		if !bleSet["ble-provisioned-window"] {
-			log.Fatal("-ble-provisioned-window is required with -ble-onboard (0 means never advertise when provisioned)")
 		}
 	} else {
 		// Reject a stray -ble-* flag when the master switch is off, so a
@@ -240,19 +237,21 @@ func main() {
 		}
 	}
 
-	// BLE onboarding runs beside the pipeline on the same signal ctx so
-	// shutdown stays clean. Its job is provisioning, not clips: a failure here
-	// must never take down the agent, so we only log it.
+	// The BLE service runs beside the pipeline on the same signal ctx so
+	// shutdown stays clean. It handles provisioning and, once provisioned,
+	// Wi-Fi management; a failure here must never take down the agent, so we
+	// only log it. The nmcli manager is constructed here (harmless on any OS);
+	// it only does I/O on the Pi, where NetworkManager runs.
 	if *bleOnboard {
 		go func() {
 			err := blepair.Run(ctx, blepair.Config{
-				Adapter:           *bleAdapter,
-				Name:              *bleName,
-				DeviceID:          *deviceID,
-				Hardware:          "pi4",
-				AgentVersion:      version,
-				ConfigDir:         *bleConfigDir,
-				ProvisionedWindow: *bleProvisionedWindow,
+				Adapter:      *bleAdapter,
+				Name:         *bleName,
+				DeviceID:     *deviceID,
+				Hardware:     "pi4",
+				AgentVersion: version,
+				ConfigDir:    *bleConfigDir,
+				Wifi:         wifi.NewNMCLI(),
 				Restart: func() {
 					if err := exec.Command("systemctl", "restart", "teslcam-agent").Run(); err != nil {
 						log.Printf("blepair: restart teslcam-agent: %v", err)

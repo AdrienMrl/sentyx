@@ -38,6 +38,7 @@ fun SettingsHubScreen(
     vm: SettingsHubViewModel,
     onOpenDevice: () -> Unit,
     onOpenDeviceSettings: () -> Unit,
+    onOpenWifi: () -> Unit,
     onOpenTransferSettings: () -> Unit,
     onOpenAlerts: () -> Unit,
     onOpenSubscription: () -> Unit,
@@ -68,6 +69,7 @@ fun SettingsHubScreen(
         SxListGroup {
             HubRow("⬡", "Device — Garage Pi", null, onOpenDevice, showDivider = true)
             HubRow("⚙", "Device settings & maintenance", null, onOpenDeviceSettings, showDivider = true)
+            HubRow("📶", "Wi-Fi networks", null, onOpenWifi, showDivider = true)
             HubRow("↓", "Transfers & downloads", "${state.activeTransfers} active", onOpenTransferSettings, showDivider = false)
         }
 

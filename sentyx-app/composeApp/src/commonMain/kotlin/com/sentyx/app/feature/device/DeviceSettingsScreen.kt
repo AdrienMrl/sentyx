@@ -30,6 +30,7 @@ fun DeviceSettingsScreen(
     onBack: () -> Unit,
     onOpenFirmware: () -> Unit,
     onOpenDiagnostics: () -> Unit,
+    onOpenWifi: () -> Unit,
     onFactoryReset: () -> Unit,
 ) {
     Column(
@@ -45,7 +46,7 @@ fun DeviceSettingsScreen(
         SxListGroup {
             SxListRow(label = "Device name", value = "Garage Pi", showChevron = true, onClick = { vm.comingSoon("Device name") })
             SxListRow(label = "Vehicle & timezone", value = "Model 3 · GMT-7", showChevron = true, onClick = { vm.comingSoon("Vehicle & timezone") })
-            SxListRow(label = "Saved Wi-Fi networks", value = "2 saved", showChevron = true, showDivider = false, onClick = { vm.comingSoon("Saved Wi-Fi networks") })
+            SxListRow(label = "Saved Wi-Fi networks", showChevron = true, showDivider = false, onClick = onOpenWifi)
         }
 
         SxSectionHeader("Behavior")

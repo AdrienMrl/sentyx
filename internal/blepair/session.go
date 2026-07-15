@@ -1,10 +1,14 @@
 package blepair
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
+
+	"github.com/AdrienMrl/teslcam/internal/wifi"
 )
 
 // Session states. A session is bound to one BLE connection; disconnect
@@ -37,23 +41,28 @@ type connTester interface {
 // sessionDeps are the side-effecting collaborators, injected so the state
 // machine is unit-testable without hardware.
 type sessionDeps struct {
-	Sink     configSink
-	Tester   connTester
-	Restart  func() // invoked after the final done notify
-	Notify   func(Status)
-	Logf     func(format string, args ...any)
-	Identity deviceInfo
+	Sink       configSink
+	Tester     connTester
+	Restart    func() // invoked after the final done notify
+	Notify     func(Status)
+	NotifyWifi func([]byte) // pushes one framed Wi-Fi result chunk
+	Wifi       wifi.Manager // nil when Wi-Fi management is unavailable
+	Logf       func(format string, args ...any)
+	Identity   deviceInfo
 }
 
 // session is the onboarding state machine driven by GATT callbacks.
 type session struct {
 	deps sessionDeps
 
-	mu        sync.Mutex
-	state     string
-	config    *DeviceConfig // received, held in memory until the test passes
-	persisted bool
-	frames    reassembler
+	mu         sync.Mutex
+	state      string
+	config     *DeviceConfig // received, held in memory until the test passes
+	persisted  bool
+	frames     reassembler
+	wifiFrames reassembler
+	wifiBusy   bool     // one Wi-Fi command in flight at a time
+	wifiLast   [][]byte // last result, chunked, for a plain Read
 }
 
 func newSession(deps sessionDeps) *session {
@@ -104,6 +113,8 @@ func (s *session) HandleControl(payload []byte) error {
 	switch msg.Op {
 	case "begin_pair":
 		return s.beginPair()
+	case "begin_manage":
+		return s.beginManage()
 	case "test":
 		return s.test()
 	case "complete":
@@ -123,6 +134,25 @@ func (s *session) beginPair() error {
 	}
 	s.state = stateAuthenticated
 	s.deps.Logf("blepair: session authenticated")
+	s.notifyLocked(Status{State: s.state, OK: true})
+	return nil
+}
+
+// beginManage authenticates a management session on an already-provisioned
+// device: the entry point for post-onboarding Wi-Fi management, gated by the
+// same encrypted Just Works link as begin_pair. It reaches the same
+// authenticated state; there is no config flow.
+func (s *session) beginManage() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.deps.Identity.Provisioned {
+		return s.failLocked("begin_manage requires a provisioned device")
+	}
+	if s.state != stateIdle && s.state != stateAuthenticated {
+		return s.failLocked("begin_manage only valid from idle")
+	}
+	s.state = stateAuthenticated
+	s.deps.Logf("blepair: management session authenticated")
 	s.notifyLocked(Status{State: s.state, OK: true})
 	return nil
 }
@@ -213,11 +243,153 @@ func (s *session) complete() error {
 	return nil
 }
 
+// HandleWifiFrame consumes one framed Wi-Fi command write, running the command
+// once the last frame arrives.
+func (s *session) HandleWifiFrame(frame []byte) error {
+	s.mu.Lock()
+	payload, err := s.wifiFrames.push(frame)
+	s.mu.Unlock()
+	if err != nil {
+		return fmt.Errorf("blepair: wifi: %w", err)
+	}
+	if payload == nil {
+		return nil // mid-message
+	}
+	return s.handleWifiCommand(payload)
+}
+
+// handleWifiCommand validates one reassembled Wi-Fi command synchronously,
+// then runs it in a goroutine: the manager call can block for tens of seconds
+// (a wrong-password connect) and must not stall the BlueZ WriteValue D-Bus
+// call, which bluetoothd times out after ~25s. The goroutine notifies exactly
+// one framed response and owns clearing wifiBusy, after the notify, so "one
+// command in flight" covers the response delivery too.
+func (s *session) handleWifiCommand(payload []byte) error {
+	var cmd wifiCmd
+	if err := json.Unmarshal(payload, &cmd); err != nil {
+		s.notifyWifi("error", s.wifiFail("error", "invalid JSON: "+err.Error()))
+		return fmt.Errorf("blepair: wifi: invalid JSON: %w", err)
+	}
+
+	s.mu.Lock()
+	switch {
+	case s.state != stateAuthenticated:
+		s.mu.Unlock()
+		s.notifyWifi(cmd.Op, s.wifiFail(cmd.Op, "not authenticated"))
+		return fmt.Errorf("blepair: wifi: not authenticated")
+	case s.deps.Wifi == nil:
+		s.mu.Unlock()
+		s.notifyWifi(cmd.Op, s.wifiFail(cmd.Op, "wifi management unavailable"))
+		return nil
+	case s.wifiBusy:
+		s.mu.Unlock()
+		s.notifyWifi(cmd.Op, s.wifiFail(cmd.Op, "another wifi command is in progress"))
+		return nil
+	}
+	s.wifiBusy = true
+	mgr := s.deps.Wifi
+	s.mu.Unlock()
+
+	go func() {
+		resp := s.runWifi(mgr, cmd)
+		s.notifyWifi(cmd.Op, resp)
+		s.mu.Lock()
+		s.wifiBusy = false
+		s.mu.Unlock()
+	}()
+	return nil
+}
+
+// runWifi dispatches one command to the Wi-Fi manager and marshals its
+// response. It runs without the session mutex held.
+func (s *session) runWifi(mgr wifi.Manager, cmd wifiCmd) []byte {
+	ctx := context.Background()
+	switch cmd.Op {
+	case "status":
+		res, err := mgr.Status(ctx)
+		if err != nil {
+			return s.wifiFail("status", err.Error())
+		}
+		return marshalWifi(wifiStatusResp{V: protocolVersion, Op: "status", OK: true, Current: res.Current, Saved: res.Saved})
+	case "scan":
+		nets, err := mgr.Scan(ctx)
+		if err != nil {
+			return s.wifiFail("scan", err.Error())
+		}
+		return marshalWifi(wifiScanResp{V: protocolVersion, Op: "scan", OK: true, Networks: nets})
+	case "connect":
+		if strings.TrimSpace(cmd.SSID) == "" {
+			return s.wifiFail("connect", "ssid is required")
+		}
+		if err := mgr.Connect(ctx, cmd.SSID, cmd.PSK); err != nil {
+			return s.wifiFail("connect", err.Error())
+		}
+		s.deps.Logf("blepair: wifi: connected to %q", cmd.SSID)
+		return marshalWifi(wifiResultResp{V: protocolVersion, Op: "connect", OK: true})
+	case "forget":
+		if strings.TrimSpace(cmd.SSID) == "" {
+			return s.wifiFail("forget", "ssid is required")
+		}
+		if err := mgr.Forget(ctx, cmd.SSID); err != nil {
+			return s.wifiFail("forget", err.Error())
+		}
+		s.deps.Logf("blepair: wifi: forgot %q", cmd.SSID)
+		return marshalWifi(wifiResultResp{V: protocolVersion, Op: "forget", OK: true})
+	default:
+		return s.wifiFail(cmd.Op, "unknown wifi op")
+	}
+}
+
+// wifiFail renders an ok:false Wi-Fi response, echoing the failing op.
+func (s *session) wifiFail(op, detail string) []byte {
+	if op == "" {
+		op = "error"
+	}
+	return marshalWifi(wifiResultResp{V: protocolVersion, Op: op, OK: false, Detail: detail})
+}
+
+// notifyWifi chunks a response and pushes each frame. The MTU is unknown to
+// the Pi, so frames are a conservative 100 bytes. The frames are also kept for
+// a plain Read of the result characteristic.
+func (s *session) notifyWifi(op string, payload []byte) {
+	frames, err := chunk(payload, 100)
+	if err != nil {
+		s.deps.Logf("blepair: wifi: chunking %s response: %v", op, err)
+		return
+	}
+	s.mu.Lock()
+	s.wifiLast = frames
+	notify := s.deps.NotifyWifi
+	s.mu.Unlock()
+	if notify == nil {
+		return
+	}
+	for _, f := range frames {
+		notify(f)
+	}
+}
+
+// WifiResultValue serves a plain Read of the result characteristic. It returns
+// only the first frame of the last response (a full re-chunked read is not
+// required); a notify subscriber gets the complete framed response.
+func (s *session) WifiResultValue() []byte {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.wifiLast) == 0 {
+		return []byte{}
+	}
+	return s.wifiLast[0]
+}
+
 // Disconnected resets the session when the BLE central goes away. A done
 // session stays done (restart pending).
 func (s *session) Disconnected() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// wifiBusy is deliberately NOT reset here: the in-flight goroutine clears
+	// it itself (its nmcli timeouts bound its lifetime), and resetting on
+	// disconnect would let a reconnect start a second concurrent command.
+	s.wifiFrames.reset()
 	if s.state == stateDone || s.state == stateIdle {
 		return
 	}
@@ -226,4 +398,11 @@ func (s *session) Disconnected() {
 	s.config = nil
 	s.persisted = false
 	s.frames.reset()
+}
+
+// marshalWifi renders a Wi-Fi response; the value types are always
+// marshalable, matching the rest of this package's json handling.
+func marshalWifi(v any) []byte {
+	b, _ := json.Marshal(v)
+	return b
 }

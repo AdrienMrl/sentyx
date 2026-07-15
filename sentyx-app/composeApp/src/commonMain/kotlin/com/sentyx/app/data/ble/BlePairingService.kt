@@ -1,11 +1,7 @@
 package com.sentyx.app.data.ble
 
-import com.juul.kable.Characteristic
-import com.juul.kable.Peripheral
 import com.juul.kable.PlatformAdvertisement
 import com.juul.kable.Scanner
-import com.juul.kable.WriteType
-import com.juul.kable.characteristicOf
 import com.sentyx.app.core.storage.KeyValueStore
 import com.sentyx.app.core.storage.StorageKeys
 import com.sentyx.app.data.api.SentyxApi
@@ -18,20 +14,13 @@ import com.sentyx.app.domain.model.OnboardingPermission
 import com.sentyx.app.domain.model.ScanState
 import com.sentyx.app.domain.model.WifiNetwork
 import com.sentyx.app.domain.repository.PairingService
-import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.channelFlow
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.encodeToString
 import kotlin.coroutines.cancellation.CancellationException as KCancellationException
@@ -42,15 +31,12 @@ import kotlin.uuid.Uuid
  * Real [PairingService] over BLE (Kable) + the backend register call.
  *
  * Session shape: [scan] discovers advertisements of [SentyxGatt.SERVICE_UUID];
- * [beginPairing] connects the chosen peripheral, reads DeviceInfo, and holds a
- * single Status-notify subscription for the rest of the session (feeding
- * [Session.statuses]). Every control/config write awaits the matching Status
- * state on that shared flow, subscribing before it writes to avoid missing a
- * fast notify, and throws with the device's `detail` on a rejection.
- *
- * MTU note: Kable does not expose the negotiated ATT MTU portably in
- * commonMain, so Config framing uses the conservative [SentyxGatt.DEFAULT_MAX_FRAME]
- * (20-byte) frames. Correctness is unaffected — only the frame count.
+ * [beginPairing] connects the chosen peripheral (via [PiBleSession]) and holds a
+ * single Status-notify subscription for the rest of the session. Every
+ * control/config write awaits the matching Status state on that shared flow,
+ * subscribing before it writes to avoid missing a fast notify, and throws with
+ * the device's `detail` on a rejection. Wi-Fi setup rides the same authenticated
+ * session (the Wi-Fi characteristics; see [PiBleSession.wifiRequest]).
  */
 @OptIn(ExperimentalUuidApi::class)
 class BlePairingService(
@@ -79,10 +65,6 @@ class BlePairingService(
     )
 
     private val serviceUuid = Uuid.parse(SentyxGatt.SERVICE_UUID)
-    private val deviceInfoUuid = Uuid.parse(SentyxGatt.DEVICE_INFO_UUID)
-    private val controlUuid = Uuid.parse(SentyxGatt.CONTROL_UUID)
-    private val statusUuid = Uuid.parse(SentyxGatt.STATUS_UUID)
-    private val configUuid = Uuid.parse(SentyxGatt.CONFIG_UUID)
 
     private val scanner: Scanner<PlatformAdvertisement> by lazy {
         Scanner {
@@ -95,7 +77,7 @@ class BlePairingService(
     /** Advertisements seen during the most recent scan, keyed by DiscoveredDevice.id. */
     private val discovered = mutableMapOf<String, PlatformAdvertisement>()
 
-    private var session: Session? = null
+    private var session: PiBleSession? = null
 
     // ---- Scan ---------------------------------------------------------------
 
@@ -135,7 +117,7 @@ class BlePairingService(
 
         // Bound the whole connect → (re)bond → authenticate dance.
         val status = withTimeoutOrNull(PAIR_MS) {
-            var s = connectAndSetup(advertisement, device)
+            var s = PiBleSession.connect(scope, advertisement, device.name)
             session = s
 
             // The first write to an encrypt-write characteristic triggers Just
@@ -144,7 +126,7 @@ class BlePairingService(
             // with NotConnectedException. Tolerate it: reconnect (the bond now
             // exists) and retry the encrypted write once.
             try {
-                awaitStatus(s, OP_MS, ControlOp.beginPair()) {
+                s.awaitStatus(OP_MS, ControlOp.beginPair()) {
                     it.state == "authenticated" || it.ok == false
                 }
             } catch (e: KCancellationException) {
@@ -152,9 +134,9 @@ class BlePairingService(
             } catch (e: Throwable) {
                 log("begin_pair: first attempt failed (${e.message}); reconnecting after bond")
                 cleanup()
-                s = connectAndSetup(advertisement, device)
+                s = PiBleSession.connect(scope, advertisement, device.name)
                 session = s
-                awaitStatus(s, OP_MS, ControlOp.beginPair()) {
+                s.awaitStatus(OP_MS, ControlOp.beginPair()) {
                     it.state == "authenticated" || it.ok == false
                 }
             }
@@ -167,92 +149,6 @@ class BlePairingService(
         if (status.state != "authenticated") {
             fail(status.detail ?: "The device rejected pairing.")
         }
-    }
-
-    /**
-     * Connect [advertisement], read its DeviceInfo, and open the single
-     * Status-notify subscription that feeds [Session.statuses] for the session.
-     * Throws a [PairingException] on failure; the returned session is not yet
-     * stored in [session].
-     */
-    private suspend fun connectAndSetup(
-        advertisement: PlatformAdvertisement,
-        device: DiscoveredDevice,
-    ): Session {
-        val peripheral = Peripheral(advertisement)
-        log("connect: ${device.name} (${device.id})")
-        try {
-            withTimeout(CONNECT_MS) { peripheral.connect() }
-            log("connect: ok")
-        } catch (e: TimeoutCancellationException) {
-            log("connect: timeout after ${CONNECT_MS}ms")
-            runCatching { peripheral.close() }
-            fail("Couldn't connect to ${device.name} in time. Move closer and retry.")
-        } catch (e: KCancellationException) {
-            throw e
-        } catch (e: Throwable) {
-            log("connect: failed: ${e.message}")
-            runCatching { peripheral.close() }
-            fail("Couldn't connect to ${device.name}: ${e.message ?: "connection failed"}", e)
-        }
-
-        val controlChar = characteristicOf(serviceUuid, controlUuid)
-        val statusChar = characteristicOf(serviceUuid, statusUuid)
-        val configChar = characteristicOf(serviceUuid, configUuid)
-        val deviceInfoChar = characteristicOf(serviceUuid, deviceInfoUuid)
-
-        val deviceId = try {
-            val bytes = withTimeout(OP_MS) { peripheral.read(deviceInfoChar) }
-            SentyxGatt.json.decodeFromString<DeviceInfoDto>(bytes.decodeToString()).deviceId
-        } catch (e: KCancellationException) {
-            throw e
-        } catch (e: Throwable) {
-            runCatching { peripheral.close() }
-            fail("Couldn't read device info from ${device.name}: ${e.message ?: "read failed"}", e)
-        }
-
-        // Hold one Status-notify subscription for the whole session. The collect
-        // is wrapped so a dropped connection (e.g. the bonding disconnect, or a
-        // CCCD write colliding with bonding) ends this job without crashing the
-        // app; its death is recorded in [Session.notifyDead] so awaiting ops can
-        // fail fast (see [awaitStatusVia]) instead of timing out on a dead flow.
-        val statuses = MutableSharedFlow<StatusDto>(replay = 0, extraBufferCapacity = 32)
-        val notifyDead = CompletableDeferred<Throwable>()
-        val sessionScope = CoroutineScope(scope.coroutineContext + SupervisorJob(scope.coroutineContext[Job]))
-        val observeJob = sessionScope.launch {
-            log("status subscribe: start")
-            try {
-                peripheral.observe(statusChar).collect { bytes ->
-                    val status = runCatching {
-                        SentyxGatt.json.decodeFromString<StatusDto>(bytes.decodeToString())
-                    }.getOrNull()
-                    if (status != null) {
-                        log("status notify: state=${status.state} ok=${status.ok} detail=${status.detail}")
-                        statuses.emit(status)
-                    } else {
-                        log("status notify: unparseable (${bytes.size} bytes)")
-                    }
-                }
-                log("status subscribe: flow completed")
-                notifyDead.complete(PairingException("Status notifications ended."))
-            } catch (e: KCancellationException) {
-                throw e
-            } catch (e: Throwable) {
-                log("status subscribe: died: ${e.message}")
-                notifyDead.complete(e)
-            }
-        }
-
-        return Session(
-            peripheral = peripheral,
-            deviceId = deviceId,
-            statuses = statuses,
-            notifyDead = notifyDead,
-            observeJob = observeJob,
-            controlChar = controlChar,
-            statusChar = statusChar,
-            configChar = configChar,
-        )
     }
 
     override suspend fun configure(
@@ -282,18 +178,12 @@ class BlePairingService(
             ),
         ).encodeToByteArray()
 
-        val frames = SentyxGatt.chunkConfig(payload, SentyxGatt.maxFrameFor(null))
-
         val status = coroutineScope {
             val awaiting = async(start = CoroutineStart.UNDISPATCHED) {
-                awaitStatusVia(s, OP_MS) { it.state == "config_saved" || it.ok == false }
+                s.awaitStatusVia(OP_MS) { it.state == "config_saved" || it.ok == false }
             }
             try {
-                log("write config: ${frames.size} frames, ${payload.size} bytes")
-                for (frame in frames) {
-                    s.peripheral.write(s.configChar, frame, WriteType.WithResponse)
-                }
-                log("write config: done")
+                s.writeFramed(s.configChar, payload)
             } catch (e: KCancellationException) {
                 throw e
             } catch (e: Throwable) {
@@ -312,13 +202,44 @@ class BlePairingService(
         store.putString(StorageKeys.DEVICE_NAME, deviceName)
     }
 
-    // Wi-Fi provisioning is out of scope for this groundwork; the UI's "Skip"
-    // path covers it. The Pi is expected to reach the backend over its own
-    // (LTE/hotspot) connectivity.
-    override suspend fun availableNetworks(): List<WifiNetwork> = emptyList()
+    // Wi-Fi setup rides the already-authenticated pairing session (begin_pair
+    // authenticated it), so these reuse [PiBleSession.wifiRequest] on the same
+    // connection. They stay tolerant of failure — the UI calls them fire-and-
+    // forget and the connection test surfaces any real problem — so a wifi op
+    // error never crashes onboarding.
+    override suspend fun availableNetworks(): List<WifiNetwork> {
+        val s = session ?: return emptyList()
+        return try {
+            val json = s.wifiRequest(
+                SentyxGatt.json.encodeToString(WifiCommandDto.scan()).encodeToByteArray(),
+                WIFI_OP_MS,
+            )
+            val result = SentyxGatt.json.decodeFromString<WifiResultDto>(json)
+            if (result.ok) result.networks.map { it.toWifiNetwork() } else emptyList()
+        } catch (e: KCancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            log("availableNetworks: ${e.message}")
+            emptyList()
+        }
+    }
 
     override suspend fun connectWifi(ssid: String, password: String?) {
-        // no-op
+        val s = session ?: return
+        try {
+            val json = s.wifiRequest(
+                SentyxGatt.json.encodeToString(
+                    WifiCommandDto.connect(ssid, password?.ifBlank { null }),
+                ).encodeToByteArray(),
+                WIFI_CONNECT_MS,
+            )
+            val result = SentyxGatt.json.decodeFromString<WifiResultDto>(json)
+            if (!result.ok) log("connectWifi: device rejected: ${result.detail}")
+        } catch (e: KCancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            log("connectWifi: ${e.message}")
+        }
     }
 
     override suspend fun runConnectionTest(): List<ConnectionTestStep> {
@@ -330,8 +251,7 @@ class BlePairingService(
         // rides the notify+poll combo: the terminal state ("config_saved" or
         // "locked") is durable, so polling alone is enough to finish the test
         // even with zero working notifies.
-        val terminal = awaitStatus(
-            s,
+        val terminal = s.awaitStatus(
             TEST_MS,
             ControlOp.test(),
             onStatus = { status, source ->
@@ -364,7 +284,7 @@ class BlePairingService(
     override suspend fun completePairing() {
         val s = requireSession()
         try {
-            awaitStatus(s, OP_MS, ControlOp.complete()) { it.state == "done" }
+            s.awaitStatus(OP_MS, ControlOp.complete()) { it.state == "done" }
         } catch (e: TimeoutCancellationException) {
             // The agent reboots right after 'complete'; a missing final notify
             // or a dropped connection here is expected, not a failure.
@@ -379,141 +299,13 @@ class BlePairingService(
 
     // ---- Internals ----------------------------------------------------------
 
-    /**
-     * Wait (bounded by [timeoutMs]) for a Status matching [predicate], fed from
-     * TWO sources into the same await logic:
-     *
-     *  1. the session's Status-notify subscription ([Session.statuses]), and
-     *  2. a poll loop that READs the Status characteristic every [POLL_MS]
-     *     (Status is also readable and returns the current state as the same
-     *     DTO) — so the op completes even if notifies never arrive (e.g. the
-     *     CCCD subscription died in the bonding collision).
-     *
-     * Fail-fast instead of dead-flow timeouts: a poll READ failure when the
-     * notify subscription is already dead ([Session.notifyDead]) — or three
-     * consecutive poll failures regardless — means the connection is gone, and
-     * the op throws immediately with the underlying error. A genuine [timeoutMs]
-     * expiry (device reachable but never reaching the state) throws a
-     * [PairingException] with a friendly message.
-     *
-     * [onStatus] observes every status seen, tagged with its source
-     * ("notify"|"read"), before the predicate is applied.
-     */
-    private suspend fun awaitStatusVia(
-        s: Session,
-        timeoutMs: Long,
-        onStatus: ((StatusDto, String) -> Unit)? = null,
-        predicate: (StatusDto) -> Boolean,
-    ): StatusDto {
-        // withTimeoutOrNull (not withTimeout+catch): returns null only for ITS
-        // OWN expiry, so an enclosing timeout's cancellation still propagates
-        // as cancellation instead of being converted into a PairingException.
-        val outcome =
-            withTimeoutOrNull(timeoutMs) {
-                coroutineScope {
-                    val result = CompletableDeferred<StatusDto>()
-
-                    fun offer(status: StatusDto, source: String) {
-                        onStatus?.invoke(status, source)
-                        if (predicate(status)) result.complete(status)
-                    }
-
-                    // UNDISPATCHED: runs until the collect suspends, i.e. the
-                    // SharedFlow subscription is registered before we return to
-                    // the caller (which then writes) — no notify can slip past.
-                    val notifyJob = launch(start = CoroutineStart.UNDISPATCHED) {
-                        s.statuses.collect { offer(it, "notify") }
-                    }
-                    val pollJob = launch {
-                        var failures = 0
-                        while (true) {
-                            delay(POLL_MS)
-                            val bytes = try {
-                                s.peripheral.read(s.statusChar).also { failures = 0 }
-                            } catch (e: KCancellationException) {
-                                throw e
-                            } catch (e: Throwable) {
-                                failures++
-                                log("status read: failed #$failures: ${e.message} (notifyDead=${s.notifyDead.isCompleted})")
-                                if (s.notifyDead.isCompleted || failures >= MAX_POLL_FAILURES) {
-                                    result.completeExceptionally(
-                                        PairingException(
-                                            "Lost the connection to the device: ${e.message ?: "read failed"}",
-                                            e,
-                                        ),
-                                    )
-                                }
-                                continue
-                            }
-                            val status = runCatching {
-                                SentyxGatt.json.decodeFromString<StatusDto>(bytes.decodeToString())
-                            }.getOrNull()
-                            if (status != null) {
-                                log("status read: state=${status.state} ok=${status.ok} detail=${status.detail}")
-                                offer(status, "read")
-                            } else {
-                                log("status read: unparseable (${bytes.size} bytes)")
-                            }
-                        }
-                    }
-                    try {
-                        result.await()
-                    } finally {
-                        notifyJob.cancel()
-                        pollJob.cancel()
-                    }
-                }
-            }
-        if (outcome == null) {
-            log("awaitStatus: timed out after ${timeoutMs}ms")
-            fail("Timed out waiting for the device to respond.")
-        }
-        return outcome
-    }
-
-    /** Write [op] then await a Status matching [predicate] (notify or poll-read). */
-    private suspend fun awaitStatus(
-        s: Session,
-        timeoutMs: Long,
-        op: ControlOp,
-        onStatus: ((StatusDto, String) -> Unit)? = null,
-        predicate: (StatusDto) -> Boolean,
-    ): StatusDto = coroutineScope {
-        // Start awaiting (UNDISPATCHED registers the notify subscription and the
-        // poll loop) before writing, so a fast notify can't slip past.
-        val awaiting = async(start = CoroutineStart.UNDISPATCHED) {
-            awaitStatusVia(s, timeoutMs, onStatus = onStatus, predicate = predicate)
-        }
-        try {
-            writeControl(s, op)
-        } catch (e: KCancellationException) {
-            throw e
-        } catch (e: Throwable) {
-            awaiting.cancel()
-            fail("Couldn't send command to the device: ${e.message ?: "write failed"}", e)
-        }
-        awaiting.await()
-    }
-
-    private suspend fun writeControl(s: Session, op: ControlOp) {
-        log("write control: op=${op.op}")
-        val bytes = SentyxGatt.json.encodeToString(op).encodeToByteArray()
-        s.peripheral.write(s.controlChar, bytes, WriteType.WithResponse)
-        log("write control: op=${op.op} done")
-    }
-
-    private fun requireSession(): Session =
+    private fun requireSession(): PiBleSession =
         session ?: fail("Not connected to a device. Start pairing again.")
 
     private fun cleanup() {
         val s = session ?: return
         session = null
-        log("cleanup: closing session for ${s.deviceId}")
-        s.observeJob.cancel()
-        scope.launch {
-            runCatching { s.peripheral.disconnect() }
-            runCatching { s.peripheral.close() }
-        }
+        s.close(scope)
     }
 
     private fun fail(message: String, cause: Throwable? = null): Nothing =
@@ -526,34 +318,20 @@ class BlePairingService(
         else -> step
     }
 
-    private class Session(
-        val peripheral: Peripheral,
-        val deviceId: String,
-        val statuses: MutableSharedFlow<StatusDto>,
-        /** Completed (with the cause) when the Status-notify collect job dies. */
-        val notifyDead: CompletableDeferred<Throwable>,
-        val observeJob: Job,
-        val controlChar: Characteristic,
-        val statusChar: Characteristic,
-        val configChar: Characteristic,
-    )
-
     private companion object {
         const val SCAN_MS = 8_000L
-        const val CONNECT_MS = 15_000L
         const val OP_MS = 15_000L
         const val TEST_MS = 60_000L
+
+        /** Status/scan/forget Wi-Fi op budget. */
+        const val WIFI_OP_MS = 15_000L
+
+        /** Join budget: the Pi's Wi-Fi can bounce for up to ~60s while connecting. */
+        const val WIFI_CONNECT_MS = 70_000L
 
         /** Whole beginPairing budget: connect + possible rebond-reconnect + auth. */
         const val PAIR_MS = 30_000L
 
-        /** Interval of the Status poll-READ fallback inside [awaitStatusVia]. */
-        const val POLL_MS = 1_000L
-
-        /** Consecutive poll-read failures (with a live notify sub) before failing the op. */
-        const val MAX_POLL_FAILURES = 3
-
-        /** Lightweight diagnostic logging (println reaches logcat via System.out). */
         fun log(message: String) = println("SentyxBLE: $message")
     }
 }

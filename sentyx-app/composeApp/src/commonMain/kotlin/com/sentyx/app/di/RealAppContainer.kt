@@ -3,6 +3,7 @@ package com.sentyx.app.di
 import com.sentyx.app.core.storage.KeyValueStore
 import com.sentyx.app.core.ui.ToastController
 import com.sentyx.app.data.api.SentyxApi
+import com.sentyx.app.data.ble.BleDeviceWifiService
 import com.sentyx.app.data.ble.BlePairingService
 import com.sentyx.app.data.demo.DemoAppSettingsRepository
 import com.sentyx.app.data.demo.DemoAuthRepository
@@ -15,6 +16,7 @@ import com.sentyx.app.data.demo.DemoTransferRepository
 import com.sentyx.app.domain.repository.AppSettingsRepository
 import com.sentyx.app.domain.repository.AuthRepository
 import com.sentyx.app.domain.repository.DeviceRepository
+import com.sentyx.app.domain.repository.DeviceWifiService
 import com.sentyx.app.domain.repository.EventRepository
 import com.sentyx.app.domain.repository.NotificationSettingsRepository
 import com.sentyx.app.domain.repository.PairingService
@@ -81,4 +83,6 @@ class RealAppContainer(
             store = keyValueStore,
         )
     }
+
+    override val deviceWifi: DeviceWifiService by lazy { BleDeviceWifiService(scope) }
 }

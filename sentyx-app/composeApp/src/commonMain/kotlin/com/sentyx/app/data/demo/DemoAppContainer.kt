@@ -5,6 +5,7 @@ import com.sentyx.app.di.AppContainer
 import com.sentyx.app.domain.repository.AppSettingsRepository
 import com.sentyx.app.domain.repository.AuthRepository
 import com.sentyx.app.domain.repository.DeviceRepository
+import com.sentyx.app.domain.repository.DeviceWifiService
 import com.sentyx.app.domain.repository.EventRepository
 import com.sentyx.app.domain.repository.NotificationSettingsRepository
 import com.sentyx.app.domain.repository.PairingService
@@ -51,4 +52,6 @@ class DemoAppContainer(private val scope: CoroutineScope) : AppContainer {
     override val appSettings: AppSettingsRepository by lazy { DemoAppSettingsRepository() }
 
     override val pairing: PairingService by lazy { DemoPairingService(demoStateController) }
+
+    override val deviceWifi: DeviceWifiService by lazy { DemoDeviceWifiService() }
 }

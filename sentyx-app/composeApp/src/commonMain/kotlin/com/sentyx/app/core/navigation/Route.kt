@@ -43,6 +43,7 @@ sealed interface Route {
     data object Diagnostics : Route
     data object FactoryReset : Route
     data object AddDevice : Route
+    data object SavedWifiNetworks : Route
 
     // Notifications
     data object Alerts : Route

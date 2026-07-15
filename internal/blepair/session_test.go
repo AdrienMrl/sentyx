@@ -1,11 +1,15 @@
 package blepair
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"sync"
 	"testing"
+	"time"
+
+	"github.com/AdrienMrl/teslcam/internal/wifi"
 )
 
 type fakeSink struct {
@@ -33,34 +37,111 @@ func (f *fakeTester) Run(cfg DeviceConfig, report func(string, bool, string)) er
 	return nil
 }
 
+// fakeWifi is a scripted wifi.Manager. connectErr/forgetErr drive failure
+// paths; a non-nil block gates every call mid-flight (signalling entered, then
+// waiting on block) so command-in-flight rejection is observable. Closing
+// block releases the blocked call and lets later calls pass straight through.
+type fakeWifi struct {
+	status     wifi.StatusResult
+	networks   []wifi.Network
+	connectErr error
+	forgetErr  error
+	block      chan struct{}
+	entered    chan struct{} // buffered; one signal per gated call
+}
+
+func (f *fakeWifi) gate() {
+	if f.block == nil {
+		return
+	}
+	if f.entered != nil {
+		f.entered <- struct{}{}
+	}
+	<-f.block
+}
+
+func (f *fakeWifi) Status(context.Context) (wifi.StatusResult, error) { f.gate(); return f.status, nil }
+func (f *fakeWifi) Scan(context.Context) ([]wifi.Network, error)      { f.gate(); return f.networks, nil }
+func (f *fakeWifi) Connect(_ context.Context, ssid, psk string) error { f.gate(); return f.connectErr }
+func (f *fakeWifi) Forget(_ context.Context, ssid string) error       { f.gate(); return f.forgetErr }
+
 type harness struct {
-	sess     *session
-	sink     *fakeSink
-	tester   *fakeTester
-	statuses *[]Status
-	restarts *int
+	sess       *session
+	sink       *fakeSink
+	tester     *fakeTester
+	wifi       *fakeWifi
+	statuses   *[]Status
+	wifiFrames chan []byte // one entry per NotifyWifi frame; responses arrive async
+	restarts   *int
 }
 
 func newHarness(t *testing.T) *harness {
 	t.Helper()
 	sink := &fakeSink{}
 	tester := &fakeTester{}
+	wf := &fakeWifi{}
 	statuses := &[]Status{}
+	wifiFrames := make(chan []byte, 64)
 	restarts := 0
-	h := &harness{sink: sink, tester: tester, statuses: statuses, restarts: &restarts}
+	h := &harness{sink: sink, tester: tester, wifi: wf, statuses: statuses, wifiFrames: wifiFrames, restarts: &restarts}
 	var mu sync.Mutex
 	h.sess = newSession(sessionDeps{
 		Sink:    sink,
 		Tester:  tester,
+		Wifi:    wf,
 		Restart: func() { restarts++ },
 		Notify: func(st Status) {
 			mu.Lock()
 			*statuses = append(*statuses, st)
 			mu.Unlock()
 		},
-		Identity: deviceInfo{DeviceID: "sentyx-test", HW: "pi4", Agent: "dev"},
+		NotifyWifi: func(frame []byte) {
+			wifiFrames <- append([]byte(nil), frame...)
+		},
+		Identity: deviceInfo{DeviceID: "sentyx-test", HW: "pi4", Agent: "dev", Provisioned: true},
 	})
 	return h
+}
+
+// writeWifi frames a wifi command through the reassembler, exactly as the app
+// writes it.
+func (h *harness) writeWifi(t *testing.T, cmd string) error {
+	t.Helper()
+	frames, err := chunk([]byte(cmd), 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var last error
+	for _, f := range frames {
+		last = h.sess.HandleWifiFrame(f)
+	}
+	return last
+}
+
+// nextWifiResponse waits for the next complete framed wifi response; commands
+// run asynchronously, so the frames arrive after the write returns.
+func (h *harness) nextWifiResponse(t *testing.T) map[string]any {
+	t.Helper()
+	var r reassembler
+	for {
+		select {
+		case f := <-h.wifiFrames:
+			payload, err := r.push(f)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if payload == nil {
+				continue // mid-message
+			}
+			var m map[string]any
+			if err := json.Unmarshal(payload, &m); err != nil {
+				t.Fatal(err)
+			}
+			return m
+		case <-time.After(2 * time.Second):
+			t.Fatal("timed out waiting for a wifi response")
+		}
+	}
 }
 
 func (h *harness) control(t *testing.T, msg string) error {
@@ -205,5 +286,179 @@ func TestInvalidConfigRejected(t *testing.T) {
 		if err := h.writeConfig(t, []byte(bad)); err == nil {
 			t.Fatalf("config %q should be rejected", bad)
 		}
+	}
+}
+
+func TestBeginManageAuthenticates(t *testing.T) {
+	h := newHarness(t)
+	if err := h.control(t, `{"op":"begin_manage"}`); err != nil {
+		t.Fatal(err)
+	}
+	if got := h.lastState(t); got != stateAuthenticated {
+		t.Fatalf("state after begin_manage = %s, want authenticated", got)
+	}
+}
+
+func TestBeginManageRequiresProvisionedDevice(t *testing.T) {
+	sess := newSession(sessionDeps{
+		Identity: deviceInfo{DeviceID: "sentyx-test", Provisioned: false},
+	})
+	if err := sess.HandleControl([]byte(`{"op":"begin_manage"}`)); err == nil {
+		t.Fatal("begin_manage on an unprovisioned device should error")
+	}
+}
+
+func TestBeginManageOnlyFromIdle(t *testing.T) {
+	h := newHarness(t)
+	h.control(t, `{"op":"begin_pair"}`)
+	if err := h.writeConfig(t, validConfigJSON()); err != nil {
+		t.Fatal(err)
+	}
+	// State is config_saved now; begin_manage is not valid there.
+	if err := h.control(t, `{"op":"begin_manage"}`); err == nil {
+		t.Fatal("begin_manage should be rejected outside idle/authenticated")
+	}
+}
+
+func TestWifiStatusRoundTrip(t *testing.T) {
+	h := newHarness(t)
+	h.wifi.status = wifi.StatusResult{
+		Current: &wifi.CurrentNetwork{SSID: "Home", Signal: 72},
+		Saved:   []wifi.SavedNetwork{{SSID: "Home", Active: true, Autoconnect: true}},
+	}
+	h.control(t, `{"op":"begin_manage"}`)
+	if err := h.writeWifi(t, `{"v":1,"op":"status"}`); err != nil {
+		t.Fatal(err)
+	}
+	resp := h.nextWifiResponse(t)
+	if resp["op"] != "status" || resp["ok"] != true {
+		t.Fatalf("status response = %v", resp)
+	}
+	cur, ok := resp["current"].(map[string]any)
+	if !ok || cur["ssid"] != "Home" {
+		t.Fatalf("current = %v", resp["current"])
+	}
+	if saved, ok := resp["saved"].([]any); !ok || len(saved) != 1 {
+		t.Fatalf("saved = %v", resp["saved"])
+	}
+}
+
+func TestWifiRequiresAuthentication(t *testing.T) {
+	h := newHarness(t)
+	// No begin_pair/begin_manage: the session is idle.
+	if err := h.writeWifi(t, `{"v":1,"op":"status"}`); err == nil {
+		t.Fatal("wifi command without an authenticated session should error")
+	}
+	resp := h.nextWifiResponse(t)
+	if resp["ok"] != false || resp["detail"] != "not authenticated" {
+		t.Fatalf("unauthenticated response = %v", resp)
+	}
+}
+
+func TestWifiManagerUnavailable(t *testing.T) {
+	var frames [][]byte
+	sess := newSession(sessionDeps{
+		Wifi:       nil,
+		NotifyWifi: func(f []byte) { frames = append(frames, append([]byte(nil), f...)) },
+		Identity:   deviceInfo{DeviceID: "sentyx-test", Provisioned: true},
+	})
+	sess.HandleControl([]byte(`{"op":"begin_manage"}`))
+	f, _ := chunk([]byte(`{"v":1,"op":"status"}`), 100)
+	for _, fr := range f {
+		sess.HandleWifiFrame(fr)
+	}
+	var r reassembler
+	var payload []byte
+	for _, fr := range frames {
+		if p, _ := r.push(fr); p != nil {
+			payload = p
+		}
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(payload, &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp["ok"] != false || resp["detail"] != "wifi management unavailable" {
+		t.Fatalf("nil-manager response = %v", resp)
+	}
+}
+
+func TestWifiConnectFailureDetail(t *testing.T) {
+	h := newHarness(t)
+	h.wifi.connectErr = errors.New("wrong password")
+	h.control(t, `{"op":"begin_manage"}`)
+	if err := h.writeWifi(t, `{"v":1,"op":"connect","ssid":"Home","psk":"x"}`); err != nil {
+		t.Fatal(err)
+	}
+	resp := h.nextWifiResponse(t)
+	if resp["op"] != "connect" || resp["ok"] != false || resp["detail"] != "wrong password" {
+		t.Fatalf("connect failure response = %v", resp)
+	}
+}
+
+func TestWifiCommandInFlightRejected(t *testing.T) {
+	h := newHarness(t)
+	h.wifi.block = make(chan struct{})
+	h.wifi.entered = make(chan struct{}, 4)
+	h.control(t, `{"op":"begin_manage"}`)
+
+	// The write returns immediately; the command runs in a goroutine.
+	if err := h.writeWifi(t, `{"v":1,"op":"status"}`); err != nil {
+		t.Fatal(err)
+	}
+	<-h.wifi.entered // first command is now running, wifiBusy is set
+
+	// A second command while the first is in flight must be rejected with an
+	// ok:false response (the write itself is accepted, so no Go error).
+	if err := h.writeWifi(t, `{"v":1,"op":"scan"}`); err != nil {
+		t.Fatal(err)
+	}
+	resp := h.nextWifiResponse(t)
+	if resp["ok"] != false || resp["detail"] != "another wifi command is in progress" {
+		t.Fatalf("in-flight rejection response = %v", resp)
+	}
+
+	// Release the first command: its response still arrives, after the write
+	// long since returned.
+	close(h.wifi.block)
+	resp = h.nextWifiResponse(t)
+	if resp["op"] != "status" || resp["ok"] != true {
+		t.Fatalf("blocked command response = %v", resp)
+	}
+
+	// Busy clears once the response is delivered, allowing the next command
+	// (the closed block channel no longer gates fakeWifi calls).
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		h.sess.mu.Lock()
+		busy := h.sess.wifiBusy
+		h.sess.mu.Unlock()
+		if !busy {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("wifiBusy never cleared after the response")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if err := h.writeWifi(t, `{"v":1,"op":"scan"}`); err != nil {
+		t.Fatal(err)
+	}
+	resp = h.nextWifiResponse(t)
+	if resp["op"] != "scan" || resp["ok"] != true {
+		t.Fatalf("post-busy command response = %v", resp)
+	}
+}
+
+func TestWifiResultReadReturnsFirstFrame(t *testing.T) {
+	h := newHarness(t)
+	h.control(t, `{"op":"begin_manage"}`)
+	if v := h.sess.WifiResultValue(); len(v) != 0 {
+		t.Fatalf("result read before any command = %q, want empty", v)
+	}
+	h.writeWifi(t, `{"v":1,"op":"status"}`)
+	h.nextWifiResponse(t) // command completes asynchronously
+	if v := h.sess.WifiResultValue(); len(v) == 0 {
+		t.Fatal("result read after a command should return the first frame")
 	}
 }
