@@ -13,6 +13,9 @@ test-video/
 /bin/
 *.exe
 
+# compiled agent binaries (rebuild: go build ./cmd/teslcam-agent)
+/build/
+
 # OS / editor
 .DS_Store
 
