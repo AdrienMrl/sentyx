@@ -18,9 +18,16 @@ import (
 const (
 	DefaultMinInputBytes = 8 << 20
 	DefaultTargetRatio   = 0.55
-	DefaultMinBitrate    = 1_200_000
-	DefaultMaxBitrate    = 2_500_000
+	DefaultMinBitrate    = 64_000
+	DefaultMaxBitrate    = 300_000
 	DefaultMinSavings    = 0.10
+	// DefaultFrameRate and DefaultMaxWidth define the "analysis-grade" profile:
+	// the upload is meant to be legible to the Gemini analyzer, not pleasant to
+	// a human, because LTE/BLE bandwidth in the car is the binding constraint.
+	// These, together with the bitrate bounds above, are the knobs to tune how
+	// aggressively clips are compressed.
+	DefaultFrameRate = 3   // frames per second (0 keeps the source rate)
+	DefaultMaxWidth  = 640 // downscale width, aspect preserved (0 keeps source)
 )
 
 // Config controls the upload transcode. Bitrates are bits per second and
@@ -34,10 +41,14 @@ type Config struct {
 	MinBitrate      int64
 	MaxBitrate      int64
 	MinSavingsRatio float64
+	FrameRate       int // decimate to this fps before encoding; 0 keeps source
+	MaxWidth        int // cap width (aspect preserved), never upscale; 0 keeps source
 }
 
-// DefaultConfig returns the TeslaCam upload policy. The caller chooses the
-// encoder so the Pi can use h264_v4l2m2m while development hosts can use an
+// DefaultConfig returns the TeslaCam upload policy: an aggressive,
+// analysis-grade transcode (low frame rate, downscaled, low bitrate) that
+// trades human viewing quality for minimal cellular data. The caller chooses
+// the encoder so the Pi can use hardware H.264 while development hosts use an
 // encoder available on that machine.
 func DefaultConfig(encoder string) Config {
 	return Config{
@@ -49,6 +60,8 @@ func DefaultConfig(encoder string) Config {
 		MinBitrate:      DefaultMinBitrate,
 		MaxBitrate:      DefaultMaxBitrate,
 		MinSavingsRatio: DefaultMinSavings,
+		FrameRate:       DefaultFrameRate,
+		MaxWidth:        DefaultMaxWidth,
 	}
 }
 
@@ -79,6 +92,9 @@ func New(cfg Config) (*Compressor, error) {
 	}
 	if cfg.MinSavingsRatio < 0 || cfg.MinSavingsRatio >= 1 {
 		return nil, fmt.Errorf("videocompress: MinSavingsRatio must be between 0 and 1")
+	}
+	if cfg.FrameRate < 0 || cfg.MaxWidth < 0 {
+		return nil, fmt.Errorf("videocompress: FrameRate and MaxWidth must be non-negative")
 	}
 	return &Compressor{cfg: cfg}, nil
 }
@@ -131,7 +147,12 @@ func (c *Compressor) Compress(ctx context.Context, inputPath string) (Result, er
 	target = max(target, c.cfg.MinBitrate)
 	target = min(target, c.cfg.MaxBitrate)
 	result.TargetBitrate = target
-	if float64(target) >= sourceBitrate*(1-c.cfg.MinSavingsRatio) {
+
+	filter := c.videoFilter()
+	// The bitrate short-circuit only holds when bitrate is the sole lever:
+	// decimating frames or downscaling shrinks the clip even when the source
+	// bitrate is already near target, so defer to the post-encode savings check.
+	if filter == "" && float64(target) >= sourceBitrate*(1-c.cfg.MinSavingsRatio) {
 		result.Reason = "source is already near target bitrate"
 		return result, nil
 	}
@@ -144,6 +165,11 @@ func (c *Compressor) Compress(ctx context.Context, inputPath string) (Result, er
 		"-y", "-hide_banner", "-loglevel", "error",
 		"-i", inputPath,
 		"-map", "0:v:0", "-an",
+	}
+	if filter != "" {
+		args = append(args, "-vf", filter)
+	}
+	args = append(args,
 		"-c:v", c.cfg.Encoder,
 		"-b:v", strconv.FormatInt(target, 10),
 		"-g", "60",
@@ -151,7 +177,7 @@ func (c *Compressor) Compress(ctx context.Context, inputPath string) (Result, er
 		"-movflags", "+faststart",
 		"-f", "mp4",
 		tempPath,
-	}
+	)
 	output, err := exec.CommandContext(ctx, c.cfg.FFmpegPath, args...).CombinedOutput()
 	if err != nil {
 		_ = os.Remove(tempPath)
@@ -189,6 +215,21 @@ func (c *Compressor) probe(ctx context.Context, path string) (probeOutput, error
 		return probeOutput{}, fmt.Errorf("videocompress: ffprobe output: %w", err)
 	}
 	return probe, nil
+}
+
+// videoFilter builds the -vf chain for frame-rate decimation and downscaling.
+// It returns "" when neither is configured, letting the caller drop -vf.
+func (c *Compressor) videoFilter() string {
+	var parts []string
+	if c.cfg.FrameRate > 0 {
+		parts = append(parts, "fps="+strconv.Itoa(c.cfg.FrameRate))
+	}
+	if c.cfg.MaxWidth > 0 {
+		// min(iw,...) never upscales a narrower source; -2 keeps the height
+		// even, which yuv420p requires.
+		parts = append(parts, "scale='min(iw,"+strconv.Itoa(c.cfg.MaxWidth)+")':-2")
+	}
+	return strings.Join(parts, ",")
 }
 
 func boundedMessage(b []byte) string {
