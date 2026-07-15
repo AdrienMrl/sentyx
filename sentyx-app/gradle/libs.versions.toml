@@ -1,0 +1,44 @@
+[versions]
+agp = "8.11.0"
+kotlin = "2.4.0"
+compose = "1.11.0"
+
+android-compileSdk = "36"
+android-minSdk = "24"
+android-targetSdk = "36"
+
+androidx-activityCompose = "1.10.1"
+# JetBrains multiplatform lifecycle (org.jetbrains.androidx.lifecycle), bundled with CMP 1.11.x
+lifecycle = "2.9.1"
+kotlinx-coroutines = "1.10.2"
+kotlinx-serialization = "1.9.0"
+ktor = "3.2.3"
+kable = "0.43.1"
+
+[libraries]
+# Android-only
+androidx-activity-compose = { module = "androidx.activity:activity-compose", version.ref = "androidx-activityCompose" }
+
+# Multiplatform lifecycle / ViewModel for Compose
+lifecycle-viewmodel-compose = { module = "org.jetbrains.androidx.lifecycle:lifecycle-viewmodel-compose", version.ref = "lifecycle" }
+lifecycle-runtime-compose = { module = "org.jetbrains.androidx.lifecycle:lifecycle-runtime-compose", version.ref = "lifecycle" }
+
+kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "kotlinx-coroutines" }
+kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinx-serialization" }
+
+# Ktor client (Sentyx backend + local Pi API)
+ktor-client-core = { module = "io.ktor:ktor-client-core", version.ref = "ktor" }
+ktor-client-content-negotiation = { module = "io.ktor:ktor-client-content-negotiation", version.ref = "ktor" }
+ktor-serialization-kotlinx-json = { module = "io.ktor:ktor-serialization-kotlinx-json", version.ref = "ktor" }
+ktor-client-okhttp = { module = "io.ktor:ktor-client-okhttp", version.ref = "ktor" }
+ktor-client-darwin = { module = "io.ktor:ktor-client-darwin", version.ref = "ktor" }
+
+# BLE (Kable) — pairing over GATT
+kable-core = { module = "com.juul.kable:kable-core", version.ref = "kable" }
+
+[plugins]
+androidApplication = { id = "com.android.application", version.ref = "agp" }
+kotlinMultiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }
+composeMultiplatform = { id = "org.jetbrains.compose", version.ref = "compose" }
+composeCompiler = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
+kotlinSerialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }

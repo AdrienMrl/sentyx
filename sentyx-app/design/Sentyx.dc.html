@@ -1,0 +1,1375 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#EFEDE8;font-family:'DM Sans',system-ui,sans-serif}
+a{color:#9A7B3C}a:hover{color:#7d6330}
+*{-webkit-tap-highlight-color:transparent}
+::-webkit-scrollbar{width:0;height:0}
+@keyframes sxPulse{0%,100%{opacity:1}50%{opacity:.3}}
+@keyframes sxSpin{to{transform:rotate(360deg)}}
+@keyframes sxShimmer{0%{background-position:-200px 0}100%{background-position:200px 0}}
+@keyframes sxToast{from{transform:translateY(-16px);opacity:0}to{transform:translateY(0);opacity:1}}
+</style>
+</helmet>
+<x-import component-from-global-scope="IOSDevice" from="./ios-frame.jsx" hint-size="402px,874px">
+<div style="height:100%;display:flex;flex-direction:column;background:#F4F0E9;color:#2B271F;font-family:'DM Sans',sans-serif;position:relative;overflow:hidden">
+
+<sc-if value="{{ toast }}" hint-placeholder-val="{{ false }}">
+<div onClick="{{ toast.tap }}" style="position:absolute;top:56px;left:12px;right:12px;z-index:200;background:#2B271F;color:#F4F0E9;border-radius:16px;padding:13px 15px;display:flex;gap:12px;align-items:center;box-shadow:0 12px 30px rgba(43,39,31,.35);animation:sxToast .25s ease;cursor:pointer">
+  <span style="width:9px;height:9px;border-radius:50%;background:{{ toast.dot }};flex:none;animation:sxPulse 1.6s infinite"></span>
+  <div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:700">{{ toast.title }}</div><div style="font-size:11.5px;color:#C9C2B4;margin-top:1px">{{ toast.sub }}</div></div>
+  <span style="font-size:11px;font-weight:700;color:#C9AE77">{{ toast.cta }}</span>
+</div>
+</sc-if>
+
+<div style="flex:1;overflow:auto;display:flex;flex-direction:column">
+
+<!-- ============ WELCOME ============ -->
+<sc-if value="{{ at.welcome }}" hint-placeholder-val="{{ true }}">
+<div style="flex:1;display:flex;flex-direction:column;padding:78px 26px 30px" data-screen-label="Welcome">
+  <div style="flex:1;display:flex;flex-direction:column;justify-content:center;gap:22px">
+    <div style="width:60px;height:60px;border-radius:17px;background:#2B271F;display:flex;align-items:center;justify-content:center">
+      <svg width="30" height="30" viewBox="0 0 30 30"><circle cx="15" cy="15" r="6" fill="none" stroke="#C9AE77" stroke-width="2.4"></circle><circle cx="15" cy="15" r="12" fill="none" stroke="#C9AE77" stroke-width="2.4" stroke-dasharray="4 5"></circle></svg>
+    </div>
+    <div>
+      <div style="font-size:13px;font-weight:700;letter-spacing:3px;color:#8A8271">SENTYX</div>
+      <div style="font-size:34px;font-weight:800;letter-spacing:-1px;line-height:1.05;margin-top:10px">Your car,<br>always watched.</div>
+      <div style="font-size:14px;line-height:1.55;color:#6E6656;margin-top:14px">Turn Sentry Mode into a live feed. Sentyx catches events as your Tesla records them, and explains what happened with on-device AI.</div>
+    </div>
+  </div>
+  <div style="display:flex;flex-direction:column;gap:11px">
+    <div onClick="{{ nav.create }}" style="background:#2B271F;color:#F4F0E9;text-align:center;padding:16px;border-radius:14px;font-size:15px;font-weight:700;cursor:pointer" style-hover="background:#463F31">Create account</div>
+    <div onClick="{{ nav.signin }}" style="background:transparent;border:1px solid #D8CEBB;color:#2B271F;text-align:center;padding:15px;border-radius:14px;font-size:15px;font-weight:700;cursor:pointer" style-hover="background:#EDE7DA">Sign in</div>
+    <div style="text-align:center;font-size:11px;color:#A69E8B;margin-top:6px;line-height:1.5">By continuing you accept the <span style="color:#9A7B3C;font-weight:600">Terms</span> & <span style="color:#9A7B3C;font-weight:600">Privacy Policy</span>.</div>
+  </div>
+</div>
+</sc-if>
+
+<!-- ============ SIGN IN ============ -->
+<sc-if value="{{ at.signin }}" hint-placeholder-val="{{ false }}">
+<div style="flex:1;display:flex;flex-direction:column;padding:70px 26px 30px" data-screen-label="Sign in">
+  <div onClick="{{ nav.back }}" style="font-size:22px;color:#8A8271;cursor:pointer;width:30px">‹</div>
+  <div style="font-size:28px;font-weight:800;letter-spacing:-.5px;margin-top:14px">Welcome back</div>
+  <div style="display:flex;flex-direction:column;gap:12px;margin-top:22px">
+    <div style="display:flex;flex-direction:column;gap:6px"><span style="font-size:12px;font-weight:700;color:#8A8271">Email</span><div style="background:#FBF8F2;border:1px solid #E7E0D2;border-radius:12px;padding:13px 14px;font-size:14px;color:#4A4436">alex@example.com</div></div>
+    <div style="display:flex;flex-direction:column;gap:6px"><span style="font-size:12px;font-weight:700;color:#8A8271">Password</span><div style="background:#FBF8F2;border:1px solid #E7E0D2;border-radius:12px;padding:13px 14px;font-size:14px;color:#4A4436;letter-spacing:3px">••••••••</div></div>
+    <div onClick="{{ nav.reset }}" style="align-self:flex-end;font-size:12.5px;font-weight:600;color:#9A7B3C;cursor:pointer">Forgot password?</div>
+  </div>
+  <div style="flex:1"></div>
+  <div onClick="{{ afterAuth }}" style="background:#2B271F;color:#F4F0E9;text-align:center;padding:16px;border-radius:14px;font-size:15px;font-weight:700;cursor:pointer" style-hover="background:#463F31">Sign in</div>
+</div>
+</sc-if>
+
+<!-- ============ CREATE ============ -->
+<sc-if value="{{ at.create }}" hint-placeholder-val="{{ false }}">
+<div style="flex:1;display:flex;flex-direction:column;padding:70px 26px 30px" data-screen-label="Create account">
+  <div onClick="{{ nav.back }}" style="font-size:22px;color:#8A8271;cursor:pointer;width:30px">‹</div>
+  <div style="font-size:28px;font-weight:800;letter-spacing:-.5px;margin-top:14px">Create your account</div>
+  <div style="display:flex;flex-direction:column;gap:12px;margin-top:22px">
+    <div style="display:flex;flex-direction:column;gap:6px"><span style="font-size:12px;font-weight:700;color:#8A8271">Name</span><div style="background:#FBF8F2;border:1px solid #E7E0D2;border-radius:12px;padding:13px 14px;font-size:14px;color:#4A4436">Alex Rivera</div></div>
+    <div style="display:flex;flex-direction:column;gap:6px"><span style="font-size:12px;font-weight:700;color:#8A8271">Email</span><div style="background:#FBF8F2;border:1px solid #E7E0D2;border-radius:12px;padding:13px 14px;font-size:14px;color:#4A4436">alex@example.com</div></div>
+    <div style="display:flex;flex-direction:column;gap:6px"><span style="font-size:12px;font-weight:700;color:#8A8271">Password</span><div style="background:#FBF8F2;border:1px solid #E7E0D2;border-radius:12px;padding:13px 14px;font-size:14px;color:#4A4436;letter-spacing:3px">••••••••</div></div>
+  </div>
+  <div style="flex:1"></div>
+  <div onClick="{{ nav.verify }}" style="background:#2B271F;color:#F4F0E9;text-align:center;padding:16px;border-radius:14px;font-size:15px;font-weight:700;cursor:pointer" style-hover="background:#463F31">Continue</div>
+</div>
+</sc-if>
+
+<!-- ============ VERIFY ============ -->
+<sc-if value="{{ at.verify }}" hint-placeholder-val="{{ false }}">
+<div style="flex:1;display:flex;flex-direction:column;padding:70px 26px 30px;align-items:center;text-align:center" data-screen-label="Verify email">
+  <div style="align-self:flex-start" onClick="{{ nav.back }}"><span style="font-size:22px;color:#8A8271;cursor:pointer">‹</span></div>
+  <div style="flex:1;display:flex;flex-direction:column;justify-content:center;gap:16px;align-items:center">
+    <div style="width:56px;height:56px;border-radius:16px;background:#FBF8F2;border:1px solid #E7E0D2;display:flex;align-items:center;justify-content:center;font-size:24px">✉</div>
+    <div style="font-size:24px;font-weight:800;letter-spacing:-.4px">Verify your email</div>
+    <div style="font-size:14px;color:#6E6656;line-height:1.55;max-width:280px">We sent a 6-digit code to <b style="color:#2B271F">alex@example.com</b>. Enter it to confirm your account.</div>
+    <div style="display:flex;gap:8px;margin-top:6px">
+      <sc-for list="{{ codeCells }}" as="c" hint-placeholder-count="6"><div style="width:38px;height:48px;border-radius:11px;background:#FBF8F2;border:1px solid {{ c.b }};display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:700;font-family:'IBM Plex Mono',monospace">{{ c.v }}</div></sc-for>
+    </div>
+    <div style="font-size:12.5px;color:#A69E8B">Didn't get it? <span style="color:#9A7B3C;font-weight:600">Resend</span></div>
+  </div>
+  <div onClick="{{ nav.pairIntro }}" style="width:100%;background:#2B271F;color:#F4F0E9;text-align:center;padding:16px;border-radius:14px;font-size:15px;font-weight:700;cursor:pointer;box-sizing:border-box" style-hover="background:#463F31">Verify & continue</div>
+</div>
+</sc-if>
+
+<!-- ============ RESET ============ -->
+<sc-if value="{{ at.reset }}" hint-placeholder-val="{{ false }}">
+<div style="flex:1;display:flex;flex-direction:column;padding:70px 26px 30px" data-screen-label="Reset password">
+  <div onClick="{{ nav.back }}" style="font-size:22px;color:#8A8271;cursor:pointer;width:30px">‹</div>
+  <div style="font-size:28px;font-weight:800;letter-spacing:-.5px;margin-top:14px">Reset password</div>
+  <div style="font-size:14px;color:#6E6656;line-height:1.55;margin-top:10px">Enter your email and we'll send a reset link.</div>
+  <div style="display:flex;flex-direction:column;gap:6px;margin-top:20px"><span style="font-size:12px;font-weight:700;color:#8A8271">Email</span><div style="background:#FBF8F2;border:1px solid #E7E0D2;border-radius:12px;padding:13px 14px;font-size:14px;color:#4A4436">alex@example.com</div></div>
+  <div style="flex:1"></div>
+  <div onClick="{{ resetSent }}" style="background:#2B271F;color:#F4F0E9;text-align:center;padding:16px;border-radius:14px;font-size:15px;font-weight:700;cursor:pointer" style-hover="background:#463F31">Send reset link</div>
+</div>
+</sc-if>
+
+<!-- ============ PAIR INTRO ============ -->
+<sc-if value="{{ at.pairIntro }}" hint-placeholder-val="{{ false }}">
+<div style="flex:1;display:flex;flex-direction:column;padding:70px 26px 30px" data-screen-label="Pairing intro">
+  <div onClick="{{ nav.back }}" style="font-size:22px;color:#8A8271;cursor:pointer;width:30px">‹</div>
+  <div style="font-size:28px;font-weight:800;letter-spacing:-.5px;margin-top:14px">Let's pair your Sentyx Pi</div>
+  <div style="font-size:14px;color:#6E6656;line-height:1.55;margin-top:10px">A few things you'll need before we start:</div>
+  <div style="display:flex;flex-direction:column;gap:12px;margin-top:20px">
+    <sc-for list="{{ hardware }}" as="h" hint-placeholder-count="3">
+      <div style="display:flex;gap:13px;align-items:flex-start;background:#FBF8F2;border:1px solid #E7E0D2;border-radius:14px;padding:14px">
+        <div style="width:34px;height:34px;border-radius:10px;background:#EDE7DA;display:flex;align-items:center;justify-content:center;font-size:16px;flex:none">{{ h.icon }}</div>
+        <div><div style="font-size:14px;font-weight:700">{{ h.t }}</div><div style="font-size:12px;color:#8A8271;margin-top:2px;line-height:1.45">{{ h.s }}</div></div>
+      </div>
+    </sc-for>
+  </div>
+  <div style="flex:1"></div>
+  <div onClick="{{ nav.perms }}" style="background:#2B271F;color:#F4F0E9;text-align:center;padding:16px;border-radius:14px;font-size:15px;font-weight:700;cursor:pointer" style-hover="background:#463F31">Start pairing</div>
+</div>
+</sc-if>
+
+<!-- ============ PERMISSIONS ============ -->
+<sc-if value="{{ at.perms }}" hint-placeholder-val="{{ false }}">
+<div style="flex:1;display:flex;flex-direction:column;padding:70px 26px 30px" data-screen-label="Permissions">
+  <div onClick="{{ nav.back }}" style="font-size:22px;color:#8A8271;cursor:pointer;width:30px">‹</div>
+  <div style="font-size:28px;font-weight:800;letter-spacing:-.5px;margin-top:14px">Permissions</div>
+  <div style="font-size:14px;color:#6E6656;line-height:1.55;margin-top:10px">Sentyx needs these to find and talk to your Pi.</div>
+  <div style="display:flex;flex-direction:column;gap:11px;margin-top:20px">
+    <sc-for list="{{ permRows }}" as="p" hint-placeholder-count="3">
+      <div onClick="{{ p.toggle }}" style="display:flex;gap:13px;align-items:center;background:#FBF8F2;border:1px solid {{ p.border }};border-radius:14px;padding:14px;cursor:pointer">
+        <div style="width:34px;height:34px;border-radius:10px;background:#EDE7DA;display:flex;align-items:center;justify-content:center;font-size:16px;flex:none">{{ p.icon }}</div>
+        <div style="flex:1"><div style="font-size:14px;font-weight:700">{{ p.t }}</div><div style="font-size:12px;color:#8A8271;margin-top:2px;line-height:1.4">{{ p.s }}</div></div>
+        <span style="font-size:12px;font-weight:700;color:{{ p.stColor }}">{{ p.stLabel }}</span>
+      </div>
+    </sc-for>
+  </div>
+  <div style="font-size:11.5px;color:#A69E8B;line-height:1.5;margin-top:14px">Denied a permission? You can enable it later in <b style="color:#8A8271">Settings → App permissions</b>.</div>
+  <div style="flex:1"></div>
+  <div onClick="{{ nav.scan }}" style="background:#2B271F;color:#F4F0E9;text-align:center;padding:16px;border-radius:14px;font-size:15px;font-weight:700;cursor:pointer" style-hover="background:#463F31">Continue</div>
+</div>
+</sc-if>
+
+<!-- ============ SCAN ============ -->
+<sc-if value="{{ at.scan }}" hint-placeholder-val="{{ false }}">
+<div style="flex:1;display:flex;flex-direction:column;padding:70px 26px 30px" data-screen-label="Scan for devices">
+  <div onClick="{{ nav.back }}" style="font-size:22px;color:#8A8271;cursor:pointer;width:30px">‹</div>
+  <div style="font-size:28px;font-weight:800;letter-spacing:-.5px;margin-top:14px">Nearby devices</div>
+  <div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap">
+    <sc-for list="{{ scanStates }}" as="s" hint-placeholder-count="4"><div onClick="{{ s.pick }}" style="font-size:11.5px;font-weight:700;padding:6px 11px;border-radius:999px;cursor:pointer;background:{{ s.bg }};color:{{ s.fg }}">{{ s.label }}</div></sc-for>
+  </div>
+  <div style="flex:1;display:flex;flex-direction:column;justify-content:center;gap:16px;margin-top:10px">
+    <sc-if value="{{ scan.scanning }}" hint-placeholder-val="{{ true }}">
+      <div style="display:flex;flex-direction:column;align-items:center;gap:18px;color:#8A8271">
+        <div style="width:56px;height:56px;border-radius:50%;border:3px solid #E7E0D2;border-top-color:#9A7B3C;animation:sxSpin 1s linear infinite"></div>
+        <div style="font-size:14px;font-weight:600">Scanning for Sentyx devices…</div>
+      </div>
+    </sc-if>
+    <sc-if value="{{ scan.list }}" hint-placeholder-val="{{ false }}">
+      <div style="display:flex;flex-direction:column;gap:11px">
+        <sc-for list="{{ foundDevices }}" as="d" hint-placeholder-count="1">
+          <div onClick="{{ nav.code }}" style="display:flex;gap:13px;align-items:center;background:#FBF8F2;border:1px solid #E7E0D2;border-radius:14px;padding:14px;cursor:pointer" style-hover="border-color:#D8CEBB">
+            <div style="width:38px;height:38px;border-radius:11px;background:#2B271F;display:flex;align-items:center;justify-content:center;flex:none"><svg width="18" height="18" viewBox="0 0 18 18"><circle cx="9" cy="9" r="3.5" fill="none" stroke="#C9AE77" stroke-width="1.8"></circle><circle cx="9" cy="9" r="7" fill="none" stroke="#C9AE77" stroke-width="1.8" stroke-dasharray="3 3"></circle></svg></div>
+            <div style="flex:1"><div style="font-size:14px;font-weight:700">{{ d.name }}</div><div style="font-size:12px;color:#8A8271;margin-top:2px">{{ d.sub }}</div></div>
+            <span style="font-size:18px;color:#C4BBA8">›</span>
+          </div>
+        </sc-for>
+      </div>
+    </sc-if>
+    <sc-if value="{{ scan.none }}" hint-placeholder-val="{{ false }}">
+      <div style="display:flex;flex-direction:column;align-items:center;gap:14px;text-align:center;color:#8A8271">
+        <div style="width:56px;height:56px;border-radius:16px;background:#FBF8F2;border:1px solid #E7E0D2;display:flex;align-items:center;justify-content:center;font-size:24px">🔍</div>
+        <div style="font-size:15px;font-weight:700;color:#2B271F">No devices found</div>
+        <div style="font-size:13px;line-height:1.5;max-width:260px">Make sure the Pi is powered and within range. Bluetooth must be on.</div>
+      </div>
+    </sc-if>
+  </div>
+  <div onClick="{{ nav.scan }}" style="background:transparent;border:1px solid #D8CEBB;color:#2B271F;text-align:center;padding:14px;border-radius:14px;font-size:14px;font-weight:700;cursor:pointer" style-hover="background:#EDE7DA">Scan again</div>
+</div>
+</sc-if>
+
+<!-- ============ CODE ============ -->
+<sc-if value="{{ at.code }}" hint-placeholder-val="{{ false }}">
+<div style="flex:1;display:flex;flex-direction:column;padding:70px 26px 30px;align-items:center;text-align:center" data-screen-label="Pairing code">
+  <div style="align-self:flex-start" onClick="{{ nav.back }}"><span style="font-size:22px;color:#8A8271;cursor:pointer">‹</span></div>
+  <div style="flex:1;display:flex;flex-direction:column;justify-content:center;gap:18px;align-items:center">
+    <div style="font-size:24px;font-weight:800;letter-spacing:-.4px">Confirm the code</div>
+    <div style="font-size:14px;color:#6E6656;line-height:1.55;max-width:280px">This code appears on the Pi's status LED display. Confirm it matches to pair securely.</div>
+    <div style="display:flex;gap:10px">
+      <sc-for list="{{ pairCode }}" as="d" hint-placeholder-count="4"><div style="width:52px;height:64px;border-radius:14px;background:#2B271F;color:#C9AE77;display:flex;align-items:center;justify-content:center;font-size:30px;font-weight:700;font-family:'IBM Plex Mono',monospace">{{ d }}</div></sc-for>
+    </div>
+    <div style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:#8A8271"><span style="width:7px;height:7px;border-radius:50%;background:#2F7C4A;animation:sxPulse 1.6s infinite"></span>Encrypted handshake in progress</div>
+  </div>
+  <div style="width:100%;display:flex;flex-direction:column;gap:10px">
+    <div onClick="{{ nav.nameDev }}" style="background:#2B271F;color:#F4F0E9;text-align:center;padding:16px;border-radius:14px;font-size:15px;font-weight:700;cursor:pointer;box-sizing:border-box" style-hover="background:#463F31">Codes match — pair</div>
+    <div onClick="{{ nav.scan }}" style="font-size:13px;font-weight:600;color:#8A8271;cursor:pointer">Codes don't match</div>
+  </div>
+</div>
+</sc-if>
+
+<!-- ============ NAME DEVICE + VEHICLE ============ -->
+<sc-if value="{{ at.nameDev }}" hint-placeholder-val="{{ false }}">
+<div style="flex:1;display:flex;flex-direction:column;padding:70px 26px 30px" data-screen-label="Name device">
+  <div onClick="{{ nav.back }}" style="font-size:22px;color:#8A8271;cursor:pointer;width:30px">‹</div>
+  <div style="font-size:28px;font-weight:800;letter-spacing:-.5px;margin-top:14px">Name your setup</div>
+  <div style="display:flex;flex-direction:column;gap:14px;margin-top:20px">
+    <div style="display:flex;flex-direction:column;gap:6px"><span style="font-size:12px;font-weight:700;color:#8A8271">Device name</span><div style="background:#FBF8F2;border:1px solid #E7E0D2;border-radius:12px;padding:13px 14px;font-size:14px;font-weight:600">Garage Pi</div></div>
+    <div style="display:flex;flex-direction:column;gap:6px"><span style="font-size:12px;font-weight:700;color:#8A8271">Vehicle model</span><div style="background:#FBF8F2;border:1px solid #E7E0D2;border-radius:12px;padding:13px 14px;font-size:14px;font-weight:600;display:flex;justify-content:space-between">Model 3 <span style="color:#C4BBA8">›</span></div></div>
+    <div style="display:flex;flex-direction:column;gap:6px"><span style="font-size:12px;font-weight:700;color:#8A8271">Vehicle nickname <span style="font-weight:500;color:#A69E8B">(optional)</span></span><div style="background:#FBF8F2;border:1px solid #E7E0D2;border-radius:12px;padding:13px 14px;font-size:14px;color:#4A4436">Daily driver</div></div>
+    <div style="display:flex;flex-direction:column;gap:6px"><span style="font-size:12px;font-weight:700;color:#8A8271">Timezone</span><div style="background:#FBF8F2;border:1px solid #E7E0D2;border-radius:12px;padding:13px 14px;font-size:14px;font-weight:600;display:flex;justify-content:space-between">Pacific · GMT-7 <span style="color:#C4BBA8">›</span></div></div>
+  </div>
+  <div style="flex:1"></div>
+  <div onClick="{{ nav.wifi }}" style="background:#2B271F;color:#F4F0E9;text-align:center;padding:16px;border-radius:14px;font-size:15px;font-weight:700;cursor:pointer" style-hover="background:#463F31">Continue</div>
+</div>
+</sc-if>
+
+<!-- ============ WIFI ============ -->
+<sc-if value="{{ at.wifi }}" hint-placeholder-val="{{ false }}">
+<div style="flex:1;display:flex;flex-direction:column;padding:70px 26px 30px" data-screen-label="Wi-Fi setup">
+  <div onClick="{{ nav.back }}" style="font-size:22px;color:#8A8271;cursor:pointer;width:30px">‹</div>
+  <div style="font-size:28px;font-weight:800;letter-spacing:-.5px;margin-top:14px">Connect to Wi-Fi</div>
+  <div style="font-size:14px;color:#6E6656;line-height:1.5;margin-top:10px">Wi-Fi lets Sentyx upload clips and reach the backend when you're away.</div>
+  <div style="display:flex;flex-direction:column;gap:9px;margin-top:20px">
+    <sc-for list="{{ wifiNets }}" as="w" hint-placeholder-count="3">
+      <div onClick="{{ w.pick }}" style="display:flex;gap:12px;align-items:center;background:#FBF8F2;border:1px solid {{ w.border }};border-radius:13px;padding:13px 14px;cursor:pointer">
+        <span style="font-size:15px">📶</span>
+        <div style="flex:1"><div style="font-size:14px;font-weight:700">{{ w.name }}</div><div style="font-size:11.5px;color:#8A8271">{{ w.sub }}</div></div>
+        <sc-if value="{{ w.selected }}" hint-placeholder-val="{{ false }}"><span style="color:#2F7C4A;font-weight:700">✓</span></sc-if>
+      </div>
+    </sc-for>
+  </div>
+  <sc-if value="{{ wifiPass }}" hint-placeholder-val="{{ false }}">
+    <div style="margin-top:14px;display:flex;flex-direction:column;gap:6px"><span style="font-size:12px;font-weight:700;color:#8A8271">Password for Garage 5G</span><div style="background:#FBF8F2;border:1px solid #E7E0D2;border-radius:12px;padding:13px 14px;font-size:14px;letter-spacing:3px;color:#4A4436">••••••••••</div></div>
+  </sc-if>
+  <div style="flex:1"></div>
+  <div style="display:flex;flex-direction:column;gap:10px">
+    <div onClick="{{ nav.test }}" style="background:#2B271F;color:#F4F0E9;text-align:center;padding:16px;border-radius:14px;font-size:15px;font-weight:700;cursor:pointer" style-hover="background:#463F31">Connect</div>
+    <div onClick="{{ nav.test }}" style="font-size:13px;font-weight:600;color:#8A8271;cursor:pointer;text-align:center">Skip — use Bluetooth only</div>
+  </div>
+</div>
+</sc-if>
+
+<!-- ============ TEST ============ -->
+<sc-if value="{{ at.test }}" hint-placeholder-val="{{ false }}">
+<div style="flex:1;display:flex;flex-direction:column;padding:70px 26px 30px" data-screen-label="Connection test">
+  <div style="font-size:28px;font-weight:800;letter-spacing:-.5px">Testing connection</div>
+  <div style="display:flex;flex-direction:column;gap:12px;margin-top:24px">
+    <sc-for list="{{ testRows }}" as="t" hint-placeholder-count="4">
+      <div style="display:flex;gap:13px;align-items:center;background:#FBF8F2;border:1px solid #E7E0D2;border-radius:14px;padding:15px">
+        <div style="width:26px;height:26px;flex:none;display:flex;align-items:center;justify-content:center">
+          <sc-if value="{{ t.ok }}" hint-placeholder-val="{{ true }}"><span style="width:24px;height:24px;border-radius:50%;background:#2F7C4A;color:#fff;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700">✓</span></sc-if>
+        </div>
+        <div style="flex:1"><div style="font-size:14px;font-weight:700">{{ t.t }}</div><div style="font-size:12px;color:#8A8271;margin-top:1px">{{ t.s }}</div></div>
+      </div>
+    </sc-for>
+  </div>
+  <div style="flex:1"></div>
+  <div onClick="{{ nav.firmware }}" style="background:#2B271F;color:#F4F0E9;text-align:center;padding:16px;border-radius:14px;font-size:15px;font-weight:700;cursor:pointer" style-hover="background:#463F31">Continue</div>
+</div>
+</sc-if>
+
+<!-- ============ FIRMWARE (onboarding) ============ -->
+<sc-if value="{{ at.firmware }}" hint-placeholder-val="{{ false }}">
+<div style="flex:1;display:flex;flex-direction:column;padding:70px 26px 30px" data-screen-label="Firmware check">
+  <div style="font-size:28px;font-weight:800;letter-spacing:-.5px">Firmware</div>
+  <div style="flex:1;display:flex;flex-direction:column;justify-content:center;gap:16px;align-items:center;text-align:center">
+    <div style="width:56px;height:56px;border-radius:16px;background:#FBF8F2;border:1px solid #E7E0D2;display:flex;align-items:center;justify-content:center;font-size:24px">⬆</div>
+    <div style="font-size:20px;font-weight:800">Update available</div>
+    <div style="font-size:13.5px;color:#6E6656;line-height:1.55;max-width:280px">Garage Pi is on <b style="color:#2B271F">v3.8.1</b>. Version <b style="color:#2B271F">v4.0.2</b> improves event detection and is required to continue.</div>
+    <div style="background:#FBF8F2;border:1px solid #E7E0D2;border-radius:12px;padding:11px 14px;font-size:12px;color:#8A8271;font-family:'IBM Plex Mono',monospace">~2 min · device restarts once</div>
+  </div>
+  <div onClick="{{ nav.done }}" style="background:#2B271F;color:#F4F0E9;text-align:center;padding:16px;border-radius:14px;font-size:15px;font-weight:700;cursor:pointer" style-hover="background:#463F31">Update & finish</div>
+</div>
+</sc-if>
+
+<!-- ============ DONE ============ -->
+<sc-if value="{{ at.done }}" hint-placeholder-val="{{ false }}">
+<div style="flex:1;display:flex;flex-direction:column;padding:70px 26px 30px;align-items:center;text-align:center" data-screen-label="Pairing complete">
+  <div style="flex:1;display:flex;flex-direction:column;justify-content:center;gap:18px;align-items:center">
+    <div style="width:74px;height:74px;border-radius:50%;background:#2F7C4A;color:#fff;display:flex;align-items:center;justify-content:center;font-size:36px">✓</div>
+    <div style="font-size:26px;font-weight:800;letter-spacing:-.5px">Garage Pi is live</div>
+    <div style="font-size:14px;color:#6E6656;line-height:1.55;max-width:280px">Your Model 3 is now monitored. New Sentry events will appear here with AI summaries.</div>
+  </div>
+  <div onClick="{{ enterApp }}" style="width:100%;background:#2B271F;color:#F4F0E9;text-align:center;padding:16px;border-radius:14px;font-size:15px;font-weight:700;cursor:pointer;box-sizing:border-box" style-hover="background:#463F31">Go to events</div>
+</div>
+</sc-if>
+
+<!-- ============ EVENTS FEED ============ -->
+<sc-if value="{{ at.events }}" hint-placeholder-val="{{ false }}">
+<div style="display:flex;flex-direction:column;padding:56px 0 96px" data-screen-label="Events feed">
+  <div style="padding:8px 22px 0;display:flex;flex-direction:column;gap:15px">
+    <div style="display:flex;align-items:center;justify-content:space-between">
+      <div style="font-size:13px;font-weight:700;letter-spacing:3px;color:#8A8271">SENTYX</div>
+      <div style="display:flex;gap:10px;align-items:center">
+        <div onClick="{{ toggleSelect }}" style="font-size:12.5px;font-weight:700;color:#9A7B3C;cursor:pointer">{{ selectLabel }}</div>
+        <div onClick="{{ toggleSearch }}" style="width:32px;height:32px;border-radius:50%;background:#FBF8F2;border:1px solid #E7E0D2;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:14px">🔍</div>
+      </div>
+    </div>
+    <!-- car tile -->
+    <div onClick="{{ tabs.device }}" style="background:#FBF8F2;border:1px solid #E7E0D2;border-radius:20px;padding:16px;display:flex;flex-direction:column;gap:15px;cursor:pointer">
+      <div style="display:flex;align-items:center;gap:14px">
+        <div style="width:110px;height:64px;flex:none;border-radius:12px;background:repeating-linear-gradient(45deg,#EDE7DA 0 7px,#F3EEE3 7px 14px);position:relative;display:flex;align-items:center;justify-content:center;overflow:hidden">
+          <svg width="70" height="28" viewBox="0 0 72 30"><path d="M4 22 Q7 12 22 10 L46 8 Q60 9 66 20 L67 22" fill="none" stroke="#8A8271" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"></path><circle cx="20" cy="23" r="5" fill="none" stroke="#8A8271" stroke-width="2"></circle><circle cx="52" cy="23" r="5" fill="none" stroke="#8A8271" stroke-width="2"></circle></svg>
+          <span style="position:absolute;bottom:5px;left:7px;font:500 6.5px 'IBM Plex Mono',monospace;color:#B0A892">CAR RENDER</span>
+        </div>
+        <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:4px">
+          <div style="font-size:16.5px;font-weight:800;letter-spacing:-.3px">{{ dev.name }}</div>
+          <div style="font-size:12px;color:#8A8271">Parked · {{ dev.location }}</div>
+          <div style="align-self:flex-start;margin-top:3px;display:flex;align-items:center;gap:6px;background:{{ dev.chipBg }};border-radius:999px;padding:4px 10px">
+            <span style="width:7px;height:7px;border-radius:50%;background:{{ dev.dot }};animation:sxPulse 2.4s infinite"></span>
+            <span style="font-size:11px;font-weight:700;color:{{ dev.chipFg }}">{{ dev.chipText }}</span>
+          </div>
+        </div>
+      </div>
+      <div style="display:flex;border-top:1px solid #EDE7DA;padding-top:13px">
+        <div style="flex:1;display:flex;flex-direction:column;gap:3px"><span style="font-size:10px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;color:#A69E8B">Sentry</span><span style="font-size:13px;font-weight:700">{{ dev.sentry }}</span></div>
+        <div style="flex:1;display:flex;flex-direction:column;gap:3px;border-left:1px solid #EDE7DA;padding-left:14px"><span style="font-size:10px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;color:#A69E8B">Storage</span><span style="font-size:13px;font-weight:700">{{ dev.storage }}% free</span></div>
+        <div style="flex:1;display:flex;flex-direction:column;gap:3px;border-left:1px solid #EDE7DA;padding-left:14px"><span style="font-size:10px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;color:#A69E8B">Today</span><span style="font-size:13px;font-weight:700">{{ eventCount }} events</span></div>
+      </div>
+    </div>
+    <sc-if value="{{ searchOpen }}" hint-placeholder-val="{{ false }}">
+      <div style="display:flex;align-items:center;gap:10px;background:#FBF8F2;border:1px solid #D8CEBB;border-radius:12px;padding:11px 13px"><span style="font-size:14px">🔍</span><span style="font-size:13.5px;color:#8A8271">Search descriptions & locations…</span></div>
+    </sc-if>
+    <!-- filter chips -->
+    <div style="display:flex;gap:8px;overflow:auto;padding-bottom:2px">
+      <sc-for list="{{ filterChips }}" as="f" hint-placeholder-count="5"><div onClick="{{ f.pick }}" style="flex:none;font-size:12px;font-weight:700;padding:7px 13px;border-radius:999px;cursor:pointer;background:{{ f.bg }};color:{{ f.fg }};border:1px solid {{ f.bd }}">{{ f.label }}</div></sc-for>
+    </div>
+  </div>
+
+  <sc-if value="{{ feed.normal }}" hint-placeholder-val="{{ true }}">
+  <div style="margin-top:8px">
+    <sc-for list="{{ groups }}" as="g" hint-placeholder-count="2">
+      <div style="padding:16px 22px 6px;font-size:12px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:#A69E8B">{{ g.label }}</div>
+      <div style="padding:0 22px 0 26px;display:flex;flex-direction:column">
+        <sc-for list="{{ g.items }}" as="ev" hint-placeholder-count="3">
+          <div style="display:flex;gap:14px">
+            <div style="width:14px;flex:none;display:flex;flex-direction:column;align-items:center">
+              <div style="width:13px;height:13px;border-radius:50%;background:{{ ev.node }};border:3px solid #F4F0E9;margin-top:20px;flex:none;box-shadow:0 0 0 1px #E0D8C8"></div>
+              <div style="width:2px;flex:1;background:#E0D8C8"></div>
+            </div>
+            <div onClick="{{ ev.tap }}" style="flex:1;min-width:0;background:#FBF8F2;border:1px solid {{ ev.cardBd }};border-radius:16px;padding:14px;margin-bottom:14px;display:flex;gap:12px;cursor:pointer;position:relative" style-hover="border-color:#D8CEBB;box-shadow:0 4px 14px rgba(43,39,31,.08)">
+              <sc-if value="{{ selectMode }}" hint-placeholder-val="{{ false }}"><div style="width:22px;height:22px;border-radius:50%;border:2px solid {{ ev.checkBd }};background:{{ ev.checkBg }};flex:none;display:flex;align-items:center;justify-content:center;color:#fff;font-size:12px;font-weight:700">{{ ev.check }}</div></sc-if>
+              <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:7px">
+                <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+                  <sc-if value="{{ ev.hasSev }}" hint-placeholder-val="{{ true }}"><span style="background:{{ ev.badgeBg }};color:{{ ev.badgeFg }};font-size:10.5px;font-weight:700;letter-spacing:.4px;padding:3px 9px;border-radius:999px">{{ ev.sevCap }}</span></sc-if>
+                  <span style="font-size:11.5px;font-weight:600;color:#8A8271">{{ ev.time }} · {{ ev.cam }}</span>
+                  <sc-if value="{{ ev.fav }}" hint-placeholder-val="{{ false }}"><span style="color:#C08A3E;font-size:12px">★</span></sc-if>
+                </div>
+                <div style="font-size:15px;font-weight:800;line-height:1.28;letter-spacing:-.2px;color:{{ ev.titleColor }}">{{ ev.title }}</div>
+                <div style="font-size:12px;color:#6E6656">{{ ev.loc }}</div>
+                <sc-if value="{{ ev.done }}" hint-placeholder-val="{{ true }}"><div style="font-size:12.5px;color:#4A4436;line-height:1.5">{{ ev.aiShort }}</div></sc-if>
+                <sc-if value="{{ ev.pending }}" hint-placeholder-val="{{ false }}"><div style="align-self:flex-start;display:flex;align-items:center;gap:7px;background:{{ ev.stBg }};border-radius:999px;padding:5px 10px"><span style="width:6px;height:6px;border-radius:50%;background:{{ ev.stColor }};{{ ev.stAnim }}"></span><span style="font-size:11px;font-weight:700;color:{{ ev.stColor }}">{{ ev.stLabel }}</span></div></sc-if>
+              </div>
+              <sc-if value="{{ ev.hasThumb }}" hint-placeholder-val="{{ true }}"><div style="width:66px;height:88px;flex:none;border-radius:12px;background:repeating-linear-gradient(45deg,#E3DCCD 0 6px,#EBE5D8 6px 12px);display:flex;align-items:flex-end;justify-content:center;padding-bottom:6px;box-sizing:border-box"><span style="font:500 7px 'IBM Plex Mono',monospace;color:#B0A892">{{ ev.dur }}</span></div></sc-if>
+            </div>
+          </div>
+        </sc-for>
+      </div>
+    </sc-for>
+    <div onClick="{{ loadMore }}" style="margin:6px 22px 0;text-align:center;padding:13px;border:1px solid #E7E0D2;border-radius:13px;font-size:13px;font-weight:700;color:#8A8271;cursor:pointer" style-hover="background:#EDE7DA">Load earlier events</div>
+  </div>
+  </sc-if>
+
+  <sc-if value="{{ feed.loading }}" hint-placeholder-val="{{ false }}"><div style="padding:60px 22px;display:flex;flex-direction:column;align-items:center;gap:16px;color:#8A8271"><div style="width:44px;height:44px;border-radius:50%;border:3px solid #E7E0D2;border-top-color:#9A7B3C;animation:sxSpin 1s linear infinite"></div><span style="font-size:13px;font-weight:600">Loading events…</span></div></sc-if>
+  <sc-if value="{{ feed.empty }}" hint-placeholder-val="{{ false }}"><div style="padding:70px 30px;display:flex;flex-direction:column;align-items:center;gap:14px;text-align:center;color:#8A8271"><div style="font-size:38px">🌿</div><div style="font-size:16px;font-weight:800;color:#2B271F">All quiet</div><div style="font-size:13px;line-height:1.5">No events today. Sentyx is watching and will alert you if anything happens.</div></div></sc-if>
+  <sc-if value="{{ feed.offline }}" hint-placeholder-val="{{ false }}"><div style="padding:70px 30px;display:flex;flex-direction:column;align-items:center;gap:14px;text-align:center;color:#8A8271"><div style="font-size:38px">📡</div><div style="font-size:16px;font-weight:800;color:#2B271F">You're offline</div><div style="font-size:13px;line-height:1.5">Showing cached events. New events will sync when the connection returns.</div></div></sc-if>
+  <sc-if value="{{ feed.error }}" hint-placeholder-val="{{ false }}"><div style="padding:70px 30px;display:flex;flex-direction:column;align-items:center;gap:14px;text-align:center;color:#8A8271"><div style="font-size:38px">⚠</div><div style="font-size:16px;font-weight:800;color:#2B271F">Couldn't reach Sentyx</div><div style="font-size:13px;line-height:1.5">The backend is temporarily unavailable. Local events from the Pi are still accessible.</div></div></sc-if>
+</div>
+</sc-if>
+
+<!-- ============ EVENT DETAIL ============ -->
+<sc-if value="{{ at.detail }}" hint-placeholder-val="{{ false }}">
+<div style="display:flex;flex-direction:column;padding-bottom:30px" data-screen-label="Event detail">
+  <div style="aspect-ratio:16/11;position:relative;background:repeating-linear-gradient(45deg,#E3DCCD 0 8px,#EBE5D8 8px 16px);flex:none;display:flex;align-items:center;justify-content:center">
+    <sc-if value="{{ dt.playable }}" hint-placeholder-val="{{ true }}">
+      <div onClick="{{ dt.fullscreen }}" style="width:56px;height:56px;border-radius:50%;background:#2B271F;display:flex;align-items:center;justify-content:center;cursor:pointer" style-hover="background:#463F31"><svg width="15" height="17" viewBox="0 0 16 18"><polygon points="2,1 15,9 2,17" fill="#F4F0E9"></polygon></svg></div>
+      <span style="position:absolute;top:60px;right:16px;background:rgba(43,39,31,.55);color:#F4F0E9;font-size:11px;font-weight:700;padding:5px 9px;border-radius:8px;cursor:pointer" onClick="{{ dt.fullscreen }}">⛶ Full screen</span>
+      <span style="position:absolute;bottom:44px;left:16px;background:rgba(43,39,31,.6);font-size:10.5px;font-weight:600;padding:4px 9px;border-radius:6px;color:#F4F0E9">{{ dt.activeCam }} · {{ dt.dur }}</span>
+      <div style="position:absolute;left:16px;right:16px;bottom:14px;height:4px;border-radius:2px;background:rgba(43,39,31,.25)"><div style="height:4px;border-radius:2px;background:#F4F0E9;width:{{ dt.seekW }}"></div></div>
+    </sc-if>
+    <sc-if value="{{ dt.notPlayable }}" hint-placeholder-val="{{ false }}"><div style="display:flex;flex-direction:column;align-items:center;gap:10px;color:#8A8271"><span style="font-size:30px">{{ dt.stIcon }}</span><span style="font-size:13px;font-weight:700;color:#4A4436">{{ dt.stTitle }}</span></div></sc-if>
+    <div onClick="{{ dt.close }}" style="position:absolute;top:60px;left:16px;width:36px;height:36px;border-radius:50%;background:rgba(244,240,233,.9);display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:18px;color:#2B271F">‹</div>
+  </div>
+
+  <sc-if value="{{ dt.multiCam }}" hint-placeholder-val="{{ false }}">
+    <div style="display:flex;gap:8px;padding:12px 20px 0;overflow:auto">
+      <sc-for list="{{ dt.cams }}" as="c" hint-placeholder-count="2"><div onClick="{{ c.pick }}" style="flex:none;font-size:12px;font-weight:700;padding:7px 13px;border-radius:10px;cursor:pointer;background:{{ c.bg }};color:{{ c.fg }};border:1px solid {{ c.bd }}">{{ c.name }}</div></sc-for>
+    </div>
+  </sc-if>
+
+  <div style="padding:16px 20px 0;display:flex;flex-direction:column;gap:9px">
+    <div style="display:flex;align-items:center;gap:9px;flex-wrap:wrap">
+      <sc-if value="{{ dt.hasSev }}" hint-placeholder-val="{{ true }}"><span onClick="{{ dt.changeSev }}" style="background:{{ dt.badgeBg }};color:{{ dt.badgeFg }};font-size:11px;font-weight:700;letter-spacing:.4px;padding:4px 11px;border-radius:999px;cursor:pointer">{{ dt.sevCap }} ⌄</span></sc-if>
+      <span style="font-size:12px;font-weight:600;color:#8A8271">{{ dt.time }} · {{ dt.loc }}</span>
+    </div>
+    <div style="font-size:22px;font-weight:800;line-height:1.2;letter-spacing:-.3px">{{ dt.title }}</div>
+  </div>
+
+  <!-- meta grid -->
+  <div style="margin:14px 20px 0;display:grid;grid-template-columns:1fr 1fr;gap:1px;background:#E7E0D2;border:1px solid #E7E0D2;border-radius:14px;overflow:hidden">
+    <div style="background:#FBF8F2;padding:11px 13px"><div style="font-size:9.5px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;color:#A69E8B">Vehicle</div><div style="font-size:12.5px;font-weight:700;margin-top:3px">{{ dev.name }}</div></div>
+    <div style="background:#FBF8F2;padding:11px 13px"><div style="font-size:9.5px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;color:#A69E8B">Camera</div><div style="font-size:12.5px;font-weight:700;margin-top:3px">{{ dt.activeCam }}</div></div>
+    <div style="background:#FBF8F2;padding:11px 13px"><div style="font-size:9.5px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;color:#A69E8B">Storage</div><div style="font-size:12.5px;font-weight:700;margin-top:3px">{{ dt.storageLoc }}</div></div>
+    <div style="background:#FBF8F2;padding:11px 13px"><div style="font-size:9.5px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;color:#A69E8B">Available</div><div style="font-size:12.5px;font-weight:700;margin-top:3px">{{ dt.availability }}</div></div>
+  </div>
+
+  <sc-if value="{{ dt.done }}" hint-placeholder-val="{{ true }}">
+    <!-- Gemini -->
+    <div style="margin:16px 20px 0;background:#FBF8F2;border:1px solid #E7E0D2;border-radius:16px;padding:15px;display:flex;flex-direction:column;gap:11px">
+      <div style="display:flex;justify-content:space-between;align-items:center"><span style="font-size:12px;font-weight:700;color:#9A7B3C">Gemini summary</span><span style="font-size:11px;font-weight:700;color:#9A7B3C">{{ dt.conf }}% confident</span></div>
+      <div style="font-size:13.5px;line-height:1.55;color:#4A4436">{{ dt.desc }}</div>
+      <div style="display:flex;gap:7px;flex-wrap:wrap"><sc-for list="{{ dt.subjects }}" as="s" hint-placeholder-count="2"><span style="font-size:11px;font-weight:600;background:#EDE7DA;color:#6E6656;padding:4px 9px;border-radius:8px">{{ s }}</span></sc-for><span style="font-size:11px;font-weight:700;background:{{ dt.contactBg }};color:{{ dt.contactFg }};padding:4px 9px;border-radius:8px">{{ dt.contactLabel }}</span></div>
+    </div>
+    <!-- facts vs interpretation -->
+    <div style="margin:12px 20px 0;display:flex;flex-direction:column;gap:8px">
+      <div style="font-size:10.5px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;color:#A69E8B">Observed facts</div>
+      <div style="background:#FBF8F2;border:1px solid #E7E0D2;border-radius:14px;padding:6px 14px">
+        <sc-for list="{{ dt.facts }}" as="f" hint-placeholder-count="3"><div style="display:flex;gap:9px;align-items:baseline;padding:8px 0;border-bottom:1px solid #EDE7DA"><span style="color:#2F7C4A;font-size:12px">✓</span><span style="font-size:13px;color:#4A4436">{{ f }}</span></div></sc-for>
+      </div>
+      <div style="background:rgba(154,123,60,.09);border:1px solid rgba(154,123,60,.2);border-radius:14px;padding:12px 14px;display:flex;gap:9px"><span style="font-size:11px;font-weight:800;color:#9A7B3C;letter-spacing:.5px;flex:none;margin-top:1px">AI READ</span><span style="font-size:12.5px;line-height:1.5;color:#6E6656">{{ dt.interp }}</span></div>
+    </div>
+    <!-- moments -->
+    <div style="padding:18px 20px 8px;font-size:10.5px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;color:#A69E8B">Meaningful moments</div>
+    <div style="margin:0 20px;display:flex;flex-direction:column">
+      <sc-for list="{{ dt.moments }}" as="m" hint-placeholder-count="3">
+        <div onClick="{{ m.jump }}" style="display:flex;gap:14px;align-items:center;padding:11px 12px;border-radius:11px;cursor:pointer;background:{{ m.bg }}" style-hover="background:#F0EADD">
+          <span style="font:600 12px 'IBM Plex Mono',monospace;color:#9A7B3C;width:36px;flex:none">{{ m.t }}</span>
+          <span style="font-size:13.5px;color:#4A4436;flex:1">{{ m.l }}</span>
+          <span style="font-size:11px;color:#C4BBA8">▶ jump</span>
+        </div>
+      </sc-for>
+    </div>
+    <!-- feedback -->
+    <div style="margin:16px 20px 0;background:#FBF8F2;border:1px solid #E7E0D2;border-radius:14px;padding:14px">
+      <div style="font-size:12.5px;font-weight:700;margin-bottom:10px">Was this analysis right?</div>
+      <div style="display:flex;gap:8px"><sc-for list="{{ dt.feedbackOpts }}" as="fb" hint-placeholder-count="3"><div onClick="{{ fb.pick }}" style="flex:1;text-align:center;font-size:12px;font-weight:700;padding:9px;border-radius:10px;cursor:pointer;background:{{ fb.bg }};color:{{ fb.fg }};border:1px solid {{ fb.bd }}">{{ fb.label }}</div></sc-for></div>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{ dt.analyzing }}" hint-placeholder-val="{{ false }}">
+    <div style="margin:16px 20px 0;background:#FBF8F2;border:1px solid #E7E0D2;border-radius:16px;padding:20px;display:flex;flex-direction:column;align-items:center;gap:12px;text-align:center">
+      <div style="width:40px;height:40px;border-radius:50%;border:3px solid #E7E0D2;border-top-color:#9A7B3C;animation:sxSpin 1s linear infinite"></div>
+      <div style="font-size:14px;font-weight:700">{{ dt.stTitle }}</div>
+      <div style="font-size:12.5px;color:#8A8271;line-height:1.5">{{ dt.stBody }}</div>
+    </div>
+  </sc-if>
+  <sc-if value="{{ dt.failed }}" hint-placeholder-val="{{ false }}">
+    <div style="margin:16px 20px 0;background:#FBF8F2;border:1px solid #F0D9CE;border-radius:16px;padding:18px;display:flex;flex-direction:column;gap:12px;text-align:center">
+      <div style="font-size:14px;font-weight:700;color:#9A2E22">Analysis failed</div>
+      <div style="font-size:12.5px;color:#8A8271;line-height:1.5">Gemini couldn't process this clip. You can retry once the car re-uploads it.</div>
+      <div onClick="{{ dt.retry }}" style="align-self:center;background:#2B271F;color:#F4F0E9;padding:11px 22px;border-radius:11px;font-size:13px;font-weight:700;cursor:pointer">Retry analysis</div>
+    </div>
+  </sc-if>
+
+  <!-- retention -->
+  <div style="margin:16px 20px 0;background:#FBF8F2;border:1px solid #E7E0D2;border-radius:14px;padding:14px 16px;display:flex;flex-direction:column;gap:8px">
+    <div style="font-size:11px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:#A69E8B">Retention</div>
+    <div style="display:flex;justify-content:space-between"><span style="font-size:12.5px;color:#8A8271">On car</span><span style="font-size:12.5px;font-weight:600">{{ dt.retCar }}</span></div>
+    <div style="display:flex;justify-content:space-between"><span style="font-size:12.5px;color:#8A8271">Cloud copy</span><span style="font-size:12.5px;font-weight:600">{{ dt.retCloud }}</span></div>
+    <div onClick="{{ dt.retain }}" style="align-self:flex-start;margin-top:2px;font-size:12px;font-weight:700;color:#9A7B3C;cursor:pointer">Keep longer →</div>
+  </div>
+
+  <!-- action row -->
+  <div style="margin:14px 20px 0;display:grid;grid-template-columns:repeat(4,1fr);gap:8px">
+    <sc-for list="{{ dt.actions }}" as="a" hint-placeholder-count="4"><div onClick="{{ a.tap }}" style="display:flex;flex-direction:column;align-items:center;gap:5px;padding:11px 4px;border-radius:12px;background:#FBF8F2;border:1px solid #E7E0D2;cursor:pointer" style-hover="border-color:#D8CEBB"><span style="font-size:16px;color:{{ a.color }}">{{ a.icon }}</span><span style="font-size:10px;font-weight:700;color:#6E6656">{{ a.label }}</span></div></sc-for>
+  </div>
+
+  <div style="margin:16px 20px 6px;display:flex;flex-direction:column;gap:8px">
+    <div onClick="{{ dt.download }}" style="background:#2B271F;color:#F4F0E9;padding:15px;text-align:center;border-radius:13px;font-size:14px;font-weight:700;cursor:pointer" style-hover="background:#463F31">Download original · 248 MB</div>
+    <div style="font-size:11.5px;color:#8A8271;text-align:center">Wi-Fi recommended for the full-quality clip</div>
+  </div>
+</div>
+</sc-if>
+
+<!-- ============ DOWNLOADS (root) ============ -->
+<sc-if value="{{ at.downloads }}" hint-placeholder-val="{{ false }}">
+<div style="padding:56px 22px 96px;display:flex;flex-direction:column" data-screen-label="Transfers">
+  <div style="display:flex;align-items:center;justify-content:space-between;padding-top:8px">
+    <div style="font-size:26px;font-weight:800;letter-spacing:-.5px">Transfers</div>
+    <div onClick="{{ nav.dlSettings }}" style="width:34px;height:34px;border-radius:50%;background:#FBF8F2;border:1px solid #E7E0D2;display:flex;align-items:center;justify-content:center;cursor:pointer">⚙</div>
+  </div>
+  <div style="font-size:12px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:#A69E8B;margin:20px 0 10px">Active & recent</div>
+  <sc-if value="{{ hasQueue }}" hint-placeholder-val="{{ true }}">
+  <div style="display:flex;flex-direction:column;gap:11px">
+    <sc-for list="{{ activeQueue }}" as="q" hint-placeholder-count="2">
+      <div style="background:#FBF8F2;border:1px solid #E7E0D2;border-radius:16px;padding:14px">
+        <div style="display:flex;gap:12px;align-items:flex-start">
+          <div style="width:44px;height:44px;flex:none;border-radius:11px;background:repeating-linear-gradient(45deg,#E3DCCD 0 6px,#EBE5D8 6px 12px)"></div>
+          <div style="flex:1;min-width:0"><div style="font-size:13.5px;font-weight:700;line-height:1.3">{{ q.title }}</div><div style="font-size:11.5px;color:#8A8271;margin-top:2px">{{ q.size }} · {{ q.route }}</div></div>
+          <span style="font-size:12px;font-weight:700;color:{{ q.stColor }}">{{ q.pctLabel }}</span>
+        </div>
+        <sc-if value="{{ q.showBar }}" hint-placeholder-val="{{ true }}"><div style="height:5px;border-radius:3px;background:#EDE7DA;margin-top:11px"><div style="height:5px;border-radius:3px;background:{{ q.barColor }};width:{{ q.pctW }}"></div></div></sc-if>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-top:10px">
+          <span style="font-size:11.5px;font-weight:600;color:{{ q.stColor }}">{{ q.stLabel }}</span>
+          <div style="display:flex;gap:14px"><sc-for list="{{ q.acts }}" as="a" hint-placeholder-count="2"><span onClick="{{ a.tap }}" style="font-size:12px;font-weight:700;color:#9A7B3C;cursor:pointer">{{ a.label }}</span></sc-for></div>
+        </div>
+      </div>
+    </sc-for>
+  </div>
+  </sc-if>
+  <sc-if value="{{ hasQueue }}" hint-placeholder-val="{{ false }}"></sc-if>
+  <div onClick="{{ nav.dlLibrary }}" style="margin-top:16px;background:#FBF8F2;border:1px solid #E7E0D2;border-radius:16px;padding:15px 16px;display:flex;align-items:center;gap:12px;cursor:pointer" style-hover="border-color:#D8CEBB">
+    <span style="font-size:18px">📁</span>
+    <div style="flex:1"><div style="font-size:14px;font-weight:700">Downloaded clips</div><div style="font-size:12px;color:#8A8271">On this phone · play, share, export</div></div>
+    <span style="font-size:18px;color:#C4BBA8">›</span>
+  </div>
+</div>
+</sc-if>
+
+<!-- ============ DOWNLOAD LIBRARY ============ -->
+<sc-if value="{{ at.dlLibrary }}" hint-placeholder-val="{{ false }}">
+<div style="padding:56px 22px 40px" data-screen-label="Downloaded clips">
+  <div style="display:flex;align-items:center;gap:12px;padding-top:8px"><div onClick="{{ nav.back }}" style="font-size:22px;color:#8A8271;cursor:pointer">‹</div><div style="font-size:22px;font-weight:800;letter-spacing:-.4px">Downloaded clips</div></div>
+  <sc-if value="{{ hasLibrary }}" hint-placeholder-val="{{ true }}">
+  <div style="display:flex;flex-direction:column;gap:11px;margin-top:18px">
+    <sc-for list="{{ library }}" as="q" hint-placeholder-count="1">
+      <div style="background:#FBF8F2;border:1px solid #E7E0D2;border-radius:16px;padding:12px;display:flex;gap:12px;align-items:center">
+        <div style="width:56px;height:56px;flex:none;border-radius:11px;background:repeating-linear-gradient(45deg,#E3DCCD 0 6px,#EBE5D8 6px 12px);display:flex;align-items:center;justify-content:center"><span style="color:#8A8271;font-size:16px">▶</span></div>
+        <div style="flex:1;min-width:0"><div style="font-size:13.5px;font-weight:700;line-height:1.3">{{ q.title }}</div><div style="font-size:11.5px;color:#8A8271;margin-top:2px">{{ q.size }} · {{ q.route }}</div></div>
+        <div style="display:flex;gap:12px"><sc-for list="{{ q.acts }}" as="a" hint-placeholder-count="2"><span onClick="{{ a.tap }}" style="font-size:12px;font-weight:700;color:#9A7B3C;cursor:pointer">{{ a.label }}</span></sc-for></div>
+      </div>
+    </sc-for>
+  </div>
+  </sc-if>
+  <sc-if value="{{ hasLibrary }}" hint-placeholder-val="{{ false }}"><div style="margin-top:60px;text-align:center;color:#8A8271"><div style="font-size:36px">📁</div><div style="font-size:15px;font-weight:800;color:#2B271F;margin-top:10px">No downloads yet</div><div style="font-size:13px;margin-top:4px">Download an original from any event to keep it on your phone.</div></div></sc-if>
+</div>
+</sc-if>
+
+<!-- ============ DOWNLOAD SETTINGS ============ -->
+<sc-if value="{{ at.dlSettings }}" hint-placeholder-val="{{ false }}">
+<div style="padding:56px 22px 40px" data-screen-label="Transfer settings">
+  <div style="display:flex;align-items:center;gap:12px;padding-top:8px"><div onClick="{{ nav.back }}" style="font-size:22px;color:#8A8271;cursor:pointer">‹</div><div style="font-size:22px;font-weight:800;letter-spacing:-.4px">Transfer settings</div></div>
+  <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:#A69E8B;margin:20px 0 8px">Preferred route</div>
+  <div style="background:#FBF8F2;border:1px solid #E7E0D2;border-radius:14px;overflow:hidden">
+    <div style="padding:14px 16px;display:flex;justify-content:space-between;border-bottom:1px solid #EDE7DA"><span style="font-size:13.5px;font-weight:600">Direct Wi-Fi</span><span style="color:#2F7C4A;font-weight:700">✓</span></div>
+    <div style="padding:14px 16px;display:flex;justify-content:space-between;border-bottom:1px solid #EDE7DA"><span style="font-size:13.5px;color:#6E6656">Home Wi-Fi network</span></div>
+    <div style="padding:14px 16px;display:flex;justify-content:space-between"><span style="font-size:13.5px;color:#6E6656">Bluetooth</span></div>
+  </div>
+  <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:#A69E8B;margin:20px 0 8px">Automatic</div>
+  <div style="background:#FBF8F2;border:1px solid #E7E0D2;border-radius:14px;overflow:hidden">
+    <div style="padding:14px 16px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #EDE7DA"><div><div style="font-size:13.5px;font-weight:600">Auto-upload new clips</div><div style="font-size:11.5px;color:#8A8271;margin-top:1px">Pi uploads when on Wi-Fi</div></div><div style="width:38px;height:22px;border-radius:11px;background:#2F7C4A;position:relative"><div style="width:18px;height:18px;border-radius:50%;background:#fff;position:absolute;top:2px;left:18px"></div></div></div>
+    <div style="padding:14px 16px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #EDE7DA"><div><div style="font-size:13.5px;font-weight:600">Only most-relevant camera</div><div style="font-size:11.5px;color:#8A8271;margin-top:1px">Upload one angle to save data</div></div><div style="width:38px;height:22px;border-radius:11px;background:#2F7C4A;position:relative"><div style="width:18px;height:18px;border-radius:50%;background:#fff;position:absolute;top:2px;left:18px"></div></div></div>
+    <div style="padding:14px 16px;display:flex;justify-content:space-between;align-items:center"><div><div style="font-size:13.5px;font-weight:600">Allow cellular downloads</div><div style="font-size:11.5px;color:#8A8271;margin-top:1px">Backend clips over cellular data</div></div><div style="width:38px;height:22px;border-radius:11px;background:#D8CEBB;position:relative"><div style="width:18px;height:18px;border-radius:50%;background:#fff;position:absolute;top:2px;left:2px"></div></div></div>
+  </div>
+</div>
+</sc-if>
+
+<!-- ============ DEVICE (root) ============ -->
+<sc-if value="{{ at.device }}" hint-placeholder-val="{{ false }}">
+<div style="padding:56px 22px 96px" data-screen-label="Device overview">
+  <div style="display:flex;align-items:center;justify-content:space-between;padding-top:8px">
+    <div style="font-size:26px;font-weight:800;letter-spacing:-.5px">{{ dev.name }}</div>
+    <div onClick="{{ nav.addDevice }}" style="width:34px;height:34px;border-radius:50%;background:#FBF8F2;border:1px solid #E7E0D2;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:18px">+</div>
+  </div>
+  <div style="display:flex;align-items:center;gap:7px;margin-top:6px"><span style="width:9px;height:9px;border-radius:50%;background:{{ dev.dot }};animation:sxPulse 2.4s infinite"></span><span style="font-size:13px;font-weight:700;color:{{ dev.chipFg }}">{{ dev.badge }}</span><span style="font-size:12.5px;color:#8A8271">· {{ dev.vehicle }} · last seen {{ dev.lastSeen }}</span></div>
+
+  <sc-if value="{{ dev.hasIssues }}" hint-placeholder-val="{{ false }}">
+    <div style="margin-top:16px;background:rgba(192,138,62,.1);border:1px solid rgba(192,138,62,.28);border-radius:14px;padding:13px 14px;display:flex;flex-direction:column;gap:6px">
+      <sc-for list="{{ dev.issues }}" as="i" hint-placeholder-count="1"><div style="display:flex;gap:9px;align-items:flex-start"><span style="color:#C08A3E">⚠</span><span style="font-size:13px;color:#6E4E1A;line-height:1.4">{{ i }}</span></div></sc-for>
+    </div>
+  </sc-if>
+
+  <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:#A69E8B;margin:20px 0 8px">Connections</div>
+  <div style="background:#FBF8F2;border:1px solid #E7E0D2;border-radius:14px;overflow:hidden">
+    <div style="padding:13px 16px;display:flex;justify-content:space-between;border-bottom:1px solid #EDE7DA"><span style="font-size:13.5px;font-weight:600">Bluetooth</span><span style="font-size:12.5px;font-weight:700;color:{{ dev.bleColor }}">{{ dev.bleTxt }}</span></div>
+    <div style="padding:13px 16px;display:flex;justify-content:space-between;border-bottom:1px solid #EDE7DA"><span style="font-size:13.5px;font-weight:600">Wi-Fi</span><span style="font-size:12.5px;font-weight:700;color:{{ dev.wifiColor }}">{{ dev.wifiTxt }}</span></div>
+    <div style="padding:13px 16px;display:flex;justify-content:space-between"><span style="font-size:13.5px;font-weight:600">Sentyx backend</span><span style="font-size:12.5px;font-weight:700;color:{{ dev.backendColor }}">{{ dev.backendTxt }}</span></div>
+  </div>
+
+  <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:#A69E8B;margin:20px 0 8px">Storage</div>
+  <div style="background:#FBF8F2;border:1px solid #E7E0D2;border-radius:14px;padding:15px 16px">
+    <div style="display:flex;justify-content:space-between;margin-bottom:9px"><span style="font-size:13px;font-weight:700">{{ dev.storage }}% free</span><span style="font-size:12px;color:#8A8271">{{ dev.offlineCap }}</span></div>
+    <div style="height:8px;border-radius:4px;background:#EDE7DA;overflow:hidden"><div style="height:8px;background:#9A7B3C;width:{{ dev.storageUsedW }}"></div></div>
+    <div style="display:flex;justify-content:space-between;margin-top:11px"><span style="font-size:12.5px;color:#8A8271">Upload backlog</span><span style="font-size:12.5px;font-weight:600">{{ dev.backlogTxt }}</span></div>
+    <div style="display:flex;justify-content:space-between;margin-top:7px"><span style="font-size:12.5px;color:#8A8271">Currently</span><span style="font-size:12.5px;font-weight:600">{{ dev.writingTxt }}</span></div>
+  </div>
+
+  <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:#A69E8B;margin:20px 0 8px">Health</div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+    <div style="background:#FBF8F2;border:1px solid #E7E0D2;border-radius:14px;padding:13px 14px"><div style="font-size:10px;font-weight:700;text-transform:uppercase;color:#A69E8B">Power</div><div style="font-size:14px;font-weight:700;margin-top:4px">{{ dev.power }}</div></div>
+    <div style="background:#FBF8F2;border:1px solid #E7E0D2;border-radius:14px;padding:13px 14px"><div style="font-size:10px;font-weight:700;text-transform:uppercase;color:#A69E8B">Temperature</div><div style="font-size:14px;font-weight:700;margin-top:4px">{{ dev.temp }}</div></div>
+    <div style="background:#FBF8F2;border:1px solid #E7E0D2;border-radius:14px;padding:13px 14px"><div style="font-size:10px;font-weight:700;text-transform:uppercase;color:#A69E8B">Firmware</div><div style="font-size:14px;font-weight:700;margin-top:4px">{{ dev.fw }}</div></div>
+    <div style="background:#FBF8F2;border:1px solid #E7E0D2;border-radius:14px;padding:13px 14px"><div style="font-size:10px;font-weight:700;text-transform:uppercase;color:#A69E8B">Signal</div><div style="font-size:14px;font-weight:700;margin-top:4px">Strong</div></div>
+  </div>
+  <sc-if value="{{ dev.fwUpd }}" hint-placeholder-val="{{ false }}"><div onClick="{{ nav.firmwareFlow }}" style="margin-top:12px;background:#2B271F;color:#F4F0E9;text-align:center;padding:14px;border-radius:13px;font-size:14px;font-weight:700;cursor:pointer">Update firmware</div></sc-if>
+  <div onClick="{{ nav.deviceSettings }}" style="margin-top:12px;background:transparent;border:1px solid #D8CEBB;text-align:center;padding:13px;border-radius:13px;font-size:14px;font-weight:700;cursor:pointer;color:#2B271F" style-hover="background:#EDE7DA">Device settings & maintenance</div>
+</div>
+</sc-if>
+
+<!-- ============ DEVICE SETTINGS ============ -->
+<sc-if value="{{ at.deviceSettings }}" hint-placeholder-val="{{ false }}">
+<div style="padding:56px 22px 40px" data-screen-label="Device settings">
+  <div style="display:flex;align-items:center;gap:12px;padding-top:8px"><div onClick="{{ nav.back }}" style="font-size:22px;color:#8A8271;cursor:pointer">‹</div><div style="font-size:22px;font-weight:800;letter-spacing:-.4px">Device settings</div></div>
+  <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:#A69E8B;margin:20px 0 8px">Identity</div>
+  <div style="background:#FBF8F2;border:1px solid #E7E0D2;border-radius:14px;overflow:hidden">
+    <div onClick="{{ stub }}" style="padding:14px 16px;display:flex;justify-content:space-between;border-bottom:1px solid #EDE7DA;cursor:pointer"><span style="font-size:13.5px;font-weight:600">Device name</span><span style="font-size:13px;color:#8A8271">Garage Pi ›</span></div>
+    <div onClick="{{ stub }}" style="padding:14px 16px;display:flex;justify-content:space-between;border-bottom:1px solid #EDE7DA;cursor:pointer"><span style="font-size:13.5px;font-weight:600">Vehicle & timezone</span><span style="font-size:13px;color:#8A8271">Model 3 · GMT-7 ›</span></div>
+    <div onClick="{{ stub }}" style="padding:14px 16px;display:flex;justify-content:space-between;cursor:pointer"><span style="font-size:13.5px;font-weight:600">Saved Wi-Fi networks</span><span style="font-size:13px;color:#8A8271">2 saved ›</span></div>
+  </div>
+  <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:#A69E8B;margin:20px 0 8px">Behavior</div>
+  <div style="background:#FBF8F2;border:1px solid #E7E0D2;border-radius:14px;overflow:hidden">
+    <div onClick="{{ stub }}" style="padding:14px 16px;display:flex;justify-content:space-between;border-bottom:1px solid #EDE7DA;cursor:pointer"><span style="font-size:13.5px;font-weight:600">Clip selection</span><span style="font-size:13px;color:#8A8271">Most relevant ›</span></div>
+    <div onClick="{{ stub }}" style="padding:14px 16px;display:flex;justify-content:space-between;border-bottom:1px solid #EDE7DA;cursor:pointer"><span style="font-size:13.5px;font-weight:600">Local retention</span><span style="font-size:13px;color:#8A8271">7 days ›</span></div>
+    <div onClick="{{ stub }}" style="padding:14px 16px;display:flex;justify-content:space-between;cursor:pointer"><span style="font-size:13.5px;font-weight:600">Offline spool limit</span><span style="font-size:13px;color:#8A8271">4 GB ›</span></div>
+  </div>
+  <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:#A69E8B;margin:20px 0 8px">Maintenance</div>
+  <div style="background:#FBF8F2;border:1px solid #E7E0D2;border-radius:14px;overflow:hidden">
+    <div onClick="{{ nav.firmwareFlow }}" style="padding:14px 16px;display:flex;justify-content:space-between;border-bottom:1px solid #EDE7DA;cursor:pointer"><span style="font-size:13.5px;font-weight:600">Firmware update</span><span style="font-size:13px;color:#8A8271">›</span></div>
+    <div onClick="{{ nav.diagnostics }}" style="padding:14px 16px;display:flex;justify-content:space-between;border-bottom:1px solid #EDE7DA;cursor:pointer"><span style="font-size:13.5px;font-weight:600">Diagnostics & connection test</span><span style="font-size:13px;color:#8A8271">›</span></div>
+    <div onClick="{{ stub }}" style="padding:14px 16px;display:flex;justify-content:space-between;cursor:pointer"><span style="font-size:13.5px;font-weight:600">Restart device</span><span style="font-size:13px;color:#8A8271">›</span></div>
+  </div>
+  <div style="background:#FBF8F2;border:1px solid #F0D9CE;border-radius:14px;overflow:hidden;margin-top:20px">
+    <div onClick="{{ stub }}" style="padding:14px 16px;display:flex;justify-content:space-between;border-bottom:1px solid #F3E2DA;cursor:pointer"><span style="font-size:13.5px;font-weight:600;color:#B23A2E">Remove device</span><span style="color:#E0A99C">›</span></div>
+    <div onClick="{{ nav.factoryReset }}" style="padding:14px 16px;display:flex;justify-content:space-between;cursor:pointer"><span style="font-size:13.5px;font-weight:600;color:#B23A2E">Factory reset</span><span style="color:#E0A99C">›</span></div>
+  </div>
+</div>
+</sc-if>
+
+<!-- ============ FIRMWARE FLOW ============ -->
+<sc-if value="{{ at.firmwareFlow }}" hint-placeholder-val="{{ false }}">
+<div style="padding:56px 22px 40px;min-height:520px;display:flex;flex-direction:column" data-screen-label="Firmware update">
+  <div style="display:flex;align-items:center;gap:12px;padding-top:8px"><div onClick="{{ nav.back }}" style="font-size:22px;color:#8A8271;cursor:pointer">‹</div><div style="font-size:22px;font-weight:800;letter-spacing:-.4px">Firmware update</div></div>
+  <div style="flex:1;display:flex;flex-direction:column;justify-content:center;gap:16px;align-items:center;text-align:center">
+    <div style="width:56px;height:56px;border-radius:16px;background:#FBF8F2;border:1px solid #E7E0D2;display:flex;align-items:center;justify-content:center;font-size:24px">⬆</div>
+    <div style="font-size:20px;font-weight:800">v3.8.1 → v4.0.2</div>
+    <div style="font-size:13.5px;color:#6E6656;line-height:1.55;max-width:290px">Improves event detection accuracy and reduces false positives. The device restarts once and is offline for about a minute.</div>
+    <div style="background:#FBF8F2;border:1px solid #E7E0D2;border-radius:12px;padding:11px 14px;font-size:12px;color:#8A8271;font-family:'IBM Plex Mono',monospace;width:100%;box-sizing:border-box;text-align:left">Steps: check → download → install → restart → verify</div>
+  </div>
+  <div onClick="{{ stub }}" style="background:#2B271F;color:#F4F0E9;text-align:center;padding:16px;border-radius:14px;font-size:15px;font-weight:700;cursor:pointer">Install update</div>
+</div>
+</sc-if>
+
+<!-- ============ DIAGNOSTICS ============ -->
+<sc-if value="{{ at.diagnostics }}" hint-placeholder-val="{{ false }}">
+<div style="padding:56px 22px 40px" data-screen-label="Diagnostics">
+  <div style="display:flex;align-items:center;gap:12px;padding-top:8px"><div onClick="{{ nav.back }}" style="font-size:22px;color:#8A8271;cursor:pointer">‹</div><div style="font-size:22px;font-weight:800;letter-spacing:-.4px">Diagnostics</div></div>
+  <div style="background:#FBF8F2;border:1px solid #E7E0D2;border-radius:14px;overflow:hidden;margin-top:18px">
+    <div style="padding:13px 16px;display:flex;justify-content:space-between;border-bottom:1px solid #EDE7DA"><span style="font-size:13px;color:#8A8271">USB storage bridge</span><span style="font-size:12.5px;font-weight:700;color:#2F7C4A">Active</span></div>
+    <div style="padding:13px 16px;display:flex;justify-content:space-between;border-bottom:1px solid #EDE7DA"><span style="font-size:13px;color:#8A8271">Event detection latency</span><span style="font-size:12.5px;font-weight:700">1.2 s</span></div>
+    <div style="padding:13px 16px;display:flex;justify-content:space-between;border-bottom:1px solid #EDE7DA"><span style="font-size:13px;color:#8A8271">Uploads (24h)</span><span style="font-size:12.5px;font-weight:700">18 · 0 failed</span></div>
+    <div style="padding:13px 16px;display:flex;justify-content:space-between"><span style="font-size:13px;color:#8A8271">Uptime</span><span style="font-size:12.5px;font-weight:700">6d 4h</span></div>
+  </div>
+  <div onClick="{{ nav.test }}" style="margin-top:14px;background:transparent;border:1px solid #D8CEBB;text-align:center;padding:14px;border-radius:13px;font-size:14px;font-weight:700;cursor:pointer;color:#2B271F" style-hover="background:#EDE7DA">Run connection test</div>
+  <div onClick="{{ stub }}" style="margin-top:10px;background:#2B271F;color:#F4F0E9;text-align:center;padding:14px;border-radius:13px;font-size:14px;font-weight:700;cursor:pointer">Export diagnostic report</div>
+</div>
+</sc-if>
+
+<!-- ============ FACTORY RESET ============ -->
+<sc-if value="{{ at.factoryReset }}" hint-placeholder-val="{{ false }}">
+<div style="padding:56px 22px 40px;min-height:520px;display:flex;flex-direction:column" data-screen-label="Factory reset">
+  <div style="display:flex;align-items:center;gap:12px;padding-top:8px"><div onClick="{{ nav.back }}" style="font-size:22px;color:#8A8271;cursor:pointer">‹</div><div style="font-size:22px;font-weight:800;letter-spacing:-.4px">Factory reset</div></div>
+  <div style="flex:1;display:flex;flex-direction:column;justify-content:center;gap:16px;align-items:center;text-align:center">
+    <div style="width:56px;height:56px;border-radius:16px;background:#F3D9D2;display:flex;align-items:center;justify-content:center;font-size:24px">⚠</div>
+    <div style="font-size:20px;font-weight:800;color:#9A2E22">This erases the device</div>
+    <div style="font-size:13.5px;color:#6E6656;line-height:1.55;max-width:290px">Garage Pi will forget its pairing, Wi-Fi, and local clips. Cloud events on your account are kept. This cannot be undone.</div>
+  </div>
+  <div style="display:flex;flex-direction:column;gap:10px">
+    <div onClick="{{ stub }}" style="background:#B23A2E;color:#fff;text-align:center;padding:16px;border-radius:14px;font-size:15px;font-weight:700;cursor:pointer">Erase & reset device</div>
+    <div onClick="{{ nav.back }}" style="text-align:center;padding:14px;font-size:14px;font-weight:700;color:#8A8271;cursor:pointer">Cancel</div>
+  </div>
+</div>
+</sc-if>
+
+<!-- ============ ADD DEVICE ============ -->
+<sc-if value="{{ at.addDevice }}" hint-placeholder-val="{{ false }}">
+<div style="padding:56px 22px 40px" data-screen-label="Add device">
+  <div style="display:flex;align-items:center;gap:12px;padding-top:8px"><div onClick="{{ nav.back }}" style="font-size:22px;color:#8A8271;cursor:pointer">‹</div><div style="font-size:22px;font-weight:800;letter-spacing:-.4px">Your devices</div></div>
+  <div style="display:flex;flex-direction:column;gap:11px;margin-top:18px">
+    <div style="background:#FBF8F2;border:1px solid #E7E0D2;border-radius:14px;padding:14px;display:flex;align-items:center;gap:12px"><div style="width:36px;height:36px;border-radius:10px;background:#2B271F;display:flex;align-items:center;justify-content:center"><svg width="16" height="16" viewBox="0 0 18 18"><circle cx="9" cy="9" r="3.5" fill="none" stroke="#C9AE77" stroke-width="1.8"></circle><circle cx="9" cy="9" r="7" fill="none" stroke="#C9AE77" stroke-width="1.8" stroke-dasharray="3 3"></circle></svg></div><div style="flex:1"><div style="font-size:14px;font-weight:700">Garage Pi</div><div style="font-size:12px;color:#8A8271">Model 3 · online</div></div><span style="color:#2F7C4A;font-weight:700">✓</span></div>
+    <div onClick="{{ nav.pairIntro }}" style="background:transparent;border:1.5px dashed #D8CEBB;border-radius:14px;padding:16px;display:flex;align-items:center;justify-content:center;gap:8px;cursor:pointer;color:#9A7B3C;font-weight:700;font-size:14px" style-hover="background:#EDE7DA">+ Pair another Sentyx Pi</div>
+  </div>
+</div>
+</sc-if>
+
+<!-- ============ ALERTS / NOTIFICATIONS ============ -->
+<sc-if value="{{ at.alerts }}" hint-placeholder-val="{{ false }}">
+<div style="padding:56px 22px 40px" data-screen-label="Notifications">
+  <div style="display:flex;align-items:center;gap:12px;padding-top:8px"><div onClick="{{ nav.back }}" style="font-size:22px;color:#8A8271;cursor:pointer">‹</div><div style="font-size:22px;font-weight:800;letter-spacing:-.4px">Notifications</div></div>
+  <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:#A69E8B;margin:20px 0 8px">Alert me for at least</div>
+  <div style="display:flex;gap:8px"><sc-for list="{{ minSevOpts }}" as="m" hint-placeholder-count="3"><div onClick="{{ m.pick }}" style="flex:1;text-align:center;font-size:12.5px;font-weight:700;padding:10px;border-radius:11px;cursor:pointer;background:{{ m.bg }};color:{{ m.fg }};border:1px solid {{ m.bd }}">{{ m.cap }}</div></sc-for></div>
+  <sc-for list="{{ notifGroups }}" as="g" hint-placeholder-count="3">
+    <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:#A69E8B;margin:20px 0 8px">{{ g.sec }}</div>
+    <div style="background:#FBF8F2;border:1px solid #E7E0D2;border-radius:14px;overflow:hidden">
+      <sc-for list="{{ g.rows }}" as="r" hint-placeholder-count="3">
+        <div onClick="{{ r.toggle }}" style="padding:13px 16px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #EDE7DA;cursor:pointer">
+          <div><div style="font-size:13.5px;font-weight:600">{{ r.t }}</div></div>
+          <div style="width:38px;height:22px;border-radius:11px;background:{{ r.knob }};position:relative;flex:none;transition:background .15s"><div style="width:18px;height:18px;border-radius:50%;background:#fff;position:absolute;top:2px;left:{{ r.knobX }};transition:left .15s"></div></div>
+        </div>
+      </sc-for>
+    </div>
+  </sc-for>
+  <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:#A69E8B;margin:20px 0 8px">More</div>
+  <div style="background:#FBF8F2;border:1px solid #E7E0D2;border-radius:14px;overflow:hidden">
+    <div onClick="{{ nav.quietHours }}" style="padding:14px 16px;display:flex;justify-content:space-between;border-bottom:1px solid #EDE7DA;cursor:pointer"><span style="font-size:13.5px;font-weight:600">Quiet hours</span><span style="font-size:13px;color:#8A8271">10 PM–7 AM ›</span></div>
+    <div onClick="{{ nav.notifHistory }}" style="padding:14px 16px;display:flex;justify-content:space-between;border-bottom:1px solid #EDE7DA;cursor:pointer"><span style="font-size:13.5px;font-weight:600">Notification history</span><span style="font-size:13px;color:#8A8271">›</span></div>
+    <div onClick="{{ stub }}" style="padding:14px 16px;display:flex;justify-content:space-between;cursor:pointer"><span style="font-size:13.5px;font-weight:600">Hide preview content</span><span style="font-size:13px;color:#8A8271">Off ›</span></div>
+  </div>
+</div>
+</sc-if>
+
+<!-- ============ QUIET HOURS ============ -->
+<sc-if value="{{ at.quietHours }}" hint-placeholder-val="{{ false }}">
+<div style="padding:56px 22px 40px" data-screen-label="Quiet hours">
+  <div style="display:flex;align-items:center;gap:12px;padding-top:8px"><div onClick="{{ nav.back }}" style="font-size:22px;color:#8A8271;cursor:pointer">‹</div><div style="font-size:22px;font-weight:800;letter-spacing:-.4px">Quiet hours</div></div>
+  <div style="background:#FBF8F2;border:1px solid #E7E0D2;border-radius:14px;overflow:hidden;margin-top:18px">
+    <div onClick="{{ quietToggle }}" style="padding:14px 16px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #EDE7DA;cursor:pointer"><span style="font-size:13.5px;font-weight:600">Quiet hours on</span><div style="width:38px;height:22px;border-radius:11px;background:{{ quietKnob }};position:relative"><div style="width:18px;height:18px;border-radius:50%;background:#fff;position:absolute;top:2px;left:{{ quietKnobX }};transition:left .15s"></div></div></div>
+    <div style="padding:14px 16px;display:flex;justify-content:space-between;border-bottom:1px solid #EDE7DA"><span style="font-size:13.5px;color:#6E6656">Start</span><span style="font-size:13px;font-weight:600">10:00 PM</span></div>
+    <div style="padding:14px 16px;display:flex;justify-content:space-between;border-bottom:1px solid #EDE7DA"><span style="font-size:13.5px;color:#6E6656">End</span><span style="font-size:13px;font-weight:600">7:00 AM</span></div>
+    <div style="padding:14px 16px;display:flex;justify-content:space-between"><span style="font-size:13.5px;color:#6E6656">Days</span><span style="font-size:13px;font-weight:600">Every day</span></div>
+  </div>
+  <div onClick="{{ quietUrgentToggle }}" style="margin-top:12px;background:#FBF8F2;border:1px solid #E7E0D2;border-radius:14px;padding:14px 16px;display:flex;align-items:center;justify-content:space-between;cursor:pointer"><div style="flex:1"><div style="font-size:13.5px;font-weight:600">Always allow urgent</div><div style="font-size:11.5px;color:#8A8271;margin-top:1px">Urgent events alert even during quiet hours</div></div><div style="width:38px;height:22px;border-radius:11px;background:{{ quietUKnob }};position:relative;flex:none"><div style="width:18px;height:18px;border-radius:50%;background:#fff;position:absolute;top:2px;left:{{ quietUKnobX }};transition:left .15s"></div></div></div>
+</div>
+</sc-if>
+
+<!-- ============ NOTIF HISTORY ============ -->
+<sc-if value="{{ at.notifHistory }}" hint-placeholder-val="{{ false }}">
+<div style="padding:56px 22px 40px" data-screen-label="Notification history">
+  <div style="display:flex;align-items:center;gap:12px;padding-top:8px"><div onClick="{{ nav.back }}" style="font-size:22px;color:#8A8271;cursor:pointer">‹</div><div style="font-size:22px;font-weight:800;letter-spacing:-.4px">History</div></div>
+  <div style="display:flex;flex-direction:column;gap:10px;margin-top:18px">
+    <sc-for list="{{ notifHistory }}" as="n" hint-placeholder-count="4">
+      <div onClick="{{ n.tap }}" style="background:#FBF8F2;border:1px solid #E7E0D2;border-radius:14px;padding:13px 14px;display:flex;gap:12px;align-items:center;cursor:pointer" style-hover="border-color:#D8CEBB">
+        <span style="width:9px;height:9px;border-radius:50%;background:{{ n.node }};flex:none"></span>
+        <div style="flex:1"><div style="font-size:13.5px;font-weight:700">{{ n.title }}</div><div style="font-size:11.5px;color:#8A8271;margin-top:1px">{{ n.sub }}</div></div>
+        <span style="font-size:16px;color:#C4BBA8">›</span>
+      </div>
+    </sc-for>
+  </div>
+</div>
+</sc-if>
+
+<!-- ============ SETTINGS (root) ============ -->
+<sc-if value="{{ at.settings }}" hint-placeholder-val="{{ false }}">
+<div style="padding:56px 22px 96px" data-screen-label="Settings">
+  <div style="font-size:26px;font-weight:800;letter-spacing:-.5px;padding-top:8px">Settings</div>
+  <sc-for list="{{ settingsGroups }}" as="g" hint-placeholder-count="3">
+    <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:#A69E8B;margin:20px 0 8px">{{ g.sec }}</div>
+    <div style="background:#FBF8F2;border:1px solid #E7E0D2;border-radius:14px;overflow:hidden">
+      <sc-for list="{{ g.rows }}" as="r" hint-placeholder-count="3">
+        <div onClick="{{ r.go }}" style="padding:14px 16px;display:flex;align-items:center;gap:12px;border-bottom:1px solid #EDE7DA;cursor:pointer" style-hover="background:#F0EADD">
+          <span style="font-size:16px;width:22px;text-align:center">{{ r.icon }}</span>
+          <div style="flex:1"><div style="font-size:14px;font-weight:600">{{ r.label }}</div><div style="font-size:11.5px;color:#8A8271;margin-top:1px">{{ r.sub }}</div></div>
+          <span style="font-size:16px;color:#C4BBA8">›</span>
+        </div>
+      </sc-for>
+    </div>
+  </sc-for>
+  <div onClick="{{ signOut }}" style="margin-top:22px;text-align:center;font-size:14px;font-weight:700;color:#B23A2E;cursor:pointer">Sign out</div>
+  <div style="text-align:center;font-size:11px;color:#B0A892;margin-top:12px">Sentyx · v1.0.0 (mock)</div>
+</div>
+</sc-if>
+
+<!-- ============ ACCOUNT ============ -->
+<sc-if value="{{ at.account }}" hint-placeholder-val="{{ false }}">
+<div style="padding:56px 22px 40px" data-screen-label="Account">
+  <div style="display:flex;align-items:center;gap:12px;padding-top:8px"><div onClick="{{ nav.back }}" style="font-size:22px;color:#8A8271;cursor:pointer">‹</div><div style="font-size:22px;font-weight:800;letter-spacing:-.4px">Account</div></div>
+  <div style="display:flex;align-items:center;gap:14px;margin-top:18px;background:#FBF8F2;border:1px solid #E7E0D2;border-radius:16px;padding:16px">
+    <div style="width:52px;height:52px;border-radius:50%;background:#2B271F;color:#C9AE77;display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:800">AR</div>
+    <div><div style="font-size:16px;font-weight:800">Alex Rivera</div><div style="font-size:12.5px;color:#8A8271">alex@example.com</div></div>
+  </div>
+  <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:#A69E8B;margin:20px 0 8px">Profile</div>
+  <div style="background:#FBF8F2;border:1px solid #E7E0D2;border-radius:14px;overflow:hidden">
+    <div onClick="{{ stub }}" style="padding:14px 16px;display:flex;justify-content:space-between;border-bottom:1px solid #EDE7DA;cursor:pointer"><span style="font-size:13.5px;font-weight:600">Name & email</span><span style="color:#C4BBA8">›</span></div>
+    <div onClick="{{ nav.security }}" style="padding:14px 16px;display:flex;justify-content:space-between;border-bottom:1px solid #EDE7DA;cursor:pointer"><span style="font-size:13.5px;font-weight:600">Password & security</span><span style="color:#C4BBA8">›</span></div>
+    <div onClick="{{ nav.sessions }}" style="padding:14px 16px;display:flex;justify-content:space-between;cursor:pointer"><span style="font-size:13.5px;font-weight:600">Signed-in devices</span><span style="font-size:13px;color:#8A8271">3 ›</span></div>
+  </div>
+  <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:#A69E8B;margin:20px 0 8px">Billing</div>
+  <div style="background:#FBF8F2;border:1px solid #E7E0D2;border-radius:14px;overflow:hidden">
+    <div onClick="{{ nav.subscription }}" style="padding:14px 16px;display:flex;justify-content:space-between;border-bottom:1px solid #EDE7DA;cursor:pointer"><span style="font-size:13.5px;font-weight:600">Subscription</span><span style="font-size:13px;color:#8A8271">{{ planName }} ›</span></div>
+    <div onClick="{{ restorePurchases }}" style="padding:14px 16px;display:flex;justify-content:space-between;cursor:pointer"><span style="font-size:13.5px;font-weight:600">Restore purchases</span><span style="color:#C4BBA8">›</span></div>
+  </div>
+</div>
+</sc-if>
+
+<!-- ============ SECURITY ============ -->
+<sc-if value="{{ at.security }}" hint-placeholder-val="{{ false }}">
+<div style="padding:56px 22px 40px" data-screen-label="Security">
+  <div style="display:flex;align-items:center;gap:12px;padding-top:8px"><div onClick="{{ nav.back }}" style="font-size:22px;color:#8A8271;cursor:pointer">‹</div><div style="font-size:22px;font-weight:800;letter-spacing:-.4px">Security</div></div>
+  <div style="background:#FBF8F2;border:1px solid #E7E0D2;border-radius:14px;overflow:hidden;margin-top:18px">
+    <div onClick="{{ stub }}" style="padding:14px 16px;display:flex;justify-content:space-between;border-bottom:1px solid #EDE7DA;cursor:pointer"><span style="font-size:13.5px;font-weight:600">Change password</span><span style="color:#C4BBA8">›</span></div>
+    <div style="padding:14px 16px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #EDE7DA"><span style="font-size:13.5px;font-weight:600">Two-factor auth</span><div style="width:38px;height:22px;border-radius:11px;background:#2F7C4A;position:relative"><div style="width:18px;height:18px;border-radius:50%;background:#fff;position:absolute;top:2px;left:18px"></div></div></div>
+    <div onClick="{{ nav.sessions }}" style="padding:14px 16px;display:flex;justify-content:space-between;cursor:pointer"><span style="font-size:13.5px;font-weight:600">Signed-in devices</span><span style="color:#C4BBA8">›</span></div>
+  </div>
+</div>
+</sc-if>
+
+<!-- ============ SESSIONS ============ -->
+<sc-if value="{{ at.sessions }}" hint-placeholder-val="{{ false }}">
+<div style="padding:56px 22px 40px" data-screen-label="Sessions">
+  <div style="display:flex;align-items:center;gap:12px;padding-top:8px"><div onClick="{{ nav.back }}" style="font-size:22px;color:#8A8271;cursor:pointer">‹</div><div style="font-size:22px;font-weight:800;letter-spacing:-.4px">Signed-in devices</div></div>
+  <div style="display:flex;flex-direction:column;gap:10px;margin-top:18px">
+    <div style="background:#FBF8F2;border:1px solid #E7E0D2;border-radius:14px;padding:14px;display:flex;align-items:center;gap:12px"><span style="font-size:17px">📱</span><div style="flex:1"><div style="font-size:13.5px;font-weight:700">iPhone 15 · this device</div><div style="font-size:11.5px;color:#8A8271">Los Angeles · active now</div></div><span style="font-size:11px;font-weight:700;color:#2F7C4A">Current</span></div>
+    <div style="background:#FBF8F2;border:1px solid #E7E0D2;border-radius:14px;padding:14px;display:flex;align-items:center;gap:12px"><span style="font-size:17px">💻</span><div style="flex:1"><div style="font-size:13.5px;font-weight:700">MacBook Pro</div><div style="font-size:11.5px;color:#8A8271">Los Angeles · 2 days ago</div></div><span onClick="{{ stub }}" style="font-size:12px;font-weight:700;color:#B23A2E;cursor:pointer">Revoke</span></div>
+    <div style="background:#FBF8F2;border:1px solid #E7E0D2;border-radius:14px;padding:14px;display:flex;align-items:center;gap:12px"><span style="font-size:17px">📱</span><div style="flex:1"><div style="font-size:13.5px;font-weight:700">iPad</div><div style="font-size:11.5px;color:#8A8271">Home · 1 week ago</div></div><span onClick="{{ stub }}" style="font-size:12px;font-weight:700;color:#B23A2E;cursor:pointer">Revoke</span></div>
+  </div>
+</div>
+</sc-if>
+
+<!-- ============ PRIVACY ============ -->
+<sc-if value="{{ at.privacy }}" hint-placeholder-val="{{ false }}">
+<div style="padding:56px 22px 40px" data-screen-label="Privacy">
+  <div style="display:flex;align-items:center;gap:12px;padding-top:8px"><div onClick="{{ nav.back }}" style="font-size:22px;color:#8A8271;cursor:pointer">‹</div><div style="font-size:22px;font-weight:800;letter-spacing:-.4px">Privacy & data</div></div>
+  <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:#A69E8B;margin:20px 0 8px">App permissions</div>
+  <div onClick="{{ nav.permStatus }}" style="background:#FBF8F2;border:1px solid #E7E0D2;border-radius:14px;padding:14px 16px;display:flex;justify-content:space-between;cursor:pointer"><span style="font-size:13.5px;font-weight:600">Bluetooth, network, notifications…</span><span style="color:#C4BBA8">›</span></div>
+  <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:#A69E8B;margin:20px 0 8px">Data</div>
+  <div style="background:#FBF8F2;border:1px solid #E7E0D2;border-radius:14px;overflow:hidden">
+    <div onClick="{{ stub }}" style="padding:14px 16px;display:flex;justify-content:space-between;border-bottom:1px solid #EDE7DA;cursor:pointer"><span style="font-size:13.5px;font-weight:600">Data retention</span><span style="font-size:13px;color:#8A8271">30 days ›</span></div>
+    <div onClick="{{ stub }}" style="padding:14px 16px;display:flex;justify-content:space-between;border-bottom:1px solid #EDE7DA;cursor:pointer"><span style="font-size:13.5px;font-weight:600">Export account data</span><span style="color:#C4BBA8">›</span></div>
+    <div onClick="{{ stub }}" style="padding:14px 16px;display:flex;justify-content:space-between;cursor:pointer"><span style="font-size:13.5px;font-weight:600;color:#B23A2E">Delete cloud event data</span><span style="color:#E0A99C">›</span></div>
+  </div>
+  <div onClick="{{ stub }}" style="margin-top:20px;text-align:center;font-size:14px;font-weight:700;color:#B23A2E;cursor:pointer">Delete account</div>
+</div>
+</sc-if>
+
+<!-- ============ APP SETTINGS ============ -->
+<sc-if value="{{ at.appSettings }}" hint-placeholder-val="{{ false }}">
+<div style="padding:56px 22px 40px" data-screen-label="App settings">
+  <div style="display:flex;align-items:center;gap:12px;padding-top:8px"><div onClick="{{ nav.back }}" style="font-size:22px;color:#8A8271;cursor:pointer">‹</div><div style="font-size:22px;font-weight:800;letter-spacing:-.4px">App settings</div></div>
+  <div style="background:#FBF8F2;border:1px solid #E7E0D2;border-radius:14px;overflow:hidden;margin-top:18px">
+    <div onClick="{{ stub }}" style="padding:14px 16px;display:flex;justify-content:space-between;border-bottom:1px solid #EDE7DA;cursor:pointer"><span style="font-size:13.5px;font-weight:600">Units</span><span style="font-size:13px;color:#8A8271">Imperial ›</span></div>
+    <div onClick="{{ stub }}" style="padding:14px 16px;display:flex;justify-content:space-between;border-bottom:1px solid #EDE7DA;cursor:pointer"><span style="font-size:13.5px;font-weight:600">Time display</span><span style="font-size:13px;color:#8A8271">12-hour ›</span></div>
+    <div onClick="{{ stub }}" style="padding:14px 16px;display:flex;justify-content:space-between;cursor:pointer"><span style="font-size:13.5px;font-weight:600">Language</span><span style="font-size:13px;color:#8A8271">English ›</span></div>
+  </div>
+  <div style="background:#FBF8F2;border:1px solid #E7E0D2;border-radius:14px;overflow:hidden;margin-top:14px">
+    <div onClick="{{ stub }}" style="padding:14px 16px;display:flex;justify-content:space-between;border-bottom:1px solid #EDE7DA;cursor:pointer"><span style="font-size:13.5px;font-weight:600">Help center</span><span style="color:#C4BBA8">›</span></div>
+    <div onClick="{{ stub }}" style="padding:14px 16px;display:flex;justify-content:space-between;border-bottom:1px solid #EDE7DA;cursor:pointer"><span style="font-size:13.5px;font-weight:600">Contact support</span><span style="color:#C4BBA8">›</span></div>
+    <div onClick="{{ stub }}" style="padding:14px 16px;display:flex;justify-content:space-between;cursor:pointer"><span style="font-size:13.5px;font-weight:600">Send feedback</span><span style="color:#C4BBA8">›</span></div>
+  </div>
+</div>
+</sc-if>
+
+<!-- ============ PERMISSION STATUS ============ -->
+<sc-if value="{{ at.permStatus }}" hint-placeholder-val="{{ false }}">
+<div style="padding:56px 22px 40px" data-screen-label="Permissions status">
+  <div style="display:flex;align-items:center;gap:12px;padding-top:8px"><div onClick="{{ nav.back }}" style="font-size:22px;color:#8A8271;cursor:pointer">‹</div><div style="font-size:22px;font-weight:800;letter-spacing:-.4px">App permissions</div></div>
+  <div style="background:#FBF8F2;border:1px solid #E7E0D2;border-radius:14px;overflow:hidden;margin-top:18px">
+    <div style="padding:14px 16px;display:flex;justify-content:space-between;border-bottom:1px solid #EDE7DA"><span style="font-size:13.5px;font-weight:600">Bluetooth</span><span style="font-size:12.5px;font-weight:700;color:#2F7C4A">Allowed</span></div>
+    <div style="padding:14px 16px;display:flex;justify-content:space-between;border-bottom:1px solid #EDE7DA"><span style="font-size:13.5px;font-weight:600">Local network</span><span style="font-size:12.5px;font-weight:700;color:#2F7C4A">Allowed</span></div>
+    <div onClick="{{ stub }}" style="padding:14px 16px;display:flex;justify-content:space-between;border-bottom:1px solid #EDE7DA;cursor:pointer"><span style="font-size:13.5px;font-weight:600">Notifications</span><span style="font-size:12.5px;font-weight:700;color:#B23A2E">Denied · enable ›</span></div>
+    <div style="padding:14px 16px;display:flex;justify-content:space-between;border-bottom:1px solid #EDE7DA"><span style="font-size:13.5px;font-weight:600">Photo library</span><span style="font-size:12.5px;font-weight:700;color:#2F7C4A">Allowed</span></div>
+    <div style="padding:14px 16px;display:flex;justify-content:space-between"><span style="font-size:13.5px;font-weight:600">Files</span><span style="font-size:12.5px;font-weight:700;color:#8A8271">Ask</span></div>
+  </div>
+</div>
+</sc-if>
+
+<!-- ============ SUBSCRIPTION ============ -->
+<sc-if value="{{ at.subscription }}" hint-placeholder-val="{{ false }}">
+<div style="padding:56px 22px 40px" data-screen-label="Subscription">
+  <div style="display:flex;align-items:center;gap:12px;padding-top:8px"><div onClick="{{ nav.back }}" style="font-size:22px;color:#8A8271;cursor:pointer">‹</div><div style="font-size:22px;font-weight:800;letter-spacing:-.4px">Subscription</div></div>
+  <div style="margin-top:18px;background:#2B271F;color:#F4F0E9;border-radius:18px;padding:18px">
+    <div style="font-size:12px;font-weight:700;letter-spacing:1px;color:#C9AE77">CURRENT PLAN</div>
+    <div style="font-size:24px;font-weight:800;margin-top:6px">{{ planName }}</div>
+    <div style="font-size:12.5px;color:#C9C2B4;margin-top:6px">Used 6 of 10 AI analyses today · resets 12:00 AM</div>
+    <div style="height:6px;border-radius:3px;background:rgba(255,255,255,.15);margin-top:10px"><div style="height:6px;border-radius:3px;background:#C9AE77;width:60%"></div></div>
+  </div>
+  <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:#A69E8B;margin:20px 0 10px">Plans</div>
+  <div style="display:flex;flex-direction:column;gap:12px">
+    <sc-for list="{{ tiers }}" as="t" hint-placeholder-count="3">
+      <div style="background:#FBF8F2;border:1.5px solid {{ t.current }};border:1.5px solid #E7E0D2;border-radius:18px;padding:16px">
+        <div style="display:flex;align-items:baseline;justify-content:space-between">
+          <div style="display:flex;align-items:center;gap:8px"><span style="font-size:17px;font-weight:800">{{ t.name }}</span><sc-if value="{{ t.current }}" hint-placeholder-val="{{ false }}"><span style="font-size:10px;font-weight:700;background:#2F7C4A;color:#fff;padding:2px 8px;border-radius:999px">Current</span></sc-if></div>
+          <div><span style="font-size:20px;font-weight:800">{{ t.price }}</span><span style="font-size:12px;color:#8A8271">{{ t.per }}</span></div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:6px;margin-top:12px">
+          <sc-for list="{{ t.feats }}" as="f" hint-placeholder-count="4"><div style="display:flex;gap:8px;align-items:baseline"><span style="color:#9A7B3C;font-size:11px">✓</span><span style="font-size:12.5px;color:#4A4436">{{ f }}</span></div></sc-for>
+        </div>
+        <sc-if value="{{ t.current }}" hint-placeholder-val="{{ false }}"><div onClick="{{ stub }}" style="margin-top:14px;text-align:center;padding:12px;border:1px solid #D8CEBB;border-radius:12px;font-size:13px;font-weight:700;color:#8A8271;cursor:pointer">Manage plan</div></sc-if>
+        <sc-if value="{{ t.current }}" hint-placeholder-val="{{ true }}"></sc-if>
+        <div onClick="{{ t.pick }}" style="margin-top:14px;text-align:center;padding:13px;background:#2B271F;color:#F4F0E9;border-radius:12px;font-size:13.5px;font-weight:700;cursor:pointer;display:{{ t.pickDisplay }}">Choose {{ t.name }}</div>
+      </div>
+    </sc-for>
+  </div>
+  <div onClick="{{ restorePurchases }}" style="margin-top:16px;text-align:center;font-size:13px;font-weight:700;color:#9A7B3C;cursor:pointer">Restore purchases</div>
+</div>
+</sc-if>
+
+<!-- ============ STATES (prototype) ============ -->
+<sc-if value="{{ at.states }}" hint-placeholder-val="{{ false }}">
+<div style="padding:56px 22px 40px" data-screen-label="Prototype states">
+  <div style="display:flex;align-items:center;gap:12px;padding-top:8px"><div onClick="{{ nav.back }}" style="font-size:22px;color:#8A8271;cursor:pointer">‹</div><div style="font-size:22px;font-weight:800;letter-spacing:-.4px">Prototype states</div></div>
+  <div style="font-size:12.5px;color:#8A8271;line-height:1.5;margin-top:10px">Flip these to preview the app under different conditions. Changes apply live across the app.</div>
+  <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:#A69E8B;margin:20px 0 8px">Device state</div>
+  <div style="display:flex;gap:8px;flex-wrap:wrap"><sc-for list="{{ devStateChips }}" as="c" hint-placeholder-count="4"><div onClick="{{ c.pick }}" style="font-size:12px;font-weight:700;padding:8px 12px;border-radius:999px;cursor:pointer;background:{{ c.bg }};color:{{ c.fg }};border:1px solid {{ c.bd }}">{{ c.label }}</div></sc-for></div>
+  <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:#A69E8B;margin:20px 0 8px">Event feed state</div>
+  <div style="display:flex;gap:8px;flex-wrap:wrap"><sc-for list="{{ feedStateChips }}" as="c" hint-placeholder-count="4"><div onClick="{{ c.pick }}" style="font-size:12px;font-weight:700;padding:8px 12px;border-radius:999px;cursor:pointer;background:{{ c.bg }};color:{{ c.fg }};border:1px solid {{ c.bd }}">{{ c.label }}</div></sc-for></div>
+  <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:#A69E8B;margin:20px 0 8px">Plan</div>
+  <div style="display:flex;gap:8px;flex-wrap:wrap"><sc-for list="{{ planChips }}" as="c" hint-placeholder-count="3"><div onClick="{{ c.pick }}" style="font-size:12px;font-weight:700;padding:8px 12px;border-radius:999px;cursor:pointer;background:{{ c.bg }};color:{{ c.fg }};border:1px solid {{ c.bd }}">{{ c.label }}</div></sc-for></div>
+  <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:#A69E8B;margin:20px 0 8px">Live events</div>
+  <div onClick="{{ triggerUrgent }}" style="background:#2B271F;color:#F4F0E9;text-align:center;padding:14px;border-radius:13px;font-size:14px;font-weight:700;cursor:pointer">Simulate incoming urgent event</div>
+</div>
+</sc-if>
+
+<!-- ============ UPGRADE OVERLAY ============ -->
+<sc-if value="{{ upgradeStep }}" hint-placeholder-val="{{ false }}">
+<div style="position:absolute;inset:0;z-index:180;background:rgba(43,39,31,.45);display:flex;align-items:flex-end">
+  <div style="width:100%;background:#F4F0E9;border-radius:22px 22px 0 0;padding:22px 22px 34px">
+    <div style="width:38px;height:4px;border-radius:2px;background:#D8CEBB;margin:0 auto 18px"></div>
+    <sc-if value="{{ upgradeReview }}" hint-placeholder-val="{{ true }}">
+      <div style="font-size:20px;font-weight:800">Upgrade to {{ upgradeTarget.name }}</div>
+      <div style="font-size:13px;color:#6E6656;line-height:1.5;margin-top:8px">{{ upgradeTarget.price }}{{ upgradeTarget.per }} · 7-day free trial, cancel anytime. Billed after trial.</div>
+      <div style="background:#FBF8F2;border:1px solid #E7E0D2;border-radius:14px;padding:12px 14px;margin-top:14px;display:flex;flex-direction:column;gap:7px">
+        <sc-for list="{{ upgradeTarget.feats }}" as="f" hint-placeholder-count="4"><div style="display:flex;gap:8px;align-items:baseline"><span style="color:#9A7B3C;font-size:11px">✓</span><span style="font-size:12.5px;color:#4A4436">{{ f }}</span></div></sc-for>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:9px;margin-top:16px">
+        <div onClick="{{ upgradeConfirm }}" style="background:#2B271F;color:#F4F0E9;text-align:center;padding:15px;border-radius:13px;font-size:14px;font-weight:700;cursor:pointer">Start free trial</div>
+        <div onClick="{{ upgradeDeclined }}" style="text-align:center;font-size:12px;color:#B0A892;cursor:pointer">Simulate declined payment</div>
+        <div onClick="{{ upgradeClose }}" style="text-align:center;font-size:13px;font-weight:700;color:#8A8271;cursor:pointer">Not now</div>
+      </div>
+    </sc-if>
+    <sc-if value="{{ upgradeSuccess }}" hint-placeholder-val="{{ false }}">
+      <div style="text-align:center;display:flex;flex-direction:column;align-items:center;gap:14px;padding:10px 0">
+        <div style="width:64px;height:64px;border-radius:50%;background:#2F7C4A;color:#fff;display:flex;align-items:center;justify-content:center;font-size:30px">✓</div>
+        <div style="font-size:20px;font-weight:800">You're on {{ upgradeTarget.name }}</div>
+        <div style="font-size:13px;color:#6E6656;line-height:1.5">Your trial has started. Enjoy unlimited AI analysis and remote full-quality access.</div>
+        <div onClick="{{ upgradeClose }}" style="width:100%;box-sizing:border-box;background:#2B271F;color:#F4F0E9;text-align:center;padding:15px;border-radius:13px;font-size:14px;font-weight:700;cursor:pointer">Done</div>
+      </div>
+    </sc-if>
+    <sc-if value="{{ upgradeDeclinedState }}" hint-placeholder-val="{{ false }}">
+      <div style="text-align:center;display:flex;flex-direction:column;align-items:center;gap:14px;padding:10px 0">
+        <div style="width:64px;height:64px;border-radius:50%;background:#F3D9D2;color:#9A2E22;display:flex;align-items:center;justify-content:center;font-size:30px">!</div>
+        <div style="font-size:20px;font-weight:800;color:#9A2E22">Payment declined</div>
+        <div style="font-size:13px;color:#6E6656;line-height:1.5">We couldn't process your payment method. Try another card or come back later.</div>
+        <div onClick="{{ upgradeClose }}" style="width:100%;box-sizing:border-box;background:#2B271F;color:#F4F0E9;text-align:center;padding:15px;border-radius:13px;font-size:14px;font-weight:700;cursor:pointer">Close</div>
+      </div>
+    </sc-if>
+  </div>
+</div>
+</sc-if>
+
+</div>
+
+<!-- ============ TAB BAR ============ -->
+<sc-if value="{{ showTabs }}" hint-placeholder-val="{{ false }}">
+<div style="flex:none;background:#FBF8F2;border-top:1px solid #E7E0D2;padding:9px 16px 26px;display:flex;justify-content:space-around">
+  <sc-for list="{{ tabBar }}" as="t" hint-placeholder-count="4">
+    <div onClick="{{ t.tap }}" style="display:flex;flex-direction:column;align-items:center;gap:4px;cursor:pointer;position:relative;padding:0 6px">
+      <span style="font-size:19px;color:{{ t.color }}">{{ t.icon }}</span>
+      <span style="font-size:10px;font-weight:700;color:{{ t.color }}">{{ t.label }}</span>
+      <sc-if value="{{ t.badge }}" hint-placeholder-val="{{ false }}"><span style="position:absolute;top:-3px;right:2px;width:8px;height:8px;border-radius:50%;background:#B23A2E"></span></sc-if>
+    </div>
+  </sc-for>
+</div>
+</sc-if>
+
+<!-- ============ SEVERITY SHEET ============ -->
+<sc-if value="{{ sevSheet }}" hint-placeholder-val="{{ false }}">
+<div onClick="{{ closeSheets }}" style="position:absolute;inset:0;z-index:150;background:rgba(43,39,31,.4);display:flex;align-items:flex-end">
+  <div style="width:100%;background:#F4F0E9;border-radius:22px 22px 0 0;padding:20px 20px 34px">
+    <div style="width:38px;height:4px;border-radius:2px;background:#D8CEBB;margin:0 auto 16px"></div>
+    <div style="font-size:16px;font-weight:800;margin-bottom:12px">Change severity</div>
+    <div style="display:flex;flex-direction:column;gap:8px">
+      <sc-for list="{{ sevOptions }}" as="s" hint-placeholder-count="3"><div onClick="{{ s.pick }}" style="display:flex;align-items:center;gap:11px;padding:13px 14px;border-radius:13px;cursor:pointer;background:{{ s.bg }};border:1px solid {{ s.bd }}"><span style="width:11px;height:11px;border-radius:50%;background:{{ s.node }}"></span><span style="font-size:14px;font-weight:700;flex:1">{{ s.cap }}</span><sc-if value="{{ s.on }}" hint-placeholder-val="{{ false }}"><span style="color:#2F7C4A;font-weight:700">✓</span></sc-if></div></sc-for>
+    </div>
+  </div>
+</div>
+</sc-if>
+
+<!-- ============ DOWNLOAD ROUTE SHEET ============ -->
+<sc-if value="{{ routeSheet }}" hint-placeholder-val="{{ false }}">
+<div onClick="{{ closeSheets }}" style="position:absolute;inset:0;z-index:150;background:rgba(43,39,31,.4);display:flex;align-items:flex-end">
+  <div onClick="{{ noop }}" style="width:100%;background:#F4F0E9;border-radius:22px 22px 0 0;padding:20px 20px 34px">
+    <div style="width:38px;height:4px;border-radius:2px;background:#D8CEBB;margin:0 auto 16px"></div>
+    <div style="font-size:16px;font-weight:800">Download original</div>
+    <div style="display:flex;justify-content:space-between;margin-top:12px;background:#FBF8F2;border:1px solid #E7E0D2;border-radius:13px;padding:12px 14px;font-size:12.5px"><span style="color:#8A8271">248 MB · ~1:14 clip</span><span style="font-weight:700">41.6 GB phone free</span></div>
+    <div style="font-size:12px;font-weight:700;color:#8A8271;margin:16px 0 8px">Transfer route</div>
+    <div style="display:flex;flex-direction:column;gap:8px">
+      <sc-for list="{{ routeOptions }}" as="r" hint-placeholder-count="3"><div onClick="{{ r.pick }}" style="display:flex;align-items:center;gap:12px;padding:13px 14px;border-radius:13px;background:#FBF8F2;border:1px solid {{ r.bd }};cursor:{{ r.cursor }};opacity:{{ r.opacity }}"><span style="font-size:17px">{{ r.icon }}</span><div style="flex:1"><div style="font-size:13.5px;font-weight:700">{{ r.label }}</div><div style="font-size:11.5px;color:#8A8271">{{ r.sub }}</div></div><sc-if value="{{ r.on }}" hint-placeholder-val="{{ false }}"><span style="color:#2F7C4A;font-weight:700">✓</span></sc-if></div></sc-for>
+    </div>
+    <div onClick="{{ startDownload }}" style="margin-top:16px;background:#2B271F;color:#F4F0E9;text-align:center;padding:15px;border-radius:13px;font-size:14px;font-weight:700;cursor:pointer">Start download</div>
+  </div>
+</div>
+</sc-if>
+
+<!-- ============ MULTI-SELECT ACTION BAR ============ -->
+<sc-if value="{{ selectBar }}" hint-placeholder-val="{{ false }}">
+<div style="position:absolute;left:12px;right:12px;bottom:96px;z-index:120;background:#2B271F;color:#F4F0E9;border-radius:16px;padding:12px 16px;display:flex;align-items:center;gap:14px;box-shadow:0 12px 30px rgba(43,39,31,.35)">
+  <span style="font-size:13px;font-weight:700;flex:1">{{ selectedCount }} selected</span>
+  <span onClick="{{ bulkDownload }}" style="font-size:12.5px;font-weight:700;color:#C9AE77;cursor:pointer">Download</span>
+  <span onClick="{{ bulkReviewed }}" style="font-size:12.5px;font-weight:700;color:#C9AE77;cursor:pointer">Reviewed</span>
+  <span onClick="{{ bulkDelete }}" style="font-size:12.5px;font-weight:700;color:#E39B8C;cursor:pointer">Delete</span>
+</div>
+</sc-if>
+
+</div>
+</x-import>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:402,&quot;height&quot;:874}}">
+class Component extends DCLogic {
+  state = {
+    scr: 'welcome', stack: [],
+    openEvent: null, camIdx: 0, seekMoment: null,
+    feedState: 'normal', filterSev: 'all', selectMode: false, selected: {}, searchOpen: false,
+    evMeta: {}, sevOverride: {}, feedback: {},
+    devState: 'normal',
+    plan: 'free', upgradeStep: null,
+    notif: {}, quiet: { on: true, urgent: true }, minSev: 'attention',
+    queue: [], loadedMore: false,
+    sevSheet: false, routeSheet: false, toast: null,
+    dl: {}, fwStep: null,
+  };
+  componentWillUnmount() { if (this._iv) clearInterval(this._iv); }
+
+  go(scr) { this.setState(s => ({ stack: [...s.stack, s.scr], scr, sevSheet: false, routeSheet: false })); }
+  back() { this.setState(s => { const st = [...s.stack]; const prev = st.pop() ?? 'events'; return { stack: st, scr: prev, sevSheet: false, routeSheet: false }; }); }
+  tabTo(t) { const m = { events: 'events', device: 'device', downloads: 'downloads', settings: 'settings' }; this.setState({ scr: m[t], stack: [], selectMode: false, selected: {} }); }
+  showToast(t) { if (this._tt) clearTimeout(this._tt); this.setState({ toast: t }); this._tt = setTimeout(() => this.setState({ toast: null }), 4200); }
+
+  meta(id) { return this.state.evMeta[id] || {}; }
+  setMeta(id, patch) { this.setState(s => ({ evMeta: { ...s.evMeta, [id]: { ...(s.evMeta[id] || {}), ...patch } } })); }
+
+  tickDl() {
+    if (this._iv) return;
+    this._iv = setInterval(() => {
+      this.setState(s => {
+        let any = false;
+        const q = s.queue.map(it => {
+          if (it.status === 'transferring' && it.pct < 100) { any = true; const p = Math.min(100, it.pct + 3 + Math.random() * 4); return { ...it, pct: p, status: p >= 100 ? 'complete' : 'transferring' }; }
+          return it;
+        });
+        if (!any && this._iv) { clearInterval(this._iv); this._iv = null; }
+        return { queue: q };
+      });
+    }, 220);
+  }
+  queueAction(id, action) {
+    this.setState(s => ({ queue: s.queue.map(it => {
+      if (it.id !== id) return it;
+      if (action === 'pause') return { ...it, status: 'paused' };
+      if (action === 'resume') return { ...it, status: 'transferring' };
+      if (action === 'retry') return { ...it, status: 'transferring', pct: it.pct };
+      if (action === 'cancel') return { ...it, status: 'canceled' };
+      return it;
+    }).filter(it => !(action === 'remove' && it.id === id)) }));
+    if (action === 'resume' || action === 'retry') this.tickDl();
+  }
+
+  renderVals() {
+    const S = this.state;
+    const SEV = {
+      urgent: { cap: 'Urgent', node: '#B23A2E', bg: '#F3D9D2', fg: '#9A2E22' },
+      attention: { cap: 'Attention', node: '#C08A3E', bg: '#E9DCC4', fg: '#8A5A12' },
+      routine: { cap: 'Routine', node: '#B8AD97', bg: '#EAE4D8', fg: '#7A7060' },
+    };
+    const AN = {
+      complete: { label: 'Analyzed', color: '#2F7C4A', bg: 'rgba(47,124,74,.12)' },
+      writing: { label: 'Recording on car', color: '#8A6D2E', bg: 'rgba(154,123,60,.14)', anim: true },
+      uploading: { label: 'Uploading clip', color: '#8A6D2E', bg: 'rgba(154,123,60,.14)', anim: true },
+      analyzing: { label: 'Gemini analyzing', color: '#8A6D2E', bg: 'rgba(154,123,60,.14)', anim: true },
+      waiting: { label: 'Waiting for upload · Pi offline', color: '#8A8271', bg: '#EAE4D8' },
+      failed: { label: 'Analysis failed · retry', color: '#9A2E22', bg: '#F3D9D2' },
+      encrypted: { label: 'Encrypted clip', color: '#8A8271', bg: '#EAE4D8' },
+      unsupported: { label: 'Unsupported clip', color: '#8A8271', bg: '#EAE4D8' },
+    };
+    const EVENTS = [
+      { id: 'e5', day: 'Today', time: '2:41 PM', loc: 'Downtown Garage', sev: 'attention', title: 'Motion at rear bumper', cam: 'Rear', dur: '—', state: 'writing' },
+      { id: 'e1', day: 'Today', time: '2:14 PM', loc: 'Downtown Garage', sev: 'attention', title: 'Person lingered near driver door', cam: 'Left repeater', cams: ['Left repeater', 'Front'], dur: '0:48', conf: 92, state: 'complete',
+        aiShort: 'Looked through the driver window, then walked away — no contact.',
+        desc: 'A person approached and looked through the driver window for several seconds, then walked away. No contact with the vehicle was detected.',
+        facts: ['1 person detected', 'Approached driver-side door', 'No contact with vehicle', 'Duration 48s'],
+        interp: 'Likely curiosity; behavior did not escalate and no attempt to open the vehicle was seen.',
+        subjects: ['Person'], contact: false,
+        moments: [{ t: '0:04', l: 'Person enters frame', pct: 8 }, { t: '0:12', l: 'Approaches driver door', pct: 25 }, { t: '0:21', l: 'Looks through window', pct: 44 }, { t: '0:39', l: 'Walks away', pct: 81 }] },
+      { id: 'e6', day: 'Today', time: '12:20 PM', loc: 'Location unknown', sev: 'routine', title: 'Event awaiting upload', cam: 'Front', dur: '0:22', state: 'waiting' },
+      { id: 'e2', day: 'Today', time: '11:38 AM', loc: 'Whole Foods · Rampart', sev: 'routine', title: 'Shopping cart passed close to vehicle', cam: 'Front camera', cams: ['Front'], dur: '1:02', conf: 88, state: 'complete',
+        aiShort: 'Cart passed close by — no contact detected.',
+        desc: 'A shopping cart passed close to the front of the vehicle while being pushed through the lot. No contact was detected.',
+        facts: ['1 cart detected', 'Passed front of vehicle', 'No contact', 'Duration 1:02'],
+        interp: 'Routine parking-lot activity; no risk indicators present.',
+        subjects: ['Object · cart'], contact: false,
+        moments: [{ t: '0:09', l: 'Cart enters frame', pct: 15 }, { t: '0:31', l: 'Closest approach', pct: 50 }, { t: '0:52', l: 'Cart moves away', pct: 84 }] },
+      { id: 'e7', day: 'Today', time: '9:52 AM', loc: 'Home', sev: null, title: 'Encrypted event', cam: 'Right repeater', dur: '0:15', state: 'encrypted' },
+      { id: 'e3', day: 'Today', time: '8:05 AM', loc: 'Home', sev: 'routine', title: 'Pedestrian walked past vehicle', cam: 'Right repeater', cams: ['Right repeater'], dur: '0:36', conf: 96, state: 'complete',
+        aiShort: 'Walked past without stopping — no contact.',
+        desc: 'A pedestrian walked past the vehicle without stopping. No stop or contact was detected.',
+        facts: ['1 person detected', 'Walked past vehicle', 'No stop, no contact', 'Duration 36s'],
+        interp: 'Passer-by on the sidewalk; no interaction with the vehicle.',
+        subjects: ['Person'], contact: false,
+        moments: [{ t: '0:06', l: 'Pedestrian enters frame', pct: 17 }, { t: '0:18', l: 'Passes vehicle', pct: 50 }, { t: '0:29', l: 'Exits frame', pct: 81 }] },
+      { id: 'e8', day: 'Today', time: '7:10 AM', loc: 'Home', sev: 'routine', title: 'Analysis could not complete', cam: 'Front', dur: '0:19', state: 'failed' },
+      { id: 'e4', day: 'Yesterday', time: '10:42 PM', loc: 'Street parking · 4th Ave', sev: 'urgent', title: 'Vehicle door made contact with passenger side', cam: 'Right repeater', cams: ['Right repeater', 'Rear'], dur: '1:14', conf: 95, state: 'complete',
+        aiShort: 'Adjacent car door contacted the passenger side. Contact detected.',
+        desc: 'An adjacent vehicle opened its door into the passenger side of the vehicle, making contact. The other party left shortly after.',
+        facts: ['1 vehicle, 1 person detected', 'Door opened into passenger side', 'Contact detected', 'Duration 1:14'],
+        interp: 'Possible door-ding incident. Review recommended; consider saving the original clip.',
+        subjects: ['Vehicle', 'Person'], contact: true,
+        moments: [{ t: '0:11', l: 'Adjacent car arrives', pct: 15 }, { t: '0:33', l: 'Door opens', pct: 44 }, { t: '0:36', l: 'Contact with panel', pct: 49 }, { t: '1:02', l: 'Party departs', pct: 84 }] },
+    ];
+    this._EVENTS = EVENTS;
+
+    // ---------- device state ----------
+    const DEVS = {
+      normal: { badge: 'Online', dot: '#2F7C4A', chipBg: 'rgba(47,124,74,.12)', chipFg: '#2F7C4A', chipText: 'Online · Wi-Fi', sentry: 'Watching', storage: 73, power: 'Healthy', temp: 'Normal', fw: 'v4.0.2 · current', fwUpd: false, backlog: 0, backend: true, ble: true, wifi: true, lastSeen: 'Just now', writing: false, issues: [] },
+      offline: { badge: 'Offline', dot: '#B23A2E', chipBg: 'rgba(180,58,46,.12)', chipFg: '#B23A2E', chipText: 'Offline', sentry: 'Unknown', storage: 73, power: 'Healthy', temp: '—', fw: 'v4.0.2', fwUpd: false, backlog: 3, backend: false, ble: false, wifi: false, lastSeen: '2:31 PM', writing: false, issues: ['No connection to Garage Pi for 21 min'] },
+      lowStorage: { badge: 'Needs attention', dot: '#C08A3E', chipBg: 'rgba(192,138,62,.14)', chipFg: '#8A5A12', chipText: 'Low storage', sentry: 'Watching', storage: 6, power: 'Healthy', temp: 'Normal', fw: 'v4.0.2 · current', fwUpd: false, backlog: 0, backend: true, ble: true, wifi: true, lastSeen: 'Just now', writing: false, issues: ['Only 6% storage free — oldest clips will be reclaimed'] },
+      overheating: { badge: 'Needs attention', dot: '#C08A3E', chipBg: 'rgba(192,138,62,.14)', chipFg: '#8A5A12', chipText: 'Running hot', sentry: 'Watching', storage: 61, power: 'Healthy', temp: 'High · 71°C', fw: 'v4.0.2 · current', fwUpd: false, backlog: 0, backend: true, ble: true, wifi: true, lastSeen: 'Just now', writing: false, issues: ['Device temperature is high — check ventilation'] },
+      weakPower: { badge: 'Needs attention', dot: '#C08A3E', chipBg: 'rgba(192,138,62,.14)', chipFg: '#8A5A12', chipText: 'Weak power', sentry: 'Watching', storage: 68, power: 'Weak · 4.6V', temp: 'Normal', fw: 'v4.0.2 · current', fwUpd: false, backlog: 0, backend: true, ble: true, wifi: true, lastSeen: 'Just now', writing: false, issues: ['USB power is below spec — use a higher-output port'] },
+      backlog: { badge: 'Online', dot: '#2F7C4A', chipBg: 'rgba(47,124,74,.12)', chipFg: '#2F7C4A', chipText: 'Uploading', sentry: 'Watching', storage: 44, power: 'Healthy', temp: 'Normal', fw: 'v4.0.2 · current', fwUpd: false, backlog: 12, backend: true, ble: true, wifi: true, lastSeen: 'Just now', writing: true, issues: ['12 clips queued to upload'] },
+      firmware: { badge: 'Update required', dot: '#C08A3E', chipBg: 'rgba(192,138,62,.14)', chipFg: '#8A5A12', chipText: 'Update ready', sentry: 'Watching', storage: 73, power: 'Healthy', temp: 'Normal', fw: 'v3.8.1 → v4.0.2', fwUpd: true, backlog: 0, backend: true, ble: true, wifi: true, lastSeen: 'Just now', writing: false, issues: ['Firmware update available'] },
+      backendDown: { badge: 'Local only', dot: '#C08A3E', chipBg: 'rgba(192,138,62,.14)', chipFg: '#8A5A12', chipText: 'Local only', sentry: 'Watching', storage: 73, power: 'Healthy', temp: 'Normal', fw: 'v4.0.2 · current', fwUpd: false, backlog: 0, backend: false, ble: true, wifi: true, lastSeen: 'Just now', writing: false, issues: ['Backend unreachable — local Wi-Fi still works'] },
+    };
+    const dv = DEVS[S.devState];
+    const dev = { name: 'Garage Pi', vehicle: 'Model 3', location: 'Downtown Garage', ...dv };
+    dev.bleTxt = dev.ble ? 'Connected' : 'Off'; dev.bleColor = dev.ble ? '#2F7C4A' : '#B23A2E';
+    dev.wifiTxt = dev.wifi ? 'Connected · Garage 5G' : 'Disconnected'; dev.wifiColor = dev.wifi ? '#2F7C4A' : '#B23A2E';
+    dev.backendTxt = dev.backend ? 'Connected' : 'Unreachable'; dev.backendColor = dev.backend ? '#2F7C4A' : '#C08A3E';
+    dev.storageUsedW = (100 - dev.storage) + '%';
+    dev.writingTxt = dev.writing ? 'Recording an event now' : 'Idle';
+    dev.hasIssues = dev.issues.length > 0;
+    dev.offlineCap = '~' + Math.round(dev.storage * 0.9) + ' more events offline';
+    dev.backlogTxt = dev.backlog > 0 ? dev.backlog + ' clips queued' : 'None';
+
+    // ---------- nav ----------
+    const scrs = ['welcome', 'signin', 'create', 'verify', 'reset', 'pairIntro', 'perms', 'scan', 'code', 'nameDev', 'wifi', 'test', 'firmware', 'done', 'events', 'detail', 'downloads', 'dlLibrary', 'dlSettings', 'device', 'deviceSettings', 'firmwareFlow', 'diagnostics', 'factoryReset', 'addDevice', 'alerts', 'quietHours', 'notifHistory', 'settings', 'account', 'security', 'sessions', 'privacy', 'appSettings', 'permStatus', 'subscription', 'plans', 'states'];
+    const nav = { back: () => this.back() };
+    scrs.forEach(s => nav[s] = () => this.go(s));
+    const tabs = { events: () => this.tabTo('events'), device: () => this.tabTo('device'), downloads: () => this.tabTo('downloads'), settings: () => this.tabTo('settings') };
+    const at = {}; at[S.scr] = true;
+    const tabRoots = ['events', 'device', 'downloads', 'settings'];
+    const showTabs = tabRoots.includes(S.scr);
+    const backlogBadge = dev.backlog > 0;
+    const tabBar = [
+      { key: 'events', label: 'Events', icon: '◎', tap: tabs.events },
+      { key: 'device', label: 'Device', icon: '⬡', tap: tabs.device, badge: dev.issues.length > 0 },
+      { key: 'downloads', label: 'Transfers', icon: '↓', tap: tabs.downloads, badge: S.queue.some(q => q.status === 'transferring') },
+      { key: 'settings', label: 'Settings', icon: '⚙', tap: tabs.settings },
+    ].map(t => ({ ...t, color: S.scr === t.key ? '#2B271F' : '#B0A892' }));
+
+    // ---------- events feed ----------
+    const enrich = (ev) => {
+      const m = this.meta(ev.id);
+      const sevKey = S.sevOverride[ev.id] || ev.sev;
+      const sm = sevKey ? SEV[sevKey] : null;
+      const an = AN[ev.state];
+      const done = ev.state === 'complete';
+      return { ...ev, sevKey, sevCap: sm ? sm.cap : '', node: sm ? sm.node : '#C4BBA8', badgeBg: sm ? sm.bg : '#EAE4D8', badgeFg: sm ? sm.fg : '#7A7060', hasSev: !!sm,
+        done, pending: !done, hasThumb: ev.state !== 'writing',
+        stLabel: an.label, stColor: an.color, stBg: an.bg, stAnim: an.anim ? 'animation:sxPulse 1.4s infinite' : '',
+        fav: !!m.fav, reviewed: !!m.reviewed,
+        titleColor: m.reviewed ? '#8A8271' : '#2B271F',
+        cardBd: sevKey === 'urgent' ? '#F0D9CE' : '#E7E0D2',
+        check: (S.selected[ev.id] ? '✓' : ''), checkBg: S.selected[ev.id] ? '#2B271F' : 'transparent', checkBd: S.selected[ev.id] ? '#2B271F' : '#C4BBA8',
+        tap: () => { if (S.selectMode) { this.setState(s => ({ selected: { ...s.selected, [ev.id]: !s.selected[ev.id] } })); } else { this.setState({ openEvent: ev.id, camIdx: 0, seekMoment: null }); this.go('detail'); } },
+      };
+    };
+    let feedEvents = EVENTS;
+    if (S.filterSev !== 'all') feedEvents = feedEvents.filter(e => (S.sevOverride[e.id] || e.sev) === S.filterSev);
+    if (S.filterSev === 'fav') feedEvents = EVENTS.filter(e => this.meta(e.id).fav);
+    const mkGroup = (label, day) => ({ label, items: feedEvents.filter(e => e.day === day).map(enrich) });
+    let groups = [mkGroup('Today', 'Today'), mkGroup('Yesterday', 'Yesterday')].filter(g => g.items.length);
+    if (S.loadedMore) groups = [...groups, { label: 'Jul 12', items: [enrich({ id: 'e9', day: 'Jul 12', time: '3:20 PM', loc: 'Office lot', sev: 'routine', title: 'Person walked between cars', cam: 'Front', dur: '0:28', conf: 90, state: 'complete', aiShort: 'Walked between parked cars — no contact.', desc: 'A person walked between parked cars and continued past.', facts: ['1 person detected', 'No contact'], interp: 'Routine foot traffic.', subjects: ['Person'], contact: false, moments: [{ t: '0:05', l: 'Enters frame', pct: 18 }, { t: '0:20', l: 'Exits frame', pct: 71 }] })] }];
+    const filterChips = [
+      { k: 'all', label: 'All' }, { k: 'urgent', label: 'Urgent' }, { k: 'attention', label: 'Attention' }, { k: 'routine', label: 'Routine' }, { k: 'fav', label: '★ Favorites' },
+    ].map(f => ({ ...f, pick: () => this.setState({ filterSev: f.k }), bg: S.filterSev === f.k ? '#2B271F' : '#FBF8F2', fg: S.filterSev === f.k ? '#F4F0E9' : '#6E6656', bd: S.filterSev === f.k ? '#2B271F' : '#E7E0D2' }));
+    const feed = { normal: false, empty: false, offline: false, error: false, loading: false }; feed[S.feedState] = true;
+
+    // ---------- detail ----------
+    const oe = EVENTS.find(e => e.id === S.openEvent);
+    let dt = null;
+    if (oe) {
+      const e = enrich(oe);
+      const cams = (oe.cams || [oe.cam]).map((c, i) => ({ name: c, pick: () => this.setState({ camIdx: i }), bg: i === S.camIdx ? '#2B271F' : '#FBF8F2', fg: i === S.camIdx ? '#F4F0E9' : '#6E6656', bd: i === S.camIdx ? '#2B271F' : '#E7E0D2' }));
+      const seekPct = S.seekMoment != null ? S.seekMoment : 0;
+      const fbState = S.feedback[oe.id];
+      const stIcons = { encrypted: '🔒', unsupported: '🚫', waiting: '⏳', writing: '⏺' };
+      dt = { ...e,
+        activeCam: (oe.cams || [oe.cam])[S.camIdx] || oe.cam, cams, multiCam: (oe.cams || []).length > 1,
+        playable: e.done, notPlayable: !e.done && oe.state !== 'analyzing' && oe.state !== 'failed',
+        analyzing: oe.state === 'analyzing' || oe.state === 'uploading' || oe.state === 'writing' || oe.state === 'waiting',
+        failed: oe.state === 'failed',
+        stIcon: stIcons[oe.state] || '⏳', stTitle: AN[oe.state].label,
+        stBody: oe.state === 'waiting' ? 'The Pi is offline. The clip will upload and analyze automatically once it reconnects.' : oe.state === 'writing' ? 'The car is still writing this clip. Analysis begins as soon as it finishes.' : 'Gemini is analyzing this clip. This usually takes under a minute.',
+        seekW: (seekPct) + '%', dur: oe.dur,
+        storageLoc: e.done ? 'Car + cloud' : 'Car only', availability: e.done ? 'Original + preview' : 'Pending',
+        contactLabel: oe.contact ? 'Contact detected' : 'No contact', contactBg: oe.contact ? '#F3D9D2' : 'rgba(47,124,74,.12)', contactFg: oe.contact ? '#9A2E22' : '#2F7C4A',
+        retCar: e.done ? '3 days left' : '—', retCloud: this.state.plan === 'free' ? '7 days left' : '30 days left',
+        moments: (oe.moments || []).map(m => ({ ...m, jump: () => this.setState({ seekMoment: m.pct }), bg: S.seekMoment === m.pct ? '#F0EADD' : 'transparent' })),
+        feedbackOpts: [{ k: 'accurate', label: '👍 Accurate' }, { k: 'inaccurate', label: '👎 Off' }, { k: 'false', label: '⚑ False alarm' }].map(f => ({ ...f, pick: () => { this.setState(s => ({ feedback: { ...s.feedback, [oe.id]: f.k } })); this.showToast({ title: 'Thanks for the feedback', sub: 'It helps tune future analysis', dot: '#2F7C4A', cta: '' }); }, bg: fbState === f.k ? '#2B271F' : '#F4F0E9', fg: fbState === f.k ? '#F4F0E9' : '#6E6656', bd: fbState === f.k ? '#2B271F' : '#E7E0D2' })),
+        actions: [
+          { key: 'rev', icon: e.reviewed ? '✓' : '○', label: e.reviewed ? 'Reviewed' : 'Review', color: e.reviewed ? '#2F7C4A' : '#8A8271', tap: () => { this.setMeta(oe.id, { reviewed: !e.reviewed }); } },
+          { key: 'fav', icon: e.fav ? '★' : '☆', label: 'Favorite', color: e.fav ? '#C08A3E' : '#8A8271', tap: () => { this.setMeta(oe.id, { fav: !e.fav }); } },
+          { key: 'share', icon: '↗', label: 'Share', color: '#8A8271', tap: () => this.showToast({ title: 'Share sheet', sub: 'Mock — no real share', dot: '#9A7B3C', cta: '' }) },
+          { key: 'del', icon: '🗑', label: 'Delete', color: '#B23A2E', tap: () => this.showToast({ title: 'Delete event?', sub: 'Mock — not deleted', dot: '#B23A2E', cta: '' }) },
+        ],
+        changeSev: () => this.setState({ sevSheet: true }),
+        close: () => this.back(),
+        fullscreen: () => this.showToast({ title: 'Full-screen playback', sub: 'Mock player', dot: '#9A7B3C', cta: '' }),
+        retain: () => this.showToast({ title: 'Retention extended', sub: 'Kept for 30 days', dot: '#2F7C4A', cta: '' }),
+        retry: () => this.showToast({ title: 'Retrying analysis…', sub: 'Queued with Gemini', dot: '#9A7B3C', cta: '' }),
+        download: () => this.setState({ routeSheet: true }),
+      };
+    }
+
+    // ---------- severity sheet ----------
+    const sevOptions = ['urgent', 'attention', 'routine'].map(k => ({ ...SEV[k], key: k, on: oe && (S.sevOverride[oe.id] || oe.sev) === k, pick: () => { if (oe) { this.setState(s => ({ sevOverride: { ...s.sevOverride, [oe.id]: k }, sevSheet: false })); } }, bg: '#FBF8F2', bd: '#E7E0D2' }));
+
+    // ---------- route sheet ----------
+    const chosenRoute = S._route || 'wifi-direct';
+    const routeOptions = [
+      { k: 'wifi-direct', icon: '📶', label: 'Direct Wi-Fi to car', sub: 'Fastest · ~2 min', avail: true },
+      { k: 'wifi-local', icon: '🏠', label: 'Home Wi-Fi network', sub: '~3 min', avail: true },
+      { k: 'bt', icon: 'ᔨ', label: 'Bluetooth', sub: dev.ble ? 'Slow · ~40 min' : 'Unavailable — Bluetooth off', avail: dev.ble },
+    ].map(r => ({ ...r, on: chosenRoute === r.k && r.avail, bd: chosenRoute === r.k && r.avail ? '#2B271F' : '#E7E0D2', cursor: r.avail ? 'pointer' : 'default', opacity: r.avail ? 1 : 0.5, pick: () => { if (r.avail) { this.state._route = r.k; this.forceUpdate(); } } }));
+
+    // ---------- downloads ----------
+    const routeLabelMap = { 'wifi-direct': 'Direct Wi-Fi', 'wifi-local': 'Home Wi-Fi', bt: 'Bluetooth' };
+    const queue = S.queue.map(it => {
+      const acts = [];
+      if (it.status === 'transferring') acts.push({ label: 'Pause', tap: () => this.queueAction(it.id, 'pause') }, { label: 'Cancel', tap: () => this.queueAction(it.id, 'cancel') });
+      else if (it.status === 'paused') acts.push({ label: 'Resume', tap: () => this.queueAction(it.id, 'resume') }, { label: 'Cancel', tap: () => this.queueAction(it.id, 'cancel') });
+      else if (it.status === 'failed') acts.push({ label: 'Retry', tap: () => this.queueAction(it.id, 'retry') }, { label: 'Remove', tap: () => this.queueAction(it.id, 'remove') });
+      else if (it.status === 'complete') acts.push({ label: 'Play', tap: () => this.showToast({ title: 'Playing clip', sub: 'Mock player', dot: '#9A7B3C', cta: '' }) }, { label: 'Remove', tap: () => this.queueAction(it.id, 'remove') });
+      else acts.push({ label: 'Remove', tap: () => this.queueAction(it.id, 'remove') });
+      const stMap = { transferring: { l: 'Transferring · 12.4 MB/s', c: '#8A6D2E' }, paused: { l: 'Paused', c: '#8A8271' }, complete: { l: 'Complete', c: '#2F7C4A' }, failed: { l: 'Failed · connection lost', c: '#9A2E22' }, canceled: { l: 'Canceled', c: '#8A8271' }, queued: { l: 'Queued', c: '#8A8271' }, connecting: { l: 'Connecting…', c: '#8A6D2E' } };
+      const st = stMap[it.status] || stMap.queued;
+      return { ...it, pctW: Math.round(it.pct) + '%', pctLabel: Math.round(it.pct) + '%', stLabel: st.l, stColor: st.c, acts, barColor: it.status === 'failed' ? '#B23A2E' : it.status === 'complete' ? '#2F7C4A' : '#9A7B3C', showBar: it.status !== 'complete' && it.status !== 'canceled' };
+    });
+    const activeQueue = queue.filter(q => q.status !== 'complete');
+    const library = queue.filter(q => q.status === 'complete');
+    const startDownload = () => {
+      const id = 'q' + Date.now();
+      const ev = oe || EVENTS[0];
+      this.setState(s => ({ queue: [{ id, title: ev.title, size: '248 MB', route: routeLabelMap[chosenRoute], status: 'transferring', pct: 0 }, ...s.queue], routeSheet: false }));
+      this.tickDl();
+      this.showToast({ title: 'Download started', sub: '248 MB over ' + routeLabelMap[chosenRoute], dot: '#9A7B3C', cta: 'View' });
+      this.go('downloads');
+    };
+
+    // ---------- notifications ----------
+    const notifDefs = [
+      { key: 'urgent', t: 'Urgent events', s: 'Contact, break-in attempts', sec: 'Events', def: true },
+      { key: 'attention', t: 'Attention events', s: 'Lingering, close approaches', sec: 'Events', def: true },
+      { key: 'routine', t: 'Routine events', s: 'Passers-by, carts', sec: 'Events', def: false },
+      { key: 'people', t: 'People', s: '', sec: 'Types', def: true },
+      { key: 'vehicles', t: 'Vehicles', s: '', sec: 'Types', def: true },
+      { key: 'animals', t: 'Animals', s: '', sec: 'Types', def: false },
+      { key: 'motion', t: 'Motion', s: '', sec: 'Types', def: false },
+      { key: 'contact', t: 'Detected contact', s: '', sec: 'Types', def: true },
+      { key: 'anDone', t: 'Analysis complete', s: '', sec: 'System', def: true },
+      { key: 'anFail', t: 'Analysis failed', s: '', sec: 'System', def: false },
+      { key: 'offline', t: 'Device offline', s: '', sec: 'System', def: true },
+      { key: 'reconnect', t: 'Device reconnected', s: '', sec: 'System', def: false },
+      { key: 'storage', t: 'Low storage', s: '', sec: 'System', def: true },
+      { key: 'power', t: 'Weak power', s: '', sec: 'System', def: true },
+      { key: 'heat', t: 'Overheating', s: '', sec: 'System', def: true },
+      { key: 'fw', t: 'Firmware updates', s: '', sec: 'System', def: true },
+      { key: 'transfer', t: 'Transfer complete', s: '', sec: 'System', def: false },
+    ];
+    const notifVal = (k, d) => S.notif[k] === undefined ? d : S.notif[k];
+    const groupSecs = ['Events', 'Types', 'System'];
+    const notifGroups = groupSecs.map(sec => ({ sec, rows: notifDefs.filter(d => d.sec === sec).map(d => ({ ...d, on: notifVal(d.key, d.def), toggle: () => this.setState(s => ({ notif: { ...s.notif, [d.key]: !notifVal(d.key, d.def) } })), knob: notifVal(d.key, d.def) ? '#2F7C4A' : '#D8CEBB', knobX: notifVal(d.key, d.def) ? '18px' : '2px' })) }));
+    const minSevOpts = ['urgent', 'attention', 'routine'].map(k => ({ key: k, cap: SEV[k].cap, on: S.minSev === k, pick: () => this.setState({ minSev: k }), bg: S.minSev === k ? '#2B271F' : '#FBF8F2', fg: S.minSev === k ? '#F4F0E9' : '#6E6656', bd: S.minSev === k ? '#2B271F' : '#E7E0D2' }));
+    const quietOn = S.quiet.on, quietUrgent = S.quiet.urgent;
+    const notifHistory = [
+      { title: 'Urgent · Door contact', sub: 'Yesterday 10:42 PM · tap to view', sev: 'urgent', ev: 'e4' },
+      { title: 'Attention · Person at driver door', sub: 'Today 2:14 PM', sev: 'attention', ev: 'e1' },
+      { title: 'Device · Low storage warning', sub: 'Today 1:02 PM', sev: 'attention', ev: null },
+      { title: 'Routine · Pedestrian passed', sub: 'Today 8:05 AM', sev: 'routine', ev: 'e3' },
+    ].map(n => ({ ...n, node: SEV[n.sev].node, tap: () => { if (n.ev) { this.setState({ openEvent: n.ev, camIdx: 0, seekMoment: null }); this.go('detail'); } } }));
+
+    // ---------- subscription ----------
+    const tiers = [
+      { key: 'free', name: 'Free', price: '$0', per: '', feats: ['48-hour event history', '10 AI analyses / day', '1 vehicle', 'Local + basic alerts'] },
+      { key: 'premium', name: 'Premium', price: '$7', per: '/mo', feats: ['30-day event history', 'Unlimited AI analysis', '2 vehicles', 'Advanced notification rules', 'Remote full-quality access'] },
+      { key: 'pro', name: 'Fleet', price: '$19', per: '/mo', feats: ['1-year history', 'Unlimited AI analysis', '10 vehicles', 'Priority processing', 'Team access & export'] },
+    ].map(t => ({ ...t, current: S.plan === t.key, badge: S.plan === t.key ? 'Current' : '', pickDisplay: S.plan === t.key ? 'none' : 'block', pick: () => { if (t.key !== S.plan) { this.setState({ upgradeStep: 'review', _upgradeTo: t.key }); } } }));
+    const upgradeStep = S.upgradeStep;
+    const upgradeTarget = tiers.find(t => t.key === S._upgradeTo) || tiers[1];
+
+    // ---------- settings hub ----------
+    const settingsGroups = [
+      { sec: 'Sentyx', rows: [
+        { icon: '⬡', label: 'Device — Garage Pi', sub: dev.chipText, go: () => this.go('device') },
+        { icon: '⚙', label: 'Device settings & maintenance', sub: '', go: () => this.go('deviceSettings') },
+        { icon: '↓', label: 'Transfers & downloads', sub: activeQueue.length + ' active', go: () => this.go('dlSettings') },
+      ] },
+      { sec: 'Preferences', rows: [
+        { icon: '🔔', label: 'Notifications', sub: 'Alerts, quiet hours', go: () => this.go('alerts') },
+        { icon: '★', label: 'Subscription', sub: tiers.find(t => t.current).name, go: () => this.go('subscription') },
+        { icon: '🌐', label: 'App settings', sub: 'Units, language', go: () => this.go('appSettings') },
+      ] },
+      { sec: 'Account', rows: [
+        { icon: '👤', label: 'Account & profile', sub: 'alex@example.com', go: () => this.go('account') },
+        { icon: '🔒', label: 'Privacy & data', sub: '', go: () => this.go('privacy') },
+        { icon: '🛟', label: 'Help & support', sub: '', go: () => this.showToast({ title: 'Help center', sub: 'Mock link', dot: '#9A7B3C', cta: '' }) },
+        { icon: '🧪', label: 'Prototype states', sub: 'Toggle demo conditions', go: () => this.go('states') },
+      ] },
+    ];
+
+    return {
+      at, showTabs, tabBar, nav, tabs, dev, eventCount: EVENTS.filter(e => e.day === 'Today').length,
+      toast: S.toast,
+      stub: () => this.showToast({ title: 'Mock action', sub: 'Not wired up in this prototype', dot: '#9A7B3C', cta: '' }),
+      signOut: () => this.setState({ scr: 'welcome', stack: [] }),
+      devStateChips: [['normal', 'Normal'], ['offline', 'Offline'], ['lowStorage', 'Low storage'], ['overheating', 'Overheating'], ['weakPower', 'Weak power'], ['backlog', 'Upload backlog'], ['firmware', 'FW update'], ['backendDown', 'Backend down']].map(([k, l]) => ({ label: l, pick: () => this.setState({ devState: k }), bg: S.devState === k ? '#2B271F' : '#FBF8F2', fg: S.devState === k ? '#F4F0E9' : '#6E6656', bd: S.devState === k ? '#2B271F' : '#E7E0D2' })),
+      feedStateChips: [['normal', 'Normal'], ['empty', 'Empty'], ['loading', 'Loading'], ['offline', 'Offline'], ['error', 'Server error']].map(([k, l]) => ({ label: l, pick: () => this.setState({ feedState: k }), bg: S.feedState === k ? '#2B271F' : '#FBF8F2', fg: S.feedState === k ? '#F4F0E9' : '#6E6656', bd: S.feedState === k ? '#2B271F' : '#E7E0D2' })),
+      planChips: [['free', 'Free'], ['premium', 'Premium'], ['pro', 'Fleet']].map(([k, l]) => ({ label: l, pick: () => this.setState({ plan: k }), bg: S.plan === k ? '#2B271F' : '#FBF8F2', fg: S.plan === k ? '#F4F0E9' : '#6E6656', bd: S.plan === k ? '#2B271F' : '#E7E0D2' })),
+      triggerUrgent: () => this.showToast({ title: 'Urgent · Door contact detected', sub: 'Just now · 4th Ave', dot: '#B23A2E', cta: 'View', tap: () => { this.setState({ openEvent: 'e4', camIdx: 0, seekMoment: null, toast: null }); this.go('detail'); } }),
+      // feed
+      feed, groups, filterChips, selectMode: S.selectMode, searchOpen: S.searchOpen,
+      selectLabel: S.selectMode ? 'Done' : 'Select', toggleSelect: () => this.setState(s => ({ selectMode: !s.selectMode, selected: {} })), toggleSearch: () => this.setState(s => ({ searchOpen: !s.searchOpen })),
+      loadMore: () => this.setState({ loadedMore: true }),
+      selectBar: S.selectMode && Object.values(S.selected).some(Boolean), selectedCount: Object.values(S.selected).filter(Boolean).length,
+      bulkDownload: () => { this.setState({ selectMode: false, selected: {} }); this.showToast({ title: 'Added to transfers', sub: 'Selected clips queued', dot: '#9A7B3C', cta: 'View' }); this.go('downloads'); },
+      bulkReviewed: () => { Object.keys(S.selected).forEach(id => { if (S.selected[id]) this.setMeta(id, { reviewed: true }); }); this.setState({ selectMode: false, selected: {} }); },
+      bulkDelete: () => { this.setState({ selectMode: false, selected: {} }); this.showToast({ title: 'Events deleted', sub: 'Mock — nothing removed', dot: '#B23A2E', cta: '' }); },
+      // detail
+      dt,
+      // sheets
+      sevSheet: S.sevSheet, sevOptions, routeSheet: S.routeSheet, routeOptions, startDownload,
+      closeSheets: () => this.setState({ sevSheet: false, routeSheet: false }), noop: (e) => { if (e && e.stopPropagation) e.stopPropagation(); },
+      // downloads
+      queue, activeQueue, library, hasQueue: activeQueue.length > 0, hasLibrary: library.length > 0,
+      // notifications
+      notifGroups, minSevOpts, notifHistory,
+      quietOn, quietUrgent, quietToggle: () => this.setState(s => ({ quiet: { ...s.quiet, on: !s.quiet.on } })), quietUrgentToggle: () => this.setState(s => ({ quiet: { ...s.quiet, urgent: !s.quiet.urgent } })),
+      quietKnob: quietOn ? '#2F7C4A' : '#D8CEBB', quietKnobX: quietOn ? '18px' : '2px',
+      quietUKnob: quietUrgent ? '#2F7C4A' : '#D8CEBB', quietUKnobX: quietUrgent ? '18px' : '2px',
+      // subscription
+      tiers, planName: tiers.find(t => t.current).name, upgradeStep, upgradeTarget,
+      upgradeReview: upgradeStep === 'review', upgradeSuccess: upgradeStep === 'success', upgradeDeclinedState: upgradeStep === 'declined',
+      openUpgradeReview: () => {}, upgradeConfirm: () => this.setState({ upgradeStep: 'success' }),
+      upgradeDeclined: () => this.setState({ upgradeStep: 'declined' }),
+      upgradeClose: () => this.setState(s => ({ upgradeStep: null, plan: s.upgradeStep === 'success' ? s._upgradeTo : s.plan })),
+      restorePurchases: () => this.showToast({ title: 'Purchases restored', sub: 'Nothing to restore', dot: '#9A7B3C', cta: '' }),
+      // settings
+      settingsGroups, afterAuth: () => this.go('events'), enterApp: () => this.tabTo('events'),
+      resetSent: () => this.showToast({ title: 'Reset link sent', sub: 'Check alex@example.com', dot: '#2F7C4A', cta: '' }),
+      // onboarding data
+      codeCells: '482913'.split('').map((v, i) => ({ v, b: i < 6 ? '#D8CEBB' : '#E7E0D2' })),
+      pairCode: ['4', '8', '2', '9'],
+      hardware: [
+        { icon: '🍓', t: 'Sentyx Pi installed', s: 'Connected to your Tesla USB port and powered on' },
+        { icon: '📶', t: 'Bluetooth on', s: 'For first-time pairing and nearby control' },
+        { icon: '🔑', t: 'Your Sentyx account', s: 'To link the Pi to the cloud backend' },
+      ],
+      permRows: [
+        { key: 'ble', icon: 'ᔨ', t: 'Bluetooth', s: 'Discover and pair the Pi', granted: true },
+        { key: 'net', icon: '🌐', t: 'Local network', s: 'Talk to the Pi over Wi-Fi', granted: true },
+        { key: 'notif', icon: '🔔', t: 'Notifications', s: 'Alert you about events', granted: false },
+      ].map(p => ({ ...p, border: p.granted ? '#CDE3D4' : '#E7E0D2', stLabel: p.granted ? 'Allowed' : 'Allow', stColor: p.granted ? '#2F7C4A' : '#9A7B3C', toggle: () => this.showToast({ title: p.t + ' permission', sub: p.granted ? 'Already allowed' : 'System prompt (mock)', dot: '#9A7B3C', cta: '' }) })),
+      scan: { scanning: false, list: true, none: false },
+      scanStates: [
+        { k: 'scanning', label: 'Scanning' }, { k: 'found', label: '1 found' }, { k: 'none', label: 'None found' },
+      ].map(s => ({ ...s, pick: () => {}, bg: '#FBF8F2', fg: '#8A8271' })),
+      foundDevices: [{ name: 'Garage Pi', sub: 'Sentyx Pi · signal strong' }],
+      wifiNets: [
+        { name: 'Garage 5G', sub: 'Secured · strong', selected: true, border: '#D8CEBB' },
+        { name: 'Home', sub: 'Secured', selected: false, border: '#E7E0D2' },
+        { name: 'Neighbor_2.4', sub: 'Secured · weak', selected: false, border: '#E7E0D2' },
+      ].map(w => ({ ...w, pick: () => {} })),
+      wifiPass: true,
+      testRows: [
+        { t: 'Bluetooth', s: 'Paired with Garage Pi', ok: true },
+        { t: 'Wi-Fi', s: 'Connected to Garage 5G', ok: true },
+        { t: 'Backend', s: 'Linked to your Sentyx account', ok: true },
+        { t: 'Event detection', s: 'USB storage bridge active', ok: true },
+      ],
+    };
+  }
+}
+</script>
+</body>
+</html>

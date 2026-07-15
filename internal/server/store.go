@@ -63,6 +63,12 @@ CREATE TABLE IF NOT EXISTS manifest_artifacts (
   PRIMARY KEY (event_id, generation, artifact_id),
   FOREIGN KEY (event_id, generation) REFERENCES event_manifests(event_id, generation)
 );
+CREATE TABLE IF NOT EXISTS devices (
+  device_id    TEXT PRIMARY KEY,
+  name         TEXT NOT NULL,
+  token_sha256 TEXT NOT NULL UNIQUE,          -- hex sha256 of the bearer token
+  created_at   INTEGER NOT NULL               -- unix milliseconds
+);
 CREATE TABLE IF NOT EXISTS analysis_jobs (
   event_id     TEXT NOT NULL REFERENCES events(id),
   generation   INTEGER NOT NULL,
@@ -299,6 +305,27 @@ func (s *store) event(id string) (*EventSummary, error) {
 		}
 	}
 	return nil, nil
+}
+
+// upsertDevice registers a device, rotating its token if it already exists.
+func (s *store) upsertDevice(deviceID, name, tokenSHA256 string, now time.Time) error {
+	_, err := s.db.Exec(`
+		INSERT INTO devices (device_id, name, token_sha256, created_at)
+		VALUES (?, ?, ?, ?)
+		ON CONFLICT(device_id) DO UPDATE SET name = excluded.name, token_sha256 = excluded.token_sha256`,
+		deviceID, name, tokenSHA256, now.UnixMilli())
+	return err
+}
+
+// deviceIDByTokenHash returns the device owning the given token hash, or ""
+// when no device matches.
+func (s *store) deviceIDByTokenHash(tokenSHA256 string) (string, error) {
+	var id string
+	err := s.db.QueryRow(`SELECT device_id FROM devices WHERE token_sha256 = ?`, tokenSHA256).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return id, err
 }
 
 func (s *store) eventFiles(eventID string) ([]FileInfo, error) {

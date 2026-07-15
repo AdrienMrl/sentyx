@@ -17,19 +17,26 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"log"
 	"os"
+	"os/exec"
 	"os/signal"
 	"syscall"
 	"time"
 
+	"github.com/AdrienMrl/teslcam/internal/blepair"
 	"github.com/AdrienMrl/teslcam/internal/cameraselect"
 	"github.com/AdrienMrl/teslcam/internal/gadget"
 	"github.com/AdrienMrl/teslcam/internal/pipeline"
 	"github.com/AdrienMrl/teslcam/internal/tokenfile"
 	"github.com/AdrienMrl/teslcam/internal/videocompress"
 )
+
+// version is the agent version reported over BLE onboarding. Override at build
+// time with -ldflags "-X main.version=...".
+var version = "dev"
 
 func main() {
 	imagePath := flag.String("image", "", "path to the raw exFAT backing image exposed to the car")
@@ -69,6 +76,11 @@ func main() {
 	videoEncoder := flag.String("video-encoder", "h264_v4l2m2m", "ffmpeg video encoder (Pi default uses hardware H.264)")
 	ffmpegPath := flag.String("ffmpeg", "ffmpeg", "ffmpeg executable used for video compression")
 	ffprobePath := flag.String("ffprobe", "ffprobe", "ffprobe executable used to inspect videos")
+	bleOnboard := flag.Bool("ble-onboard", false, "serve BLE onboarding alongside the pipeline (requires the -ble-* flags below)")
+	bleAdapter := flag.String("ble-adapter", "", "BlueZ adapter for onboarding, e.g. hci0 (required with -ble-onboard)")
+	bleName := flag.String("ble-name", "", "advertised BLE LocalName, e.g. Sentyx-Pi4 (required with -ble-onboard)")
+	bleConfigDir := flag.String("ble-config-dir", "", "directory where onboarding writes agent.env + server.token, e.g. /etc/teslcam (required with -ble-onboard)")
+	bleProvisionedWindow := flag.Duration("ble-provisioned-window", 0, "how long an already-provisioned device advertises after start; 0 explicitly means never advertise when provisioned (the flag must be set explicitly with -ble-onboard)")
 	flag.Parse()
 	if *imagePath == "" || *udc == "" {
 		log.Fatal("both -image and -udc are required")
@@ -79,23 +91,69 @@ func main() {
 	if *postTo != "" && (*spoolDB == "" || *spoolMaxMB <= 0) {
 		log.Fatal("-spool-db and -spool-max-mb (> 0) are required with -post-to")
 	}
-	// Clip selection cuts LTE/Gemini cost ~30x but must never silently lose an
-	// event, so its fallback timeout is required and explicit — no implicit
-	// default that would hide a stuck event behind an arbitrary window.
-	if *selectClips {
-		if *postTo == "" {
-			log.Fatal("-select-clips requires -post-to")
-		}
-		if *selectMetadataTimeout <= 0 {
+	// Upload-dependent features (clip selection, camera scoring) are only
+	// meaningful when uploading. An unprovisioned Pi runs with an empty
+	// -post-to (its agent.env has not been written yet); there they are inert,
+	// exactly like -compress-video below. When uploading IS enabled, clip
+	// selection must never silently lose an event, so its fallback timeout is
+	// required and explicit — no implicit default that would hide a stuck event.
+	selectClipsActive := *selectClips && *postTo != ""
+	if *postTo != "" {
+		if *selectClips && *selectMetadataTimeout <= 0 {
 			log.Fatal("-select-metadata-timeout (> 0) is required with -select-clips")
 		}
+		if *cameraScorerPath != "" && !*selectClips {
+			log.Fatal("-camera-scorer requires -select-clips")
+		}
+	} else if *selectClips || *cameraScorerPath != "" {
+		log.Print("no -post-to (pre-provisioning): uploads off; -select-clips/-camera-scorer are inert until provisioned")
 	}
-	if *cameraScorerPath != "" && !*selectClips {
-		log.Fatal("-camera-scorer requires -select-clips")
+	// Track which -ble-* flags were explicitly set. -ble-provisioned-window has
+	// a meaningful zero value (never advertise when provisioned), so we can't
+	// infer "was it configured?" from the value — only flag.Visit tells us.
+	bleSet := map[string]bool{}
+	flag.Visit(func(f *flag.Flag) {
+		if len(f.Name) >= 4 && f.Name[:4] == "ble-" {
+			bleSet[f.Name] = true
+		}
+	})
+	if *bleOnboard {
+		// With onboarding on, every BLE parameter is required and explicit: no
+		// implicit adapter, name, config dir, LED, or advertising window.
+		if *bleAdapter == "" {
+			log.Fatal("-ble-adapter is required with -ble-onboard")
+		}
+		if *bleName == "" {
+			log.Fatal("-ble-name is required with -ble-onboard")
+		}
+		if *bleConfigDir == "" {
+			log.Fatal("-ble-config-dir is required with -ble-onboard")
+		}
+		if !bleSet["ble-provisioned-window"] {
+			log.Fatal("-ble-provisioned-window is required with -ble-onboard (0 means never advertise when provisioned)")
+		}
+	} else {
+		// Reject a stray -ble-* flag when the master switch is off, so a
+		// half-configured onboarding setup fails loudly instead of silently
+		// doing nothing.
+		for name := range bleSet {
+			if name != "ble-onboard" {
+				log.Fatalf("-%s set without -ble-onboard", name)
+			}
+		}
 	}
 	token, err := tokenfile.Read(*tokenFile)
 	if err != nil {
-		log.Fatal(err)
+		// With BLE onboarding enabled, the token file legitimately does not
+		// exist yet on an unprovisioned device — onboarding writes it. Any
+		// other token-file error (or a missing file without onboarding) stays
+		// fatal.
+		if *bleOnboard && errors.Is(err, os.ErrNotExist) {
+			log.Printf("token file %s missing (unprovisioned); running without auth until BLE onboarding completes", *tokenFile)
+			token = ""
+		} else {
+			log.Fatal(err)
+		}
 	}
 	if *deviceID == "" {
 		*deviceID, err = os.Hostname()
@@ -157,7 +215,7 @@ func main() {
 		videoCompression = &cfg
 	}
 	var cameraScorer cameraselect.Scorer
-	if *cameraScorerPath != "" {
+	if *cameraScorerPath != "" && selectClipsActive {
 		cameraScorer, err = cameraselect.NewCommandScorer(cameraselect.CommandConfig{
 			Path: *cameraScorerPath, ModelParam: *cameraModelParam, ModelBin: *cameraModelBin,
 			Window: *cameraScoreWindow, SampleFPS: *cameraScoreFPS, Threads: *cameraScoreThreads,
@@ -167,6 +225,32 @@ func main() {
 		if err != nil {
 			log.Fatal(err)
 		}
+	}
+
+	// BLE onboarding runs beside the pipeline on the same signal ctx so
+	// shutdown stays clean. Its job is provisioning, not clips: a failure here
+	// must never take down the agent, so we only log it.
+	if *bleOnboard {
+		go func() {
+			err := blepair.Run(ctx, blepair.Config{
+				Adapter:           *bleAdapter,
+				Name:              *bleName,
+				DeviceID:          *deviceID,
+				Hardware:          "pi4",
+				AgentVersion:      version,
+				ConfigDir:         *bleConfigDir,
+				ProvisionedWindow: *bleProvisionedWindow,
+				Restart: func() {
+					if err := exec.Command("systemctl", "restart", "teslcam-agent").Run(); err != nil {
+						log.Printf("blepair: restart teslcam-agent: %v", err)
+					}
+				},
+				Logf: log.Printf,
+			})
+			if err != nil && ctx.Err() == nil {
+				log.Printf("blepair: onboarding service error (agent continues): %v", err)
+			}
+		}()
 	}
 
 	runErr := pipeline.Run(ctx, pipeline.Config{
@@ -183,7 +267,7 @@ func main() {
 		SpoolDBPath:           *spoolDB,
 		SpoolMaxBytes:         *spoolMaxMB << 20,
 		VideoCompression:      videoCompression,
-		SelectClips:           *selectClips,
+		SelectClips:           selectClipsActive,
 		SelectMetadataTimeout: *selectMetadataTimeout,
 		CameraScorer:          cameraScorer,
 		CameraScoreWait:       *cameraScoreWait,

@@ -1,6 +1,6 @@
 # systemd unit for the in-car gadget agent (Pi Zero 2 W).
 # Install: copy to /etc/systemd/system/, create /etc/teslcam/agent.env with
-# SERVER_URL=https://api.example.com, put the server's bearer token
+# POST_TO=https://api.example.com, put the server's bearer token
 # (from /etc/teslcam/ingest.token on the VPS) in /etc/teslcam/server.token,
 # then: systemctl enable --now teslcam-agent
 # Prereqs on the Pi: dtoverlay=dwc2 in config.txt, backing image at
@@ -14,7 +14,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-EnvironmentFile=/etc/teslcam/agent.env
+EnvironmentFile=-/etc/teslcam/agent.env
 ExecStartPre=/sbin/modprobe libcomposite
 ExecStart=/usr/local/bin/teslcam-agent \
   -image /var/lib/teslcam/backing.img \
@@ -23,8 +23,16 @@ ExecStart=/usr/local/bin/teslcam-agent \
   -stable-polls 3 \
   -copy-to /var/lib/teslcam/clips \
   -copy-prefix /TeslaCam/SentryClips \
-  -post-to ${SERVER_URL} \
-  -token-file /etc/teslcam/server.token
+  -post-to=${POST_TO} \
+  -device-id=${DEVICE_ID} \
+  -token-file /etc/teslcam/server.token \
+  -spool-db /var/lib/teslcam/spool.db \
+  -spool-max-mb 2048 \
+  -ble-onboard \
+  -ble-adapter hci0 \
+  -ble-name Sentyx-Pi \
+  -ble-config-dir /etc/teslcam \
+  -ble-provisioned-window 10m
 Restart=on-failure
 RestartSec=5
 

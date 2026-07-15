@@ -5,6 +5,10 @@ Wants=network-online.target
 
 [Service]
 Type=simple
+# BLE onboarding writes this file (POST_TO, DEVICE_ID, and extra descriptive
+# keys). The leading '-' lets an unprovisioned Pi — which has no agent.env yet —
+# still start; POST_TO is then empty, which the agent treats as "no upload".
+EnvironmentFile=-/etc/teslcam/agent.env
 ExecStartPre=/sbin/modprobe libcomposite
 ExecStart=/usr/local/bin/teslcam-agent \
   -image /var/lib/teslcam/backing-part.img \
@@ -13,7 +17,8 @@ ExecStart=/usr/local/bin/teslcam-agent \
   -stable-polls 3 \
   -copy-to /var/lib/teslcam/clips \
   -copy-prefix /TeslaCam/SentryClips \
-  -post-to https://teslcam.161-35-232-246.sslip.io \
+  -post-to=${POST_TO} \
+  -device-id=${DEVICE_ID} \
   -token-file /etc/teslcam/server.token \
   -spool-db /var/lib/teslcam/spool.db \
   -spool-max-mb 8192 \
@@ -29,7 +34,12 @@ ExecStart=/usr/local/bin/teslcam-agent \
   -camera-score-timeout 90s \
   -camera-score-cooldown 1s \
   -camera-score-cpu-set 0 \
-  -camera-score-max-temp 75
+  -camera-score-max-temp 75 \
+  -ble-onboard \
+  -ble-adapter hci0 \
+  -ble-name Sentyx-Pi4 \
+  -ble-config-dir /etc/teslcam \
+  -ble-provisioned-window 10m
 Restart=on-failure
 RestartSec=5
 

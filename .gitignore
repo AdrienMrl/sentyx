@@ -28,3 +28,6 @@ testdata/sentry-samples/
 
 # cloned upstream repos kept for reference (each has its own .git)
 third_party/
+
+# stray compiled agent binary at repo root (rebuild: go build ./cmd/teslcam-agent)
+/teslcam-agent
