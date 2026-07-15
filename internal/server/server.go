@@ -85,6 +85,7 @@ func (c *Server) Run(ctx context.Context, logf func(format string, args ...any))
 	errc := make(chan error, 1)
 	go func() { errc <- srv.Serve(ln) }()
 	go c.analyzeLoop(ctx, logf)
+	go c.backfillThumbs(ctx, logf)
 
 	logf("server listening on %s (data in %s)", ln.Addr(), c.cfg.DataDir)
 	select {

@@ -79,6 +79,15 @@ func (c *Server) analyzeEvent(ctx context.Context, eventID string, logf func(str
 		return
 	}
 	logf("event %s analyzed: threat_level=%s (clip %s)", eventID, parsed.ThreatLevel, clip.Name)
+
+	// A thumbnail failure is logged and swallowed: the verdict is already
+	// stored, and the read endpoint falls back to the uploaded thumb.png.
+	thumbCtx, cancelThumb := context.WithTimeout(ctx, 30*time.Second)
+	if err := generateEventThumb(thumbCtx, c.cfg.FFmpegPath, c.cfg.DataDir, eventID, clipPath, parsed.EventTimestampSecond); err != nil {
+		logf("generating thumbnail for %s: %v", eventID, err)
+	}
+	cancelThumb()
+
 	var framePath string
 	if c.notifier != nil {
 		frameCtx, cancelFrame := context.WithTimeout(ctx, 30*time.Second)

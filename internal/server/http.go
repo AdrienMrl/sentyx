@@ -9,6 +9,8 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -25,6 +27,7 @@ import (
 //	GET  /v1/devices/<deviceId>                                   a device's registration + latest heartbeat
 //	GET  /events                                                  all events (JSON)
 //	GET  /events/<id>                                             one event + its files
+//	GET  /events/<id>/thumb                                       event thumbnail (JPEG, or uploaded thumb.png)
 //	GET  /usage                                                   analysis token spend per model
 //	GET  /healthz                                                 always unauthenticated
 //
@@ -44,6 +47,7 @@ func (c *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/events/{event}/manifests/{generation}/finalize", c.handleFinalizeManifestV1)
 	mux.HandleFunc("GET /events", c.handleEvents)
 	mux.HandleFunc("GET /events/{id}", c.handleEvent)
+	mux.HandleFunc("GET /events/{id}/thumb", c.handleEventThumb)
 	mux.HandleFunc("GET /usage", c.handleUsage)
 	authed := c.requireToken(mux)
 
@@ -271,4 +275,32 @@ func (c *Server) handleEvent(w http.ResponseWriter, r *http.Request) {
 		EventSummary
 		Files []FileInfo `json:"files"`
 	}{*ev, files})
+}
+
+// handleEventThumb serves the event's generated JPEG thumbnail, falling back to
+// the uploaded thumb.png when no generated thumbnail exists. It never generates
+// anything: thumbnails are produced eagerly in the analysis pipeline.
+func (c *Server) handleEventThumb(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if thumb := eventThumbPath(c.cfg.DataDir, id); fileExists(thumb) {
+		w.Header().Set("Content-Type", "image/jpeg")
+		http.ServeFile(w, r, thumb)
+		return
+	}
+	files, err := c.store.eventFiles(id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if f := fileByName(files, "thumb.png"); f != nil {
+		w.Header().Set("Content-Type", "image/png")
+		http.ServeFile(w, r, filepath.Join(c.cfg.DataDir, f.StoredPath))
+		return
+	}
+	http.NotFound(w, r)
+}
+
+func fileExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
 }

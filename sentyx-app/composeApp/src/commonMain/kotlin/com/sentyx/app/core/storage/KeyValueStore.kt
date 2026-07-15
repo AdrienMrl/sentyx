@@ -20,4 +20,7 @@ expect class KeyValueStore() {
 object StorageKeys {
     const val DEVICE_ID: String = "deviceId"
     const val DEVICE_NAME: String = "deviceName"
+
+    /** JSON blob of per-event user annotations (favorite/reviewed/override/feedback). */
+    const val EVENT_META: String = "eventMeta"
 }
