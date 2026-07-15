@@ -123,7 +123,14 @@ func Run(ctx context.Context, cfg Config) error {
 	if err := g.setAdapterProp("Pairable", true); err != nil {
 		return fmt.Errorf("blepair: setting pairable: %w", err)
 	}
-	g.removeBondedDevices()
+	// Only an unprovisioned device starts from a clean bond slate: a phone
+	// bonded to a Pi whose bond store was wiped (or vice versa) fails
+	// encryption silently, so onboarding removes any stale bonds. A
+	// provisioned device must keep its bonds — the onboarded phone reconnects
+	// with them for Wi-Fi management after every agent restart.
+	if !provisioned {
+		g.removeBondedDevices()
+	}
 	if err := g.watchDisconnects(sess.Disconnected); err != nil {
 		return fmt.Errorf("blepair: watching disconnects: %w", err)
 	}
