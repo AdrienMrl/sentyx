@@ -207,6 +207,39 @@ func TestSelectorFallbackUploadsAllOnTimeout(t *testing.T) {
 	}
 }
 
+// A corrupt event.json must NOT disarm the fallback: selection can never run
+// for the event, so the held clips still upload after the timeout instead of
+// being stranded locally forever.
+func TestSelectorCorruptMetadataStillFallsBack(t *testing.T) {
+	r := &recorder{}
+	sel := newClipSelector(40*time.Millisecond, discard, r.enqueue)
+
+	held := []string{
+		"2026-07-12_12-29-00-left_repeater.mp4",
+		"2026-07-12_12-29-00-front.mp4",
+	}
+	for _, f := range held {
+		sel.onFile("/local/"+f, evDir+"/"+f)
+	}
+
+	corrupt := filepath.Join(t.TempDir(), "event.json")
+	if err := os.WriteFile(corrupt, []byte("http garbage"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sel.onFile(corrupt, evDir+"/event.json")
+
+	deadline := time.Now().Add(2 * time.Second)
+	for len(r.snapshot()) < len(held)+1 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	got := r.snapshot()
+	for _, f := range held {
+		if !contains(got, evDir+"/"+f) {
+			t.Errorf("held clip %s not uploaded after corrupt metadata: %v", f, got)
+		}
+	}
+}
+
 // event.json arriving before the timeout cancels the fallback: only the
 // selected clip is uploaded, not the whole held set.
 func TestSelectorMetadataBeatsTimeout(t *testing.T) {

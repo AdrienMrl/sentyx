@@ -134,8 +134,15 @@ func (s *clipSelector) onFile(localPath, imagePath string) []string {
 			}
 		}
 		if s.scorer == nil {
-			if ev.timer != nil {
-				ev.timer.Stop() // legacy selection no longer needs its fallback
+			if ev.meta != nil {
+				if ev.timer != nil {
+					ev.timer.Stop() // legacy selection no longer needs its fallback
+				}
+			} else {
+				// event.json arrived but is unreadable/corrupt: selection can
+				// never run, so keep the fallback armed or the held clips would
+				// be stranded locally forever.
+				s.armTimerLocked(sourceID, ev)
 			}
 		} else {
 			s.armScoreTimerLocked(sourceID, ev)
