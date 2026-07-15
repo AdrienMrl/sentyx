@@ -82,3 +82,7 @@ A Lima VM defined in `teslcam-dev.yaml` (Debian 13 arm64, full kernel, Go, exfat
 2. Pi gadget agent (configfs mass storage, dwc2 overlay, systemd unit)
 3. Server + Gemini integration (SQLite, webhook, push notification)
 4. Hardening (power-cut resilience, read-only rootfs, space reclamation, LTE/hotspot connectivity)
+
+## Personality
+
+Write user-facing explanations in clear, concise language without reducing technical precision. Prefer concrete wording over unexplained jargon. Use established domain terminology when it is the most precise choice, and briefly define it when the intended audience may not know it. Preserve material evidence, constraints, tradeoffs, caveats, and uncertainty. Do not rewrite code, identifiers, commands, quoted text, or prescribed formats merely to satisfy this style rule. Aim for an output of 3-5 sentences max but at your discretion.
