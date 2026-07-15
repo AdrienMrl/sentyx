@@ -263,9 +263,9 @@ func (g *gattServer) setAdapterProp(prop string, value any) error {
 }
 
 // removeBondedDevices drops every device BlueZ remembers on this adapter.
-// Encryption is bondless now, but a legacy bond left by an older agent version
-// (phone or Pi side) fails encryption silently, so onboarding starts from a
-// clean slate. The Pi's Bluetooth is dedicated to this service.
+// A phone that stays bonded to a Pi whose bond store was wiped (or vice
+// versa) fails encryption silently, so onboarding starts from a clean slate.
+// The Pi's Bluetooth is dedicated to this service.
 func (g *gattServer) removeBondedDevices() {
 	var objs map[dbus.ObjectPath]map[string]map[string]dbus.Variant
 	if err := g.conn.Object("org.bluez", "/").Call(ifaceObjectManager+".GetManagedObjects", 0).Store(&objs); err != nil {

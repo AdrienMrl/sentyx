@@ -117,28 +117,31 @@ func Run(ctx context.Context, cfg Config) error {
 	if err := g.export(adv, agent); err != nil {
 		return err
 	}
+	// Power-cycle the radio before setup: the Cypress controller can come up
+	// wedged after an agent restart — btmgmt add-adv reports success while
+	// nothing goes on air — and only a power cycle recovers it (verified on
+	// hardware). The cycle also resets adapter properties to bluetoothd
+	// defaults, which is why Pairable is set only after it.
+	if err := g.setAdapterProp("Powered", false); err != nil {
+		return fmt.Errorf("blepair: powering adapter off: %w", err)
+	}
 	if err := g.setAdapterProp("Powered", true); err != nil {
 		return fmt.Errorf("blepair: powering adapter: %w", err)
 	}
-	// Deliberately bondless: Pairable=false makes BlueZ negotiate non-bonding
-	// Just Works SMP encryption when the phone first touches an encrypted
-	// characteristic — the link is encrypted for the session, but no keys are
-	// distributed or stored on either side. Bonding is broken three ways on
-	// this stack: BlueZ distributes its IRK during bonding, after which
-	// Android's link layer drops the Pi's identity-address advertisements (a
-	// bonded phone cannot see the Pi in scans); bluetoothd treats the phone as
-	// a temporary device and never persists the bond, so the phone's stored
-	// LTK goes stale on every disconnect; and Samsung records a dual-mode
-	// BR/EDR+LE bond and attempts classic-BT connections. With no stored keys
-	// nothing can go stale, and the advertisement stays visible to
-	// previously-connected phones.
-	if err := g.setAdapterProp("Pairable", false); err != nil {
+	// Bonding must stay enabled: Android insists on bonding when it initiates
+	// security for an encrypted characteristic and treats a non-bondable
+	// responder as "pairing rejected". The historical failure modes of bonds
+	// on this stack are handled elsewhere: bonds are kept across restarts on a
+	// provisioned device (only onboarding wipes), and the advertising watchdog
+	// recovers the instance a (re)connecting bonded phone consumes.
+	if err := g.setAdapterProp("Pairable", true); err != nil {
 		return fmt.Errorf("blepair: setting pairable: %w", err)
 	}
-	// Only an unprovisioned device starts from a clean slate: encryption is
-	// bondless now, but a legacy bond left by an older agent version (or its
-	// phone-side counterpart) fails encryption silently, so onboarding removes
-	// any stale bonded devices.
+	// Only an unprovisioned device starts from a clean bond slate: a phone
+	// bonded to a Pi whose bond store was wiped (or vice versa) fails
+	// encryption silently, so onboarding removes any stale bonds. A
+	// provisioned device keeps its bonds — the onboarded phone reconnects
+	// with them for Wi-Fi management after every agent restart.
 	if !provisioned {
 		g.removeBondedDevices()
 	}

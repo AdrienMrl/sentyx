@@ -4,7 +4,7 @@
 // deliver server URL + bearer token + naming, which the agent persists and
 // applies by restarting itself.
 //
-// The BLE link itself uses non-bonding Just Works SMP encryption (no MITM
+// The BLE link itself uses Just Works pairing (encryption without MITM
 // protection): each session negotiates encryption on first
 // encrypted-characteristic access, and no keys are distributed or stored on
 // either side, so nothing can go stale between sessions.
