@@ -15,9 +15,8 @@ import (
 // resets to idle (unless a restart is already scheduled).
 //
 // There is no in-band pairing confirmation: physical presence is implied by
-// the onboarding window (an unprovisioned device is always pairable; a
-// provisioned one only briefly after power-on) and the BLE link is encrypted
-// via Just Works pairing.
+// the onboarding window and the BLE link is encrypted via non-bonding
+// Just Works SMP encryption.
 const (
 	stateIdle          = "idle"
 	stateAuthenticated = "authenticated"
@@ -140,8 +139,8 @@ func (s *session) beginPair() error {
 
 // beginManage authenticates a management session on an already-provisioned
 // device: the entry point for post-onboarding Wi-Fi management, gated by the
-// same encrypted Just Works link as begin_pair. It reaches the same
-// authenticated state; there is no config flow.
+// same non-bonding Just Works encrypted link as begin_pair. It reaches the
+// same authenticated state; there is no config flow.
 func (s *session) beginManage() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

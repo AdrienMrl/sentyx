@@ -120,14 +120,25 @@ func Run(ctx context.Context, cfg Config) error {
 	if err := g.setAdapterProp("Powered", true); err != nil {
 		return fmt.Errorf("blepair: powering adapter: %w", err)
 	}
-	if err := g.setAdapterProp("Pairable", true); err != nil {
+	// Deliberately bondless: Pairable=false makes BlueZ negotiate non-bonding
+	// Just Works SMP encryption when the phone first touches an encrypted
+	// characteristic — the link is encrypted for the session, but no keys are
+	// distributed or stored on either side. Bonding is broken three ways on
+	// this stack: BlueZ distributes its IRK during bonding, after which
+	// Android's link layer drops the Pi's identity-address advertisements (a
+	// bonded phone cannot see the Pi in scans); bluetoothd treats the phone as
+	// a temporary device and never persists the bond, so the phone's stored
+	// LTK goes stale on every disconnect; and Samsung records a dual-mode
+	// BR/EDR+LE bond and attempts classic-BT connections. With no stored keys
+	// nothing can go stale, and the advertisement stays visible to
+	// previously-connected phones.
+	if err := g.setAdapterProp("Pairable", false); err != nil {
 		return fmt.Errorf("blepair: setting pairable: %w", err)
 	}
-	// Only an unprovisioned device starts from a clean bond slate: a phone
-	// bonded to a Pi whose bond store was wiped (or vice versa) fails
-	// encryption silently, so onboarding removes any stale bonds. A
-	// provisioned device must keep its bonds — the onboarded phone reconnects
-	// with them for Wi-Fi management after every agent restart.
+	// Only an unprovisioned device starts from a clean slate: encryption is
+	// bondless now, but a legacy bond left by an older agent version (or its
+	// phone-side counterpart) fails encryption silently, so onboarding removes
+	// any stale bonded devices.
 	if !provisioned {
 		g.removeBondedDevices()
 	}
@@ -137,11 +148,16 @@ func Run(ctx context.Context, cfg Config) error {
 	if err := g.register(); err != nil {
 		return err
 	}
+	// On the btmgmt fallback the controller can silently drop the advertising
+	// instance (typically after an incoming connection); a watchdog re-asserts
+	// it. bluetoothd-managed advertisements resume on their own.
+	if g.legacyAdv.Load() {
+		g.watchLegacyAdv(ctx)
+	}
 	cfg.Logf("blepair: advertising %q (service %s) on %s", cfg.Name, UUIDService, cfg.Adapter)
 
 	<-ctx.Done()
 	g.unregister()
-	g.setAdapterProp("Pairable", false)
 	sess.Disconnected() // stop any LED activity, restore trigger
 	cfg.Logf("blepair: onboarding service stopped")
 	return nil

@@ -1,9 +1,12 @@
 package blepair
 
 import (
+	"context"
 	"fmt"
 	"os/exec"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/godbus/dbus/v5"
@@ -84,7 +87,9 @@ type gattServer struct {
 	chars   []*characteristic
 
 	notifying map[dbus.ObjectPath]bool
-	legacyAdv bool // advertising via the btmgmt fallback, not bluetoothd
+	legacyAdv atomic.Bool // advertising via the btmgmt fallback, not bluetoothd
+	connected atomic.Bool // a central is currently connected (per watchDisconnects)
+	advMu     sync.Mutex  // serializes btmgmt rm-adv/add-adv cycles
 }
 
 func newGattServer(conn *dbus.Conn, adapter string, name string, logf func(string, ...any)) *gattServer {
@@ -258,9 +263,9 @@ func (g *gattServer) setAdapterProp(prop string, value any) error {
 }
 
 // removeBondedDevices drops every device BlueZ remembers on this adapter.
-// A phone that stays bonded to a Pi whose bond store was wiped (or vice
-// versa) fails encryption silently, so re-entering pairable mode starts from
-// a clean slate. The Pi's Bluetooth is dedicated to onboarding.
+// Encryption is bondless now, but a legacy bond left by an older agent version
+// (phone or Pi side) fails encryption silently, so onboarding starts from a
+// clean slate. The Pi's Bluetooth is dedicated to this service.
 func (g *gattServer) removeBondedDevices() {
 	var objs map[dbus.ObjectPath]map[string]map[string]dbus.Variant
 	if err := g.conn.Object("org.bluez", "/").Call(ifaceObjectManager+".GetManagedObjects", 0).Store(&objs); err != nil {
@@ -309,7 +314,7 @@ func (g *gattServer) register() error {
 		if err := g.registerLegacyAdv(); err != nil {
 			return fmt.Errorf("blepair: registering advertisement (btmgmt fallback): %w", err)
 		}
-		g.legacyAdv = true
+		g.legacyAdv.Store(true)
 	}
 	return nil
 }
@@ -324,12 +329,21 @@ func (g *gattServer) adapterIndex() string {
 
 // registerLegacyAdv advertises via the legacy mgmt API using btmgmt:
 // connectable, our service UUID in the advertising data, and the local name
-// in the scan response.
+// in the scan response. Also used to re-assert a dead instance: the controller
+// sometimes silently stops advertising after an incoming connection while
+// `btmgmt advinfo` still lists the instance (kernel/controller desync), so a
+// full rm-adv + add-adv cycle is the only reliable restore.
 func (g *gattServer) registerLegacyAdv() error {
+	g.advMu.Lock()
+	defer g.advMu.Unlock()
 	// A previous failed run (or bluetoothd's own failed attempts) can leave a
-	// zombie instance behind; clear ours before re-adding.
+	// zombie instance behind; clear ours before re-adding. The rm-adv error is
+	// deliberately ignored — the instance may simply not exist.
 	exec.Command("btmgmt", "--index", g.adapterIndex(), "rm-adv", legacyAdvInstance).Run()
+	return g.addLegacyAdv()
+}
 
+func (g *gattServer) addLegacyAdv() error {
 	// Scan response: one Complete Local Name AD structure.
 	name := g.name
 	if len(name) > 29 {
@@ -345,8 +359,39 @@ func (g *gattServer) registerLegacyAdv() error {
 	return nil
 }
 
+// reassertLegacyAdv re-registers the btmgmt advertising instance, logging only
+// failures (callers decide whether the attempt itself is worth a log line).
+func (g *gattServer) reassertLegacyAdv(reason string) {
+	if err := g.registerLegacyAdv(); err != nil {
+		g.logf("blepair: legacy advertising re-assert (%s) failed: %v", reason, err)
+	}
+}
+
+// watchLegacyAdv periodically re-asserts the legacy advertising instance for
+// the lifetime of ctx, skipping passes while a central is connected. Only
+// meaningful on the btmgmt fallback path — when bluetoothd owns the
+// advertisement it handles re-advertising itself.
+func (g *gattServer) watchLegacyAdv(ctx context.Context) {
+	go func() {
+		ticker := time.NewTicker(time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if g.connected.Load() {
+					continue
+				}
+				// Quiet on success: one log line per minute would be noise.
+				g.reassertLegacyAdv("watchdog")
+			}
+		}
+	}()
+}
+
 func (g *gattServer) unregister() {
-	if g.legacyAdv {
+	if g.legacyAdv.Load() {
 		exec.Command("btmgmt", "--index", g.adapterIndex(), "rm-adv", legacyAdvInstance).Run()
 	}
 	g.adapterObj().Call("org.bluez.LEAdvertisingManager1.UnregisterAdvertisement", 0, advPath)
@@ -355,7 +400,10 @@ func (g *gattServer) unregister() {
 }
 
 // watchDisconnects invokes onDisconnect whenever a Device1 loses its
-// connection (Connected -> false PropertiesChanged signal).
+// connection (Connected -> false PropertiesChanged signal). It also tracks the
+// current connected state on g.connected and, on the btmgmt fallback path,
+// re-asserts the advertisement after each disconnect — the controller does not
+// reliably resume the legacy instance on its own.
 func (g *gattServer) watchDisconnects(onDisconnect func()) error {
 	if err := g.conn.AddMatchSignal(
 		dbus.WithMatchSender("org.bluez"),
@@ -377,9 +425,15 @@ func (g *gattServer) watchDisconnects(onDisconnect func()) error {
 			}
 			changed, _ := sig.Body[1].(map[string]dbus.Variant)
 			if v, ok := changed["Connected"]; ok {
-				if connected, _ := v.Value().(bool); !connected {
+				connected, _ := v.Value().(bool)
+				g.connected.Store(connected)
+				if !connected {
 					g.logf("blepair: central %s disconnected", sig.Path)
 					onDisconnect()
+					if g.legacyAdv.Load() {
+						g.logf("blepair: re-asserting legacy advertisement after disconnect")
+						g.reassertLegacyAdv("disconnect")
+					}
 				} else {
 					g.logf("blepair: central %s connected", sig.Path)
 				}
