@@ -110,6 +110,8 @@ func openStore(path string) (*store, error) {
 		`ALTER TABLE events ADD COLUMN prompt_tokens INTEGER`,
 		`ALTER TABLE events ADD COLUMN output_tokens INTEGER`,
 		`ALTER TABLE events ADD COLUMN total_tokens INTEGER`,
+		`ALTER TABLE devices ADD COLUMN last_heartbeat_json TEXT`,
+		`ALTER TABLE devices ADD COLUMN last_heartbeat_at INTEGER`,
 	} {
 		if _, err := db.Exec(stmt); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
 			db.Close()
@@ -326,6 +328,45 @@ func (s *store) deviceIDByTokenHash(tokenSHA256 string) (string, error) {
 		return "", nil
 	}
 	return id, err
+}
+
+// DeviceStatus is the stored view of a device and its most recent heartbeat.
+type DeviceStatus struct {
+	DeviceID          string
+	Name              string
+	RegisteredAtMs    int64
+	LastHeartbeatJSON string
+	LastHeartbeatAtMs int64
+}
+
+// updateDeviceHeartbeat records the latest heartbeat payload (verbatim JSON) and
+// its receipt time for a device.
+func (s *store) updateDeviceHeartbeat(deviceID, json string, atMs int64) error {
+	_, err := s.db.Exec(`
+		UPDATE devices SET last_heartbeat_json = ?, last_heartbeat_at = ? WHERE device_id = ?`,
+		json, atMs, deviceID)
+	return err
+}
+
+// deviceStatus returns a device and its last heartbeat, or nil when the device
+// id is unknown.
+func (s *store) deviceStatus(deviceID string) (*DeviceStatus, error) {
+	var ds DeviceStatus
+	var hbJSON sql.NullString
+	var hbAt sql.NullInt64
+	err := s.db.QueryRow(`
+		SELECT device_id, name, created_at, last_heartbeat_json, last_heartbeat_at
+		FROM devices WHERE device_id = ?`, deviceID).
+		Scan(&ds.DeviceID, &ds.Name, &ds.RegisteredAtMs, &hbJSON, &hbAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	ds.LastHeartbeatJSON = hbJSON.String
+	ds.LastHeartbeatAtMs = hbAt.Int64
+	return &ds, nil
 }
 
 func (s *store) eventFiles(eventID string) ([]FileInfo, error) {

@@ -7,6 +7,7 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -20,6 +21,8 @@ import (
 //	PUT  /v1/events/<event>/manifests/<gen>                       declare a generation's artifacts
 //	POST /v1/events/<event>/manifests/<gen>/finalize             finalize a complete generation
 //	POST /v1/devices                                              register a device, minting its token
+//	POST /v1/devices/<deviceId>/heartbeat                         record a device's latest status payload
+//	GET  /v1/devices/<deviceId>                                   a device's registration + latest heartbeat
 //	GET  /events                                                  all events (JSON)
 //	GET  /events/<id>                                             one event + its files
 //	GET  /usage                                                   analysis token spend per model
@@ -32,6 +35,8 @@ import (
 func (c *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/devices", c.handleRegisterDevice)
+	mux.HandleFunc("POST /v1/devices/{deviceId}/heartbeat", c.handleDeviceHeartbeat)
+	mux.HandleFunc("GET /v1/devices/{deviceId}", c.handleDeviceStatus)
 	mux.HandleFunc("PUT /v1/events/{event}", c.handlePutEventV1)
 	mux.HandleFunc("GET /v1/events/{event}", c.handleGetEventV1)
 	mux.HandleFunc("PUT /v1/blobs/{sha256}", c.handlePutBlobV1)
@@ -137,6 +142,84 @@ func (c *Server) handleRegisterDevice(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(map[string]string{"deviceId": req.DeviceID, "token": token})
+}
+
+// maxHeartbeatBytes caps a heartbeat body; payloads are a small flat metrics
+// object, so 16 KiB is generous.
+const maxHeartbeatBytes = 16 << 10
+
+// handleDeviceHeartbeat records a device's latest status payload. A device may
+// heartbeat only itself (its own bearer token); the operator token may
+// heartbeat any device. The body must be JSON with "v":1 and is stored verbatim.
+func (c *Server) handleDeviceHeartbeat(w http.ResponseWriter, r *http.Request) {
+	deviceID := r.PathValue("deviceId")
+	ai := authFrom(r.Context())
+	if c.cfg.Token != "" && !ai.Operator && ai.DeviceID != deviceID {
+		http.Error(w, "a device may only send its own heartbeat", http.StatusForbidden)
+		return
+	}
+	body, err := io.ReadAll(io.LimitReader(r.Body, maxHeartbeatBytes))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	var probe struct {
+		V *int `json:"v"`
+	}
+	if err := json.Unmarshal(body, &probe); err != nil {
+		http.Error(w, "invalid JSON body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if probe.V == nil || *probe.V != 1 {
+		http.Error(w, `heartbeat body must have "v":1`, http.StatusBadRequest)
+		return
+	}
+	if err := c.store.updateDeviceHeartbeat(deviceID, string(body), time.Now().UnixMilli()); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleDeviceStatus reports a device's registration info and latest heartbeat.
+// Accessible with the operator token or that device's own token.
+func (c *Server) handleDeviceStatus(w http.ResponseWriter, r *http.Request) {
+	deviceID := r.PathValue("deviceId")
+	ai := authFrom(r.Context())
+	if c.cfg.Token != "" && !ai.Operator && ai.DeviceID != deviceID {
+		http.Error(w, "a device may only read its own status", http.StatusForbidden)
+		return
+	}
+	ds, err := c.store.deviceStatus(deviceID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if ds == nil {
+		http.NotFound(w, r)
+		return
+	}
+	online := ds.LastHeartbeatAtMs > 0 && time.Now().UnixMilli()-ds.LastHeartbeatAtMs < 90_000
+	resp := struct {
+		DeviceID       string          `json:"deviceId"`
+		Name           string          `json:"name"`
+		RegisteredAtMs int64           `json:"registeredAtMs"`
+		Online         bool            `json:"online"`
+		LastSeenMs     int64           `json:"lastSeenMs,omitempty"`
+		Status         json.RawMessage `json:"status"`
+	}{
+		DeviceID:       ds.DeviceID,
+		Name:           ds.Name,
+		RegisteredAtMs: ds.RegisteredAtMs,
+		Online:         online,
+		LastSeenMs:     ds.LastHeartbeatAtMs,
+		Status:         json.RawMessage("null"),
+	}
+	if ds.LastHeartbeatJSON != "" {
+		resp.Status = json.RawMessage(ds.LastHeartbeatJSON)
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
 }
 
 func (c *Server) handleEvents(w http.ResponseWriter, r *http.Request) {

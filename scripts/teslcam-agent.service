@@ -32,7 +32,9 @@ ExecStart=/usr/local/bin/teslcam-agent \
   -ble-adapter hci0 \
   -ble-name Sentyx-Pi \
   -ble-config-dir /etc/teslcam \
-  -ble-provisioned-window 10m
+  -ble-provisioned-window 10m \
+  -heartbeat \
+  -heartbeat-interval 30s
 Restart=on-failure
 RestartSec=5
 

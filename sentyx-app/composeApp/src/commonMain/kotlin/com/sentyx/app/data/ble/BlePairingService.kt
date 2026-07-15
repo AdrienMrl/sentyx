@@ -6,6 +6,8 @@ import com.juul.kable.PlatformAdvertisement
 import com.juul.kable.Scanner
 import com.juul.kable.WriteType
 import com.juul.kable.characteristicOf
+import com.sentyx.app.core.storage.KeyValueStore
+import com.sentyx.app.core.storage.StorageKeys
 import com.sentyx.app.data.api.SentyxApi
 import com.sentyx.app.di.AppConfig
 import com.sentyx.app.domain.model.ConnectionTestStep
@@ -55,7 +57,12 @@ class BlePairingService(
     private val scope: CoroutineScope,
     private val api: SentyxApi,
     private val config: AppConfig,
+    private val store: KeyValueStore,
 ) : PairingService {
+
+    /** The id of the peripheral in the current session, if connected. */
+    val pairedDeviceId: String?
+        get() = session?.deviceId
 
     // Copied from the demo service: these are static onboarding UI content, not
     // device-derived, so the real service presents the same checklist/permissions.
@@ -298,6 +305,11 @@ class BlePairingService(
         if (status.state != "config_saved") {
             fail(status.detail ?: "The device rejected the configuration.")
         }
+
+        // Remember which device was onboarded so the home screen can poll its
+        // real status after pairing (RealDeviceRepository reads these keys).
+        store.putString(StorageKeys.DEVICE_ID, s.deviceId)
+        store.putString(StorageKeys.DEVICE_NAME, deviceName)
     }
 
     // Wi-Fi provisioning is out of scope for this groundwork; the UI's "Skip"

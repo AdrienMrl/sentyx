@@ -23,12 +23,16 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
+	"sync/atomic"
 	"syscall"
 	"time"
 
 	"github.com/AdrienMrl/teslcam/internal/blepair"
 	"github.com/AdrienMrl/teslcam/internal/cameraselect"
+	"github.com/AdrienMrl/teslcam/internal/eventupload"
 	"github.com/AdrienMrl/teslcam/internal/gadget"
+	"github.com/AdrienMrl/teslcam/internal/health"
 	"github.com/AdrienMrl/teslcam/internal/pipeline"
 	"github.com/AdrienMrl/teslcam/internal/tokenfile"
 	"github.com/AdrienMrl/teslcam/internal/videocompress"
@@ -81,6 +85,8 @@ func main() {
 	bleName := flag.String("ble-name", "", "advertised BLE LocalName, e.g. Sentyx-Pi4 (required with -ble-onboard)")
 	bleConfigDir := flag.String("ble-config-dir", "", "directory where onboarding writes agent.env + server.token, e.g. /etc/teslcam (required with -ble-onboard)")
 	bleProvisionedWindow := flag.Duration("ble-provisioned-window", 0, "how long an already-provisioned device advertises after start; 0 explicitly means never advertise when provisioned (the flag must be set explicitly with -ble-onboard)")
+	heartbeat := flag.Bool("heartbeat", false, "POST periodic device-status heartbeats to the server (requires -post-to, -token-file and -heartbeat-interval)")
+	heartbeatInterval := flag.Duration("heartbeat-interval", 0, "heartbeat POST interval, e.g. 30s (required, > 0, with -heartbeat; no implicit default)")
 	flag.Parse()
 	if *imagePath == "" || *udc == "" {
 		log.Fatal("both -image and -udc are required")
@@ -107,6 +113,13 @@ func main() {
 		}
 	} else if *selectClips || *cameraScorerPath != "" {
 		log.Print("no -post-to (pre-provisioning): uploads off; -select-clips/-camera-scorer are inert until provisioned")
+	}
+	// Heartbeat needs an explicit interval whenever enabled (no implicit
+	// default, per project rule). Like clip selection it is only actually active
+	// on a provisioned device (-post-to + a real token present); otherwise it is
+	// inert until BLE onboarding writes agent.env + the token.
+	if *heartbeat && *heartbeatInterval <= 0 {
+		log.Fatal("-heartbeat-interval (> 0) is required with -heartbeat")
 	}
 	// Track which -ble-* flags were explicitly set. -ble-provisioned-window has
 	// a meaningful zero value (never advertise when provisioned), so we can't
@@ -253,6 +266,62 @@ func main() {
 		}()
 	}
 
+	// uploaderRef is published by the pipeline once the durable upload client
+	// exists, letting the heartbeat reporter read the live pending-upload
+	// backlog without the reporter and pipeline sharing lifecycle. Reads before
+	// the pipeline sets it see nil and report a zero backlog.
+	var uploaderRef atomic.Pointer[eventupload.Client]
+
+	// Device-status heartbeats run beside the pipeline on the same signal ctx.
+	// They are pure best-effort telemetry: a failure here must never take down
+	// the agent, so New/Run errors are only logged. Only a provisioned device
+	// (real -post-to + token) heartbeats; otherwise -heartbeat logs inert,
+	// matching the -select-clips pattern.
+	if *heartbeat {
+		if *postTo != "" && token != "" {
+			// StoragePath is the local spool/copy-to dir whose free space we
+			// report; -copy-to is that directory on a provisioned agent.
+			storagePath := *copyTo
+			if storagePath == "" {
+				storagePath = filepath.Dir(*spoolDB)
+			}
+			reporter, err := health.New(health.Config{
+				ServerURL:    *postTo,
+				DeviceID:     *deviceID,
+				Token:        token,
+				StoragePath:  storagePath,
+				Interval:     *heartbeatInterval,
+				AgentVersion: version,
+				Logf:         log.Printf,
+				// Live pending-upload backlog from the durable spool, surfaced via
+				// the pipeline's UploaderReady callback below.
+				UploadBacklog: func() int {
+					if u := uploaderRef.Load(); u != nil {
+						return u.Pending()
+					}
+					return 0
+				},
+				// TODO(m6): recordingNow needs the watcher to expose whether a clip
+				// is currently stabilizing; not surfaced today, so report false.
+				// All other device-health metrics (storage, temp, throttle, wifi,
+				// uptime, backlog) are real.
+				RecordingNow: func() bool { return false },
+			})
+			if err != nil {
+				log.Printf("health: heartbeat disabled (config error): %v", err)
+			} else {
+				log.Printf("heartbeat: reporting device status to %s as %s every %s", *postTo, *deviceID, *heartbeatInterval)
+				go func() {
+					if err := reporter.Run(ctx); err != nil && ctx.Err() == nil {
+						log.Printf("health: reporter error (agent continues): %v", err)
+					}
+				}()
+			}
+		} else {
+			log.Print("no -post-to/token (pre-provisioning): -heartbeat is inert until provisioned")
+		}
+	}
+
 	runErr := pipeline.Run(ctx, pipeline.Config{
 		ImagePath:             *imagePath,
 		Interval:              *interval,
@@ -271,6 +340,7 @@ func main() {
 		SelectMetadataTimeout: *selectMetadataTimeout,
 		CameraScorer:          cameraScorer,
 		CameraScoreWait:       *cameraScoreWait,
+		UploaderReady:         func(u *eventupload.Client) { uploaderRef.Store(u) },
 		Logf:                  log.Printf,
 	})
 

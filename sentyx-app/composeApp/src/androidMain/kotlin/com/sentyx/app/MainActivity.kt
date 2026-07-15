@@ -10,6 +10,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import com.sentyx.app.core.permissions.AndroidPermissionsController
 import com.sentyx.app.core.permissions.LocalPermissionsController
 import com.sentyx.app.core.permissions.PermissionsController
+import com.sentyx.app.core.storage.SentyxAppContext
 
 class MainActivity : ComponentActivity() {
 
@@ -17,6 +18,9 @@ class MainActivity : ComponentActivity() {
     private lateinit var permissions: PermissionsController
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // Populate the process Context for commonMain platform stores (KeyValueStore)
+        // before the app container is created inside setContent.
+        SentyxAppContext.init(this)
         permissions = AndroidPermissionsController(this)
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)

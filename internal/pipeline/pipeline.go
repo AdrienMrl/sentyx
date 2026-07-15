@@ -62,6 +62,12 @@ type Config struct {
 	CameraScorer    cameraselect.Scorer
 	CameraScoreWait time.Duration
 
+	// UploaderReady, when set, is called once with the durable upload client
+	// after it is constructed (only when PostTo is set). It lets an out-of-band
+	// consumer — the heartbeat reporter — read the live pending-upload backlog
+	// via client.Pending() without the pipeline owning that concern.
+	UploaderReady func(*eventupload.Client)
+
 	Logf func(format string, v ...any)
 }
 
@@ -130,6 +136,9 @@ func Run(ctx context.Context, cfg Config) error {
 		})
 		if err != nil {
 			return err
+		}
+		if cfg.UploaderReady != nil {
+			cfg.UploaderReady(uploader)
 		}
 		go uploader.Run(ctx,
 			func(it eventupload.Item) {
