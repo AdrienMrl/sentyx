@@ -1,4 +1,22 @@
-# TODO — Phase 1: exFAT live-reader + Tesla writer simulator
+# TODO
+
+## 0. Admin dashboard (next up; user accounts are a prereq)
+
+Original prompt:
+
+> New dashboard should be a react app that relies on an admin api that you
+> might need to build. This dashboard should allow me to browse each clip
+> created by each user. And view everything about it. Details on which camera
+> was picked by the client, gemini output, cost, etc.
+
+- [ ] User accounts (in progress — see plan)
+- [ ] Admin API on the server
+- [ ] React dashboard: browse clips per user; per-clip detail (camera picked
+      by the client, Gemini output, cost, …)
+
+(The old `cmd/teslcam-debug` exFAT debug UI was scratched in favor of this.)
+
+# Phase 1: exFAT live-reader + Tesla writer simulator
 
 ## 1. exFAT live-reader (Go) — core component
 
