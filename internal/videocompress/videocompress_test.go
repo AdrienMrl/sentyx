@@ -48,6 +48,7 @@ func writeInput(t *testing.T, name string, size int64) string {
 func TestCompressUsesRatioAndAcceptsUsefulOutput(t *testing.T) {
 	const inputBytes = int64(30_000_000)
 	cfg := testConfig(t, "h264", 16_000_000)
+	cfg.MaxBitrate = 2_500_000 // exercise the ratio, not the lower analysis-grade cap
 	c, err := New(cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -66,6 +67,41 @@ func TestCompressUsesRatioAndAcceptsUsefulOutput(t *testing.T) {
 	}
 }
 
+func TestCompressAppliesFrameRateAndScaleFilter(t *testing.T) {
+	dir := t.TempDir()
+	probe := filepath.Join(dir, "ffprobe")
+	probeBody := "#!/bin/sh\nprintf '%s\\n' '{\"streams\":[{\"codec_name\":\"h264\"}],\"format\":{\"duration\":\"60\"}}'\n"
+	if err := os.WriteFile(probe, []byte(probeBody), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	argsFile := filepath.Join(dir, "args.txt")
+	ffmpeg := filepath.Join(dir, "ffmpeg")
+	ffmpegBody := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + argsFile + "\nfor last do :; done\nhead -c 1000000 /dev/zero > \"$last\"\n"
+	if err := os.WriteFile(ffmpeg, []byte(ffmpegBody), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := DefaultConfig("test-encoder")
+	cfg.FFprobePath = probe
+	cfg.FFmpegPath = ffmpeg
+	cfg.MinInputBytes = 1
+	c, err := New(cfg) // DefaultConfig sets FrameRate=3, MaxWidth=640
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Compress(context.Background(), writeInput(t, "clip.mp4", 30_000_000)); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"-vf", "fps=3", "scale='min(iw,640)':-2"} {
+		if !strings.Contains(string(got), want) {
+			t.Fatalf("ffmpeg args missing %q: %s", want, got)
+		}
+	}
+}
+
 func TestCompressSkipsHEVC(t *testing.T) {
 	cfg := testConfig(t, "hevc", 1)
 	c, _ := New(cfg)
@@ -81,15 +117,16 @@ func TestCompressSkipsHEVC(t *testing.T) {
 
 func TestCompressClampsTargetBitrate(t *testing.T) {
 	for _, tc := range []struct {
-		name       string
-		inputBytes int64
-		want       int64
+		name        string
+		inputBytes  int64
+		outputBytes int64
+		want        int64
 	}{
-		{"minimum", 12_000_000, DefaultMinBitrate},
-		{"maximum", 50_000_000, DefaultMaxBitrate},
+		{"minimum", 800_000, 100_000, DefaultMinBitrate},
+		{"maximum", 12_000_000, 1_000_000, DefaultMaxBitrate},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			cfg := testConfig(t, "h264", 1_000_000)
+			cfg := testConfig(t, "h264", tc.outputBytes)
 			c, _ := New(cfg)
 			got, err := c.Compress(context.Background(), writeInput(t, "clip.mp4", tc.inputBytes))
 			if err != nil {

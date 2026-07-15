@@ -75,9 +75,11 @@ func main() {
 	videoRatio := flag.Float64("video-target-ratio", videocompress.DefaultTargetRatio, "target fraction of the source video bitrate")
 	videoMinMB := flag.Int64("video-min-mb", videocompress.DefaultMinInputBytes>>20, "only compress videos at least this many MiB")
 	videoMinKbps := flag.Int64("video-min-kbps", videocompress.DefaultMinBitrate/1000, "minimum compressed video bitrate")
-	videoMaxKbps := flag.Int64("video-max-kbps", videocompress.DefaultMaxBitrate/1000, "maximum compressed video bitrate")
+	videoMaxKbps := flag.Int64("video-max-kbps", videocompress.DefaultMaxBitrate/1000, "maximum compressed video bitrate (primary knob for how aggressive compression is)")
+	videoFPS := flag.Int("video-fps", videocompress.DefaultFrameRate, "decimate upload video to this frame rate before encoding (0 keeps the source rate)")
+	videoMaxWidth := flag.Int("video-max-width", videocompress.DefaultMaxWidth, "downscale upload video to at most this width, preserving aspect (0 keeps source)")
 	videoMinSavings := flag.Float64("video-min-savings", videocompress.DefaultMinSavings, "minimum fractional size reduction required to use a transcode")
-	videoEncoder := flag.String("video-encoder", "h264_v4l2m2m", "ffmpeg video encoder (Pi default uses hardware H.264)")
+	videoEncoder := flag.String("video-encoder", "libx264", "ffmpeg video encoder; libx264 (software) has reliable rate control at low bitrates. Use h264_v4l2m2m for the Pi's hardware encoder if available.")
 	ffmpegPath := flag.String("ffmpeg", "ffmpeg", "ffmpeg executable used for video compression")
 	ffprobePath := flag.String("ffprobe", "ffprobe", "ffprobe executable used to inspect videos")
 	bleOnboard := flag.Bool("ble-onboard", false, "serve BLE onboarding alongside the pipeline (requires the -ble-* flags below)")
@@ -225,6 +227,8 @@ func main() {
 		cfg.MinBitrate = *videoMinKbps * 1000
 		cfg.MaxBitrate = *videoMaxKbps * 1000
 		cfg.MinSavingsRatio = *videoMinSavings
+		cfg.FrameRate = *videoFPS
+		cfg.MaxWidth = *videoMaxWidth
 		videoCompression = &cfg
 	}
 	var cameraScorer cameraselect.Scorer
