@@ -30,6 +30,7 @@ ExecStart=/usr/local/bin/teslcam-agent \
   -spool-max-mb 2048 \
   -select-clips \
   -select-metadata-timeout 5m \
+  -camera-scorer /usr/local/bin/teslcam-camera-scorer \
   -video-encoder h264_v4l2m2m \
   -video-fallback-encoder libx264 \
   -ble-onboard \

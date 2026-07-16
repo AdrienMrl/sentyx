@@ -8,9 +8,9 @@ import (
 func TestSelectKeepsMultipleStrongAndHintedCameras(t *testing.T) {
 	scores := []Score{
 		{Camera: "front", Motion: .05},
-		{Camera: "back", Objects: .82, Motion: .61},
+		{Camera: "back", Motion: .82, Novelty: .61},
 		{Camera: "left_pillar", Novelty: .41}, // unknown object/change
-		{Camera: "right_repeater", Objects: .08},
+		{Camera: "right_repeater", Motion: .08},
 	}
 	got := DefaultPolicy().Select(scores, "right_repeater")
 	want := []string{"back", "left_pillar", "right_repeater"}
@@ -24,8 +24,8 @@ func TestSelectKeepsMultipleStrongAndHintedCameras(t *testing.T) {
 
 func TestSelectUnknownFallingObjectViaClassAgnosticSignals(t *testing.T) {
 	scores := []Score{
-		{Camera: "front", Objects: 0, Motion: .72, Novelty: .64},
-		{Camera: "back", Objects: .20, Motion: .10},
+		{Camera: "front", Motion: .72, Novelty: .64},
+		{Camera: "back", Motion: .10},
 		{Camera: "left_repeater", Motion: .08},
 	}
 	got := DefaultPolicy().Select(scores, "")
@@ -37,13 +37,20 @@ func TestSelectUnknownFallingObjectViaClassAgnosticSignals(t *testing.T) {
 	}
 }
 
-func TestSelectAllWhenWeakAmbiguousOrIncomplete(t *testing.T) {
+func TestSelectQuietEventUploadsOnlyHintedCamera(t *testing.T) {
+	scores := []Score{
+		{Camera: "front", Motion: .10}, {Camera: "back", Motion: .08}, {Camera: "left", Motion: .02},
+	}
+	got := DefaultPolicy().Select(scores, "back")
+	if !reflect.DeepEqual(got.Selected, []string{"back"}) {
+		t.Fatalf("quiet event selected %v, want only the hinted camera", got.Selected)
+	}
+}
+
+func TestSelectAllWhenErrorOrUnhintedQuiet(t *testing.T) {
 	tests := map[string][]Score{
-		"weak": {
+		"quiet without hint": {
 			{Camera: "front", Motion: .10}, {Camera: "back", Motion: .08}, {Camera: "left", Motion: .02},
-		},
-		"ambiguous": {
-			{Camera: "front", Motion: .32}, {Camera: "back", Motion: .30}, {Camera: "left", Motion: .02},
 		},
 		"error": {
 			{Camera: "front", Motion: .80}, {Camera: "back", Error: "decode failed"}, {Camera: "left"},
@@ -59,12 +66,22 @@ func TestSelectAllWhenWeakAmbiguousOrIncomplete(t *testing.T) {
 	}
 }
 
+func TestSelectModestTieKeepsBothCandidates(t *testing.T) {
+	scores := []Score{
+		{Camera: "front", Motion: .32}, {Camera: "back", Motion: .30}, {Camera: "left", Motion: .02},
+	}
+	got := DefaultPolicy().Select(scores, "")
+	if !contains(got.Selected, "front") || !contains(got.Selected, "back") || contains(got.Selected, "left") {
+		t.Fatalf("modest tie selected %v, want front and back only", got.Selected)
+	}
+}
+
 func TestSelectStrongTieKeepsTiedCamerasWithoutForcingAll(t *testing.T) {
 	scores := []Score{
 		{Camera: "back", Motion: 1},
 		{Camera: "left_repeater", Motion: 1},
 		{Camera: "right_repeater", Novelty: .55},
-		{Camera: "front", Objects: .20},
+		{Camera: "front", Motion: .20},
 	}
 	got := DefaultPolicy().Select(scores, "")
 	if len(got.Selected) != 3 || contains(got.Selected, "front") {
@@ -73,8 +90,8 @@ func TestSelectStrongTieKeepsTiedCamerasWithoutForcingAll(t *testing.T) {
 }
 
 func TestNormalizeClampsAndDoesNotAddWeakSignals(t *testing.T) {
-	got := DefaultPolicy().Select([]Score{{Camera: "a", Objects: 2, Motion: -.2}, {Camera: "b"}}, "")
-	if got.Ranked[0].Combined != 1 || got.Ranked[0].Objects != 1 || got.Ranked[0].Motion != 0 {
+	got := DefaultPolicy().Select([]Score{{Camera: "a", Motion: 2, Novelty: -.2}, {Camera: "b"}}, "")
+	if got.Ranked[0].Combined != 1 || got.Ranked[0].Motion != 1 || got.Ranked[0].Novelty != 0 {
 		t.Fatalf("normalized score = %+v", got.Ranked[0])
 	}
 }

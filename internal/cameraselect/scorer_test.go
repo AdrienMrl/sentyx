@@ -14,14 +14,13 @@ func TestCommandScorer(t *testing.T) {
 	dir := t.TempDir()
 	command := filepath.Join(dir, "score")
 	argsFile := filepath.Join(dir, "args")
-	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$ARGS_FILE\"\nprintf '%s\\n' '{\"objects\":0.8,\"motion\":0.4,\"novelty\":0.3,\"occlusion\":0.1,\"reasons\":[\"person\"]}'\n"
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$ARGS_FILE\"\nprintf '%s\\n' '{\"motion\":0.8,\"novelty\":0.3,\"occlusion\":0.1,\"reasons\":[\"localized_motion\"]}'\n"
 	if err := os.WriteFile(command, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("ARGS_FILE", argsFile)
 	scorer, err := NewCommandScorer(CommandConfig{
-		Path: command, ModelParam: "/models/nanodet.param", ModelBin: "/models/nanodet.bin",
-		Window: 12, SampleFPS: 2, Threads: 2,
+		Path: command, Window: 12, Threads: 2,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -32,14 +31,14 @@ func TestCommandScorer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Camera != "back" || got.Objects != .8 || got.Combined <= .8 {
+	if got.Camera != "back" || got.Motion != .8 || got.Combined <= .8 {
 		t.Fatalf("score = %+v", got)
 	}
 	args, err := os.ReadFile(argsFile)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"--offset\n40.250", "--window\n12.000", "--fps\n2.000", "/clips/back.mp4"} {
+	for _, want := range []string{"--offset\n40.250", "--window\n12.000", "--threads\n2", "/clips/back.mp4"} {
 		if !strings.Contains(string(args), want) {
 			t.Errorf("args missing %q:\n%s", want, args)
 		}
@@ -49,7 +48,7 @@ func TestCommandScorer(t *testing.T) {
 func TestCommandScorerSerializesNativeInference(t *testing.T) {
 	dir := t.TempDir()
 	command := filepath.Join(dir, "score")
-	script := "#!/bin/sh\nif ! mkdir \"$LOCK_DIR\" 2>/dev/null; then touch \"$OVERLAP_FILE\"; fi\nsleep 0.1\nrmdir \"$LOCK_DIR\" 2>/dev/null || true\necho '{\"objects\":0.1,\"motion\":0,\"novelty\":0,\"occlusion\":0}'\n"
+	script := "#!/bin/sh\nif ! mkdir \"$LOCK_DIR\" 2>/dev/null; then touch \"$OVERLAP_FILE\"; fi\nsleep 0.1\nrmdir \"$LOCK_DIR\" 2>/dev/null || true\necho '{\"motion\":0.1,\"novelty\":0,\"occlusion\":0}'\n"
 	if err := os.WriteFile(command, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +56,7 @@ func TestCommandScorerSerializesNativeInference(t *testing.T) {
 	overlap := filepath.Join(dir, "overlap")
 	t.Setenv("OVERLAP_FILE", overlap)
 	scorer, err := NewCommandScorer(CommandConfig{
-		Path: command, ModelParam: "p", ModelBin: "b", Window: 1, SampleFPS: 1, Threads: 1,
+		Path: command, Window: 1, Threads: 1,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -84,7 +83,7 @@ func TestCommandScorerBoundsEachNativeInvocation(t *testing.T) {
 		t.Fatal(err)
 	}
 	scorer, err := NewCommandScorer(CommandConfig{
-		Path: command, ModelParam: "p", ModelBin: "b", Window: 1, SampleFPS: 1, Threads: 1,
+		Path: command, Window: 1, Threads: 1,
 		Timeout: 20 * time.Millisecond,
 	})
 	if err != nil {
@@ -102,7 +101,7 @@ func TestCommandScorerBoundsEachNativeInvocation(t *testing.T) {
 func TestCommandScorerPinsNativeProcessToConfiguredCPUSet(t *testing.T) {
 	dir := t.TempDir()
 	command := filepath.Join(dir, "score")
-	if err := os.WriteFile(command, []byte("#!/bin/sh\necho '{\"objects\":0.1}'\n"), 0o755); err != nil {
+	if err := os.WriteFile(command, []byte("#!/bin/sh\necho '{\"motion\":0.1}'\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	taskset := filepath.Join(dir, "taskset")
@@ -113,7 +112,7 @@ func TestCommandScorerPinsNativeProcessToConfiguredCPUSet(t *testing.T) {
 	}
 	t.Setenv("TASKSET_ARGS", argsFile)
 	scorer, err := NewCommandScorer(CommandConfig{
-		Path: command, ModelParam: "p", ModelBin: "b", Window: 1, SampleFPS: 1, Threads: 1,
+		Path: command, Window: 1, Threads: 1,
 		CPUSet: "0", TasksetPath: taskset,
 	})
 	if err != nil {
@@ -135,7 +134,7 @@ func TestCommandScorerSkipsInferenceAboveTemperatureLimit(t *testing.T) {
 	dir := t.TempDir()
 	ranFile := filepath.Join(dir, "ran")
 	command := filepath.Join(dir, "score")
-	script := "#!/bin/sh\ntouch \"$RAN_FILE\"\necho '{\"objects\":0.1}'\n"
+	script := "#!/bin/sh\ntouch \"$RAN_FILE\"\necho '{\"motion\":0.1}'\n"
 	if err := os.WriteFile(command, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -145,7 +144,7 @@ func TestCommandScorerSkipsInferenceAboveTemperatureLimit(t *testing.T) {
 	}
 	t.Setenv("RAN_FILE", ranFile)
 	scorer, err := NewCommandScorer(CommandConfig{
-		Path: command, ModelParam: "p", ModelBin: "b", Window: 1, SampleFPS: 1, Threads: 1,
+		Path: command, Window: 1, Threads: 1,
 		MaxTemperatureC: 72, ThermalPath: temperature,
 	})
 	if err != nil {
@@ -172,7 +171,7 @@ func TestCommandScorerStopsInferenceAtTemperatureLimit(t *testing.T) {
 	}
 	t.Setenv("TEMP_FILE", temperature)
 	scorer, err := NewCommandScorer(CommandConfig{
-		Path: command, ModelParam: "p", ModelBin: "b", Window: 1, SampleFPS: 1, Threads: 1,
+		Path: command, Window: 1, Threads: 1,
 		MaxTemperatureC: 75, ThermalPath: temperature, ThermalPoll: 10 * time.Millisecond,
 	})
 	if err != nil {
@@ -198,7 +197,7 @@ func TestCommandScorerRejectsFailureAndInvalidJSON(t *testing.T) {
 				t.Fatal(err)
 			}
 			scorer, err := NewCommandScorer(CommandConfig{
-				Path: command, ModelParam: "p", ModelBin: "b", Window: 1, SampleFPS: 1, Threads: 1,
+				Path: command, Window: 1, Threads: 1,
 			})
 			if err != nil {
 				t.Fatal(err)

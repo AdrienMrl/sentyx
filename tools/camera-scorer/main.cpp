@@ -1,38 +1,50 @@
-// Class-aware and class-agnostic camera scorer for the TeslaCam Pi agent.
-// NanoDet itself is Apache-2.0 licensed; this program links its official NCNN
-// demo implementation rather than copying it into the Go application.
+// Class-agnostic pixel-change camera scorer for the TeslaCam Pi agent.
+//
+// Scores one camera's clip window using cheap frame-difference signals only:
+// motion (localized change between consecutive samples), novelty (change
+// versus the start of the window), and occlusion (large-area change, global
+// brightness shift, or detail loss). There is deliberately no neural network:
+// on a glovebox Pi in a hot car the CPU budget is the binding constraint, and
+// the final relevance judgment happens server-side anyway.
+//
+// Decoding samples only H.264 keyframes. Tesla clips carry a keyframe roughly
+// every half second, so this preserves ~2 samples/s while skipping the
+// P-frame decode that otherwise dominates scoring time. The Pi's V4L2 M2M
+// hardware decoder was measured slower AND hotter than keyframe-only software
+// decode for this workload (it cannot skip non-keyframes and pays per-frame
+// buffer conversion), and it rejects the front camera's 2896x1876 stream, so
+// software decode is used everywhere.
 
 #include <opencv2/imgproc.hpp>
-#include <opencv2/videoio.hpp>
 
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <iomanip>
 #include <iostream>
 #include <set>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <vector>
 
-#include "nanodet.h"
-#include <cpu.h>
-
 namespace {
 
+// Analysis resolution. Frames are decoded and squashed to this fixed size by
+// ffmpeg; all thresholds below are calibrated against it.
+constexpr int kWidth = 320;
+constexpr int kHeight = 240;
+
 struct Config {
-    std::string model_param;
-    std::string model_bin;
     std::string video;
     double offset = -1;
     double window = 12;
-    double fps = 2;
     int threads = 2;
 };
 
 struct Signals {
-    double objects = 0;
     double motion = 0;
     double novelty = 0;
     double occlusion = 0;
@@ -60,41 +72,17 @@ Config parse_args(int argc, char** argv) {
             if (++i >= argc) throw std::runtime_error("missing value for " + arg);
             return argv[i];
         };
-        if (arg == "--model-param") cfg.model_param = next();
-        else if (arg == "--model-bin") cfg.model_bin = next();
-        else if (arg == "--offset") cfg.offset = parse_number(next(), "offset");
+        if (arg == "--offset") cfg.offset = parse_number(next(), "offset");
         else if (arg == "--window") cfg.window = parse_number(next(), "window");
-        else if (arg == "--fps") cfg.fps = parse_number(next(), "fps");
         else if (arg == "--threads") cfg.threads = static_cast<int>(parse_number(next(), "threads"));
         else if (!arg.empty() && arg[0] == '-') throw std::runtime_error("unknown option " + arg);
         else if (cfg.video.empty()) cfg.video = arg;
         else throw std::runtime_error("multiple video paths provided");
     }
-    if (cfg.model_param.empty() || cfg.model_bin.empty() || cfg.video.empty() ||
-        cfg.offset < 0 || cfg.window <= 0 || cfg.fps <= 0 || cfg.threads <= 0) {
-        throw std::runtime_error("model files, video, non-negative offset, and positive window/fps/threads are required");
+    if (cfg.video.empty() || cfg.offset < 0 || cfg.window <= 0 || cfg.threads <= 0) {
+        throw std::runtime_error("video, non-negative offset, and positive window/threads are required");
     }
     return cfg;
-}
-
-cv::Mat letterbox(const cv::Mat& image, int size) {
-    const double scale = std::min(static_cast<double>(size) / image.cols,
-                                  static_cast<double>(size) / image.rows);
-    const int width = std::max(1, static_cast<int>(std::round(image.cols * scale)));
-    const int height = std::max(1, static_cast<int>(std::round(image.rows * scale)));
-    cv::Mat resized;
-    cv::resize(image, resized, cv::Size(width, height), 0, 0, cv::INTER_AREA);
-    cv::Mat output(size, size, CV_8UC3, cv::Scalar(0, 0, 0));
-    resized.copyTo(output(cv::Rect((size - width) / 2, (size - height) / 2, width, height)));
-    return output;
-}
-
-cv::Mat motion_frame(const cv::Mat& image) {
-    cv::Mat gray, resized;
-    cv::cvtColor(image, gray, cv::COLOR_BGR2GRAY);
-    cv::resize(gray, resized, cv::Size(320, 240), 0, 0, cv::INTER_AREA);
-    cv::GaussianBlur(resized, resized, cv::Size(5, 5), 0);
-    return resized;
 }
 
 struct Change {
@@ -134,77 +122,53 @@ Change measure_change(const cv::Mat& before, const cv::Mat& after) {
 double change_score(const Change& change) {
     // Square roots deliberately give small localized changes useful weight:
     // a falling object need not occupy person-sized portions of the frame.
-	// A component covering only 0.4% of the low-resolution motion frame is
-	// already material. This is intentionally sensitive enough for a small
-	// unclassified object falling onto the car.
-	const double component = std::sqrt(change.component_fraction / 0.004);
-	const double total = std::sqrt(change.changed_fraction / 0.05);
+    // A component covering only 0.4% of the low-resolution motion frame is
+    // already material. This is intentionally sensitive enough for a small
+    // unclassified object falling onto the car.
+    const double component = std::sqrt(change.component_fraction / 0.004);
+    const double total = std::sqrt(change.changed_fraction / 0.05);
     return clamp(std::max(component, total));
 }
 
-bool animal_label(int label) {
-    return label >= 14 && label <= 23;
-}
-
-bool vehicle_label(int label) {
-    return label >= 1 && label <= 8;
-}
-
-void add_detections(NanoDet& detector, const cv::Mat& frame, Signals& signals) {
-    cv::Mat input = letterbox(frame, detector.input_size[0]);
-    const auto detections = detector.detect(input, 0.25f, 0.5f);
-    const double image_area = static_cast<double>(input.cols * input.rows);
-    for (const auto& box : detections) {
-        double class_weight = 0.70;
-        if (box.label == 0 || animal_label(box.label)) class_weight = 1.0;
-        else if (vehicle_label(box.label)) class_weight = 0.55;
-        const double area = std::max(0.0f, box.x2 - box.x1) * std::max(0.0f, box.y2 - box.y1) / image_area;
-        const double area_weight = 0.55 + 0.45 * std::min(1.0, std::sqrt(area / 0.10));
-        const double score = clamp(box.score * class_weight * area_weight);
-        signals.objects = std::max(signals.objects, score);
-        if (box.score >= 0.35f && box.label >= 0 && box.label < static_cast<int>(detector.labels.size())) {
-            signals.reasons.insert(detector.labels[box.label]);
-        }
+std::string shell_quote(const std::string& value) {
+    std::string quoted = "'";
+    for (const char c : value) {
+        if (c == '\'') quoted += "'\\''";
+        else quoted += c;
     }
+    return quoted + "'";
 }
 
 Signals score_video(const Config& cfg) {
     cv::setNumThreads(cfg.threads);
-    ncnn::set_omp_num_threads(cfg.threads);
-    NanoDet detector(cfg.model_param.c_str(), cfg.model_bin.c_str(), false);
-
-    cv::VideoCapture video(cfg.video);
-    if (!video.isOpened()) throw std::runtime_error("cannot open video");
-    const double source_fps = std::max(1.0, video.get(cv::CAP_PROP_FPS));
-    const double frame_count = video.get(cv::CAP_PROP_FRAME_COUNT);
-    const double duration = frame_count / source_fps;
     const double start = std::max(0.0, cfg.offset - cfg.window / 2.0);
-    const double end = std::min(duration, cfg.offset + cfg.window / 2.0);
-    if (end <= start) throw std::runtime_error("event window is outside video");
+    // The window is centered on the event; when the event sits near the clip
+    // start the front half is clipped rather than shifted later.
+    const double duration = cfg.offset + cfg.window / 2.0 - start;
+
+    std::ostringstream command;
+    command << "ffmpeg -v error -nostdin"
+            // Decode keyframes only; -ss before -i seeks without decoding.
+            << " -skip_frame nokey"
+            << " -ss " << std::fixed << std::setprecision(3) << start
+            << " -t " << duration
+            << " -i " << shell_quote(cfg.video)
+            << " -vf scale=" << kWidth << ':' << kHeight
+            // Without vfr, rawvideo output is CFR and every surviving
+            // keyframe is duplicated ~18x to fill the source frame rate.
+            << " -fps_mode vfr -f rawvideo -pix_fmt gray -";
+    FILE* pipe = popen(command.str().c_str(), "r");
+    if (!pipe) throw std::runtime_error("cannot start ffmpeg");
 
     Signals signals;
     cv::Mat first_gray, previous_gray;
-    const int samples = std::max(2, static_cast<int>(std::floor((end - start) * cfg.fps)) + 1);
-    // Seek once, then decode forward. Seeking for every sample made FFmpeg
-    // repeatedly restart at an H.264 keyframe; on the high-bitrate front
-    // camera that was several times slower than decoding this short window.
-    video.set(cv::CAP_PROP_POS_FRAMES, std::floor(start * source_fps));
-    int64_t decoded_frame = static_cast<int64_t>(std::round(video.get(cv::CAP_PROP_POS_FRAMES))) - 1;
-    for (int i = 0; i < samples; ++i) {
-        const double second = std::min(end, start + i / cfg.fps);
-        const int64_t target_frame = std::min(
-            static_cast<int64_t>(std::max(0.0, frame_count - 1)),
-            static_cast<int64_t>(std::round(second * source_fps)));
-        while (decoded_frame < target_frame) {
-            if (!video.grab()) break;
-            const int64_t reported_frame =
-                static_cast<int64_t>(std::round(video.get(cv::CAP_PROP_POS_FRAMES))) - 1;
-            decoded_frame = std::max(decoded_frame + 1, reported_frame);
-        }
-        cv::Mat frame;
-        if (decoded_frame < target_frame || !video.retrieve(frame) || frame.empty()) continue;
-
-        const cv::Mat gray = motion_frame(frame);
+    int processed = 0;
+    const size_t frame_bytes = static_cast<size_t>(kWidth) * kHeight;
+    std::vector<uint8_t> buffer(frame_bytes);
+    while (std::fread(buffer.data(), 1, frame_bytes, pipe) == frame_bytes) {
+        const cv::Mat raw(kHeight, kWidth, CV_8UC1, buffer.data());
+        cv::Mat gray;
+        cv::GaussianBlur(raw, gray, cv::Size(5, 5), 0);
         if (first_gray.empty()) first_gray = gray.clone();
         if (!previous_gray.empty()) {
             const Change change = measure_change(previous_gray, gray);
@@ -213,18 +177,19 @@ Signals score_video(const Config& cfg) {
                 clamp(std::max(change.changed_fraction / 0.55,
                                std::max(change.mean_delta, change.variance_drop))));
         }
-        if (i > 0) {
+        if (processed > 0) {
             signals.novelty = std::max(signals.novelty, change_score(measure_change(first_gray, gray)));
         }
-        previous_gray = gray.clone();
-
-		// One detector pass every two seconds is enough for persistence while keeping
-		// the class-agnostic motion stream at the requested higher sample FPS.
-		if (i == 0 || i == samples - 1 || i % std::max(1, static_cast<int>(std::round(cfg.fps * 2))) == 0) {
-            add_detections(detector, frame, signals);
-        }
+        previous_gray = gray;
+        ++processed;
     }
-    if (previous_gray.empty()) throw std::runtime_error("video yielded no frames");
+    const int status = pclose(pipe);
+    if (status != 0) throw std::runtime_error("ffmpeg keyframe decode failed");
+    // A clip shorter than the window can legitimately yield one keyframe, but
+    // change signals need at least two; treat that as a scoring failure so the
+    // agent's error path (select every camera) handles it.
+    if (processed < 2) throw std::runtime_error("video yielded fewer than two keyframes in the event window");
+
     if (signals.motion >= 0.35) signals.reasons.insert("localized_motion");
     if (signals.novelty >= 0.35) signals.reasons.insert("scene_change");
     if (signals.occlusion >= 0.35) signals.reasons.insert("occlusion_or_impact");
@@ -233,8 +198,7 @@ Signals score_video(const Config& cfg) {
 
 void print_json(const Signals& signals) {
     std::cout << std::fixed << std::setprecision(6)
-              << "{\"objects\":" << clamp(signals.objects)
-              << ",\"motion\":" << clamp(signals.motion)
+              << "{\"motion\":" << clamp(signals.motion)
               << ",\"novelty\":" << clamp(signals.novelty)
               << ",\"occlusion\":" << clamp(signals.occlusion)
               << ",\"reasons\":[";

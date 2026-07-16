@@ -1,5 +1,8 @@
-// Package cameraselect combines neural object detections with class-agnostic
-// video-change signals and makes a deliberately recall-biased camera choice.
+// Package cameraselect ranks cameras by class-agnostic pixel-change signals
+// and makes a deliberately recall-biased choice of which clips to upload.
+// There is intentionally no on-device object detection: the Pi's CPU/thermal
+// budget is the binding constraint, and the real relevance judgment happens
+// server-side once the interesting clips arrive.
 package cameraselect
 
 import (
@@ -8,13 +11,12 @@ import (
 
 const MetadataName = "camera-selection.json"
 
-// Score contains normalized [0,1] signals for one camera. Motion and Novelty
-// are intentionally class-agnostic: they cover unknown objects, impacts, and
-// things falling into view even when the detector has no matching class.
+// Score contains normalized [0,1] signals for one camera. All signals are
+// class-agnostic pixel changes: they cover people, vehicles, unknown objects,
+// impacts, and things falling into view without needing a detector class.
 type Score struct {
 	Camera    string   `json:"camera"`
 	Combined  float64  `json:"score"`
-	Objects   float64  `json:"objects"`
 	Motion    float64  `json:"motion"`
 	Novelty   float64  `json:"novelty"`
 	Occlusion float64  `json:"occlusion"`
@@ -34,29 +36,28 @@ type Metadata struct {
 // Policy controls only the final recall/bandwidth tradeoff. Signal extraction
 // has its own thresholds and should preserve normalized values here.
 type Policy struct {
-	MinSelected    int
 	RelativeToBest float64
 	StrongSignal   float64
 	LowConfidence  float64
-	AmbiguousGap   float64
 }
 
 func DefaultPolicy() Policy {
 	return Policy{
-		MinSelected:    2,
 		RelativeToBest: 0.50,
 		StrongSignal:   0.35,
 		LowConfidence:  0.18,
-		AmbiguousGap:   0.04,
 	}
 }
 
-// Select ranks scores and returns a recall-biased upload set. Any scoring
-// failure selects every camera because an unobserved camera must not become a
-// silent false negative. Weak or near-tied results do the same. Otherwise it
-// keeps at least MinSelected, all cameras reasonably close to the winner, all
-// cameras with one strong independent signal, and Tesla's hint as extra
-// insurance (the hint never affects rank).
+// Select ranks scores and returns a recall-biased upload set of every camera
+// that looks interesting. Any scoring failure selects every camera because an
+// unobserved camera must not become a silent false negative. A quiet event
+// (best signal below LowConfidence) selects only Tesla's hinted camera — the
+// event was still worth triggering on, but pixel signals saw nothing worth
+// spending bandwidth on; with no hint it falls back to every camera.
+// Otherwise it keeps the top camera, all cameras reasonably close to the
+// winner, all cameras with one strong independent signal, and Tesla's hint as
+// extra insurance (the hint never affects rank).
 func (p Policy) Select(scores []Score, hintedCamera string) Metadata {
 	ranked := append([]Score(nil), scores...)
 	for i := range ranked {
@@ -69,22 +70,23 @@ func (p Policy) Select(scores []Score, hintedCamera string) Metadata {
 		return ranked[i].Combined > ranked[j].Combined
 	})
 
-	meta := Metadata{Version: 1, Ranked: ranked}
+	meta := Metadata{Version: 2, Ranked: ranked}
 	if len(ranked) == 0 {
 		return meta
 	}
-	selectAll := ranked[0].Combined < p.LowConfidence
-	// A close tie is only uncertainty when both scores are modest. Two strong
-	// tied cameras are positive evidence for selecting both, not a reason to
-	// discard the useful ranking and upload every view.
-	if len(ranked) > 1 && ranked[0].Combined < p.StrongSignal && ranked[0].Combined-ranked[1].Combined < p.AmbiguousGap {
-		selectAll = true
-	}
+	selectAll := false
 	for _, s := range ranked {
 		if s.Error != "" {
 			selectAll = true
 			break
 		}
+	}
+	if !selectAll && ranked[0].Combined < p.LowConfidence {
+		if hintedCamera != "" {
+			meta.Selected = []string{hintedCamera}
+			return meta
+		}
+		selectAll = true
 	}
 	if selectAll {
 		for _, s := range ranked {
@@ -101,9 +103,9 @@ func (p Policy) Select(scores []Score, hintedCamera string) Metadata {
 		}
 	}
 	for i, s := range ranked {
-		strong := max(s.Objects, s.Motion, s.Novelty, s.Occlusion) >= p.StrongSignal
+		strong := max(s.Motion, s.Novelty, s.Occlusion) >= p.StrongSignal
 		close := s.Combined >= ranked[0].Combined*p.RelativeToBest
-		if i < p.MinSelected || close || strong {
+		if i == 0 || close || strong {
 			add(s.Camera)
 		}
 	}
@@ -112,15 +114,14 @@ func (p Policy) Select(scores []Score, hintedCamera string) Metadata {
 }
 
 func normalize(s Score) Score {
-	s.Objects = clamp(s.Objects)
 	s.Motion = clamp(s.Motion)
 	s.Novelty = clamp(s.Novelty)
 	s.Occlusion = clamp(s.Occlusion)
 	// Max preserves a decisive independent signal. The smaller weighted terms
 	// break useful ties without allowing several weak signals to manufacture a
 	// high-confidence result.
-	primary := max(s.Objects, s.Motion, s.Novelty, s.Occlusion)
-	s.Combined = clamp(primary + 0.10*(s.Objects+s.Motion+s.Novelty+s.Occlusion-primary))
+	primary := max(s.Motion, s.Novelty, s.Occlusion)
+	s.Combined = clamp(primary + 0.10*(s.Motion+s.Novelty+s.Occlusion-primary))
 	return s
 }
 

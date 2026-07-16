@@ -61,17 +61,14 @@ func main() {
 	tokenFile := flag.String("token-file", "", "file holding the server's bearer token; empty = no auth")
 	selectClips := flag.Bool("select-clips", false, "upload only the trigger camera's relevant clip per event (plus event.json/thumb.png); other clips stay extracted locally but are not uploaded")
 	selectMetadataTimeout := flag.Duration("select-metadata-timeout", 0, "fallback: if event.json has not appeared this long after an event's last stable clip, upload all held clips (required, > 0, with -select-clips)")
-	cameraScorerPath := flag.String("camera-scorer", "", "native camera scoring executable; empty keeps Tesla camera-code selection")
-	cameraModelParam := flag.String("camera-model-param", "", "NanoDet NCNN .param file (required with -camera-scorer)")
-	cameraModelBin := flag.String("camera-model-bin", "", "NanoDet NCNN .bin file (required with -camera-scorer)")
+	cameraScorerPath := flag.String("camera-scorer", "", "native pixel-change camera scoring executable; empty keeps Tesla camera-code selection")
 	cameraScoreWait := flag.Duration("camera-score-wait", 15*time.Second, "wait after event.json for trigger-time camera copies before scoring")
 	cameraScoreWindow := flag.Float64("camera-score-window", 12, "seconds around the Tesla event timestamp scored per camera")
-	cameraScoreFPS := flag.Float64("camera-score-fps", 2, "class-agnostic motion samples per second")
 	cameraScoreThreads := flag.Int("camera-score-threads", 2, "CPU threads used by camera scoring")
-	cameraScoreTimeout := flag.Duration("camera-score-timeout", 90*time.Second, "maximum native inference time per camera")
+	cameraScoreTimeout := flag.Duration("camera-score-timeout", 90*time.Second, "maximum native scoring time per camera")
 	cameraScoreCooldown := flag.Duration("camera-score-cooldown", 3*time.Second, "idle time between cameras to limit sustained Pi temperature")
 	cameraScoreCPUSet := flag.String("camera-score-cpu-set", "", "Linux CPU set for the native scorer, for example 0; empty disables affinity")
-	cameraScoreMaxTemp := flag.Float64("camera-score-max-temp", 0, "skip neural scoring at or above this CPU temperature in C; zero disables the guard")
+	cameraScoreMaxTemp := flag.Float64("camera-score-max-temp", 0, "skip camera scoring at or above this CPU temperature in C; zero disables the guard")
 	compressVideo := flag.Bool("compress-video", true, "compress suitable H.264 MP4s before upload")
 	videoRatio := flag.Float64("video-target-ratio", videocompress.DefaultTargetRatio, "target fraction of the source video bitrate")
 	videoMinMB := flag.Int64("video-min-mb", videocompress.DefaultMinInputBytes>>20, "only compress videos at least this many MiB")
@@ -234,8 +231,8 @@ func main() {
 	var cameraScorer cameraselect.Scorer
 	if *cameraScorerPath != "" && selectClipsActive {
 		cameraScorer, err = cameraselect.NewCommandScorer(cameraselect.CommandConfig{
-			Path: *cameraScorerPath, ModelParam: *cameraModelParam, ModelBin: *cameraModelBin,
-			Window: *cameraScoreWindow, SampleFPS: *cameraScoreFPS, Threads: *cameraScoreThreads,
+			Path:   *cameraScorerPath,
+			Window: *cameraScoreWindow, Threads: *cameraScoreThreads,
 			Timeout: *cameraScoreTimeout, Cooldown: *cameraScoreCooldown,
 			CPUSet: *cameraScoreCPUSet, MaxTemperatureC: *cameraScoreMaxTemp,
 		})

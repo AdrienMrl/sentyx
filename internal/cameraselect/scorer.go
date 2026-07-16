@@ -24,10 +24,7 @@ type Scorer interface {
 
 type CommandConfig struct {
 	Path            string
-	ModelParam      string
-	ModelBin        string
 	Window          float64
-	SampleFPS       float64
 	Threads         int
 	Timeout         time.Duration
 	Cooldown        time.Duration
@@ -38,20 +35,21 @@ type CommandConfig struct {
 	ThermalPoll     time.Duration
 }
 
-// CommandScorer invokes the small native NCNN/OpenCV helper used on the Pi.
-// Keeping inference out of the Go process isolates native failures and makes
-// the selection policy independently testable.
+// CommandScorer invokes the small native pixel-change helper used on the Pi
+// (tools/camera-scorer). Keeping the OpenCV/ffmpeg work out of the Go process
+// isolates native failures and makes the selection policy independently
+// testable.
 type CommandScorer struct {
 	cfg   CommandConfig
 	slots chan struct{}
 }
 
 func NewCommandScorer(cfg CommandConfig) (*CommandScorer, error) {
-	if cfg.Path == "" || cfg.ModelParam == "" || cfg.ModelBin == "" {
-		return nil, fmt.Errorf("camera scorer path and model files are required")
+	if cfg.Path == "" {
+		return nil, fmt.Errorf("camera scorer path is required")
 	}
-	if cfg.Window <= 0 || cfg.SampleFPS <= 0 || cfg.Threads <= 0 {
-		return nil, fmt.Errorf("camera scorer window, sample FPS and threads must be positive")
+	if cfg.Window <= 0 || cfg.Threads <= 0 {
+		return nil, fmt.Errorf("camera scorer window and threads must be positive")
 	}
 	if cfg.Timeout < 0 || cfg.Cooldown < 0 || cfg.ThermalPoll < 0 {
 		return nil, fmt.Errorf("camera scorer timeout, cooldown and thermal poll interval cannot be negative")
@@ -84,9 +82,9 @@ func (s *CommandScorer) Score(ctx context.Context, candidate Candidate) (Score, 
 	if candidate.Camera == "" || candidate.LocalPath == "" || candidate.EventOffsetSeconds < 0 {
 		return Score{}, fmt.Errorf("camera, local path and non-negative event offset are required")
 	}
-	// A Pi may rediscover several retained events after reboot. Serialize native
-	// inference across them so separate event goroutines cannot multiply CPU,
-	// memory, and thermal load.
+	// A Pi may rediscover several retained events after reboot. Serialize
+	// native scoring across them so separate event goroutines cannot multiply
+	// CPU, memory, and thermal load.
 	select {
 	case s.slots <- struct{}{}:
 		defer func() {
@@ -113,11 +111,8 @@ func (s *CommandScorer) Score(ctx context.Context, candidate Candidate) (Score, 
 		}
 	}
 	args := []string{
-		"--model-param", s.cfg.ModelParam,
-		"--model-bin", s.cfg.ModelBin,
 		"--offset", strconv.FormatFloat(candidate.EventOffsetSeconds, 'f', 3, 64),
 		"--window", strconv.FormatFloat(s.cfg.Window, 'f', 3, 64),
-		"--fps", strconv.FormatFloat(s.cfg.SampleFPS, 'f', 3, 64),
 		"--threads", strconv.Itoa(s.cfg.Threads),
 		candidate.LocalPath,
 	}

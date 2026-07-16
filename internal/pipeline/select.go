@@ -334,8 +334,8 @@ func (s *clipSelector) scoreEvent(sourceID string, target *heldEvent, meta clips
 			s.logf("camera selection: scoring %s/%s failed: %v", sourceID, candidate.Camera, err)
 			score = cameraselect.Score{Camera: candidate.Camera, Error: err.Error()}
 		} else {
-			s.logf("camera selection: %s/%s score=%.3f objects=%.3f motion=%.3f novelty=%.3f occlusion=%.3f reasons=%v",
-				sourceID, candidate.Camera, score.Combined, score.Objects, score.Motion, score.Novelty, score.Occlusion, score.Reasons)
+			s.logf("camera selection: %s/%s score=%.3f motion=%.3f novelty=%.3f occlusion=%.3f reasons=%v",
+				sourceID, candidate.Camera, score.Combined, score.Motion, score.Novelty, score.Occlusion, score.Reasons)
 		}
 		scores = append(scores, score)
 	}

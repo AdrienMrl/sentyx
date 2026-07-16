@@ -269,8 +269,8 @@ func TestScoredSelectorUploadsGenerousRankedSetAndMetadata(t *testing.T) {
 	r := &recorder{}
 	localDir := t.TempDir()
 	scorer := fixedScorer{scores: map[string]cameraselect.Score{
-		"back":           {Camera: "back", Objects: .90, Motion: .70, Reasons: []string{"person"}},
-		"front":          {Camera: "front", Objects: .05},
+		"back":           {Camera: "back", Motion: .90, Novelty: .70, Reasons: []string{"localized_motion"}},
+		"front":          {Camera: "front", Motion: .05},
 		"left_repeater":  {Camera: "left_repeater", Motion: .62, Novelty: .55},
 		"right_repeater": {Camera: "right_repeater", Motion: .10},
 	}}
