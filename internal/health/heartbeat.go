@@ -54,6 +54,9 @@ type metrics struct {
 	wifiSsid          *string
 	wifiRssiDbm       *int
 	wifiSignalPct     *int
+	loadAvg1          *float64
+	loadAvg5          *float64
+	loadAvg15         *float64
 }
 
 // buildHeartbeat assembles the wire heartbeat from collected metrics plus the

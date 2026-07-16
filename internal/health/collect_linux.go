@@ -20,7 +20,29 @@ func collect(storagePath string) metrics {
 	collectThrottled(&m)
 	collectWifi(&m)
 	collectUptime(&m)
+	collectLoad(&m)
 	return m
+}
+
+// collectLoad reads the 1/5/15-minute load averages from /proc/loadavg.
+func collectLoad(m *metrics) {
+	data, err := os.ReadFile("/proc/loadavg")
+	if err != nil {
+		return
+	}
+	fields := strings.Fields(string(data))
+	if len(fields) < 3 {
+		return
+	}
+	vals := make([]*float64, 3)
+	for i := range vals {
+		v, err := strconv.ParseFloat(fields[i], 64)
+		if err != nil {
+			return
+		}
+		vals[i] = &v
+	}
+	m.loadAvg1, m.loadAvg5, m.loadAvg15 = vals[0], vals[1], vals[2]
 }
 
 // collectStorage fills free/total bytes for the filesystem backing storagePath
