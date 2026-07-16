@@ -33,9 +33,13 @@ const (
 // Config controls the upload transcode. Bitrates are bits per second and
 // ratios are in the range (0, 1).
 type Config struct {
-	FFmpegPath      string
-	FFprobePath     string
-	Encoder         string
+	FFmpegPath  string
+	FFprobePath string
+	Encoder     string
+	// FallbackEncoder, when non-empty, is retried once if Encoder fails.
+	// Lets the Pi prefer the hardware encoder without a per-clip hardware
+	// quirk degrading all the way to uploading the original.
+	FallbackEncoder string
 	MinInputBytes   int64
 	TargetRatio     float64
 	MinBitrate      int64
@@ -74,6 +78,9 @@ type Result struct {
 	TargetBitrate int64
 	Compressed    bool
 	Reason        string
+	// Encoder that produced the output; set only when Compressed. Surfaces
+	// silent fallback from the hardware to the software encoder in logs.
+	Encoder string
 }
 
 type Compressor struct {
@@ -95,6 +102,9 @@ func New(cfg Config) (*Compressor, error) {
 	}
 	if cfg.FrameRate < 0 || cfg.MaxWidth < 0 {
 		return nil, fmt.Errorf("videocompress: FrameRate and MaxWidth must be non-negative")
+	}
+	if cfg.FallbackEncoder == cfg.Encoder && cfg.FallbackEncoder != "" {
+		return nil, fmt.Errorf("videocompress: FallbackEncoder must differ from Encoder")
 	}
 	return &Compressor{cfg: cfg}, nil
 }
@@ -161,27 +171,16 @@ func (c *Compressor) Compress(ctx context.Context, inputPath string) (Result, er
 	tempPath := outputPath + ".partial"
 	_ = os.Remove(tempPath)
 	_ = os.Remove(outputPath)
-	args := []string{
-		"-y", "-hide_banner", "-loglevel", "error",
-		"-i", inputPath,
-		"-map", "0:v:0", "-an",
+	usedEncoder := c.cfg.Encoder
+	err = c.runFFmpeg(ctx, inputPath, tempPath, filter, usedEncoder, target)
+	if err != nil && c.cfg.FallbackEncoder != "" && ctx.Err() == nil {
+		_ = os.Remove(tempPath)
+		usedEncoder = c.cfg.FallbackEncoder
+		err = c.runFFmpeg(ctx, inputPath, tempPath, filter, usedEncoder, target)
 	}
-	if filter != "" {
-		args = append(args, "-vf", filter)
-	}
-	args = append(args,
-		"-c:v", c.cfg.Encoder,
-		"-b:v", strconv.FormatInt(target, 10),
-		"-g", "60",
-		"-pix_fmt", "yuv420p",
-		"-movflags", "+faststart",
-		"-f", "mp4",
-		tempPath,
-	)
-	output, err := exec.CommandContext(ctx, c.cfg.FFmpegPath, args...).CombinedOutput()
 	if err != nil {
 		_ = os.Remove(tempPath)
-		return result, fmt.Errorf("videocompress: ffmpeg: %w: %s", err, boundedMessage(output))
+		return result, err
 	}
 	outStat, err := os.Stat(tempPath)
 	if err != nil {
@@ -199,7 +198,33 @@ func (c *Compressor) Compress(ctx context.Context, inputPath string) (Result, er
 	result.Path = outputPath
 	result.OutputBytes = outStat.Size()
 	result.Compressed = true
+	result.Encoder = usedEncoder
 	return result, nil
+}
+
+func (c *Compressor) runFFmpeg(ctx context.Context, inputPath, tempPath, filter, encoder string, target int64) error {
+	args := []string{
+		"-y", "-hide_banner", "-loglevel", "error",
+		"-i", inputPath,
+		"-map", "0:v:0", "-an",
+	}
+	if filter != "" {
+		args = append(args, "-vf", filter)
+	}
+	args = append(args,
+		"-c:v", encoder,
+		"-b:v", strconv.FormatInt(target, 10),
+		"-g", "60",
+		"-pix_fmt", "yuv420p",
+		"-movflags", "+faststart",
+		"-f", "mp4",
+		tempPath,
+	)
+	output, err := exec.CommandContext(ctx, c.cfg.FFmpegPath, args...).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("videocompress: ffmpeg (%s): %w: %s", encoder, err, boundedMessage(output))
+	}
+	return nil
 }
 
 func (c *Compressor) probe(ctx context.Context, path string) (probeOutput, error) {

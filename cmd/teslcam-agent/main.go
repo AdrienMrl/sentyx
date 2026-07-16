@@ -81,6 +81,7 @@ func main() {
 	videoMaxWidth := flag.Int("video-max-width", videocompress.DefaultMaxWidth, "downscale upload video to at most this width, preserving aspect (0 keeps source)")
 	videoMinSavings := flag.Float64("video-min-savings", videocompress.DefaultMinSavings, "minimum fractional size reduction required to use a transcode")
 	videoEncoder := flag.String("video-encoder", "libx264", "ffmpeg video encoder; libx264 (software) has reliable rate control at low bitrates. Use h264_v4l2m2m for the Pi's hardware encoder if available.")
+	videoFallbackEncoder := flag.String("video-fallback-encoder", "", "encoder retried once when -video-encoder fails on a clip; empty disables the retry")
 	ffmpegPath := flag.String("ffmpeg", "ffmpeg", "ffmpeg executable used for video compression")
 	ffprobePath := flag.String("ffprobe", "ffprobe", "ffprobe executable used to inspect videos")
 	bleOnboard := flag.Bool("ble-onboard", false, "serve BLE onboarding alongside the pipeline (requires the -ble-* flags below)")
@@ -89,6 +90,7 @@ func main() {
 	bleConfigDir := flag.String("ble-config-dir", "", "directory where onboarding writes agent.env + server.token, e.g. /etc/teslcam (required with -ble-onboard)")
 	heartbeat := flag.Bool("heartbeat", false, "POST periodic device-status heartbeats to the server (requires -post-to, -token-file and -heartbeat-interval)")
 	heartbeatInterval := flag.Duration("heartbeat-interval", 0, "heartbeat POST interval, e.g. 30s (required, > 0, with -heartbeat; no implicit default)")
+	healthLogInterval := flag.Duration("health-log-interval", 0, "log a local health line (SoC temp, load, throttle flags) at this interval, e.g. 1m; 0 disables")
 	flag.Parse()
 	if *imagePath == "" || *udc == "" {
 		log.Fatal("both -image and -udc are required")
@@ -226,6 +228,7 @@ func main() {
 		cfg.MinSavingsRatio = *videoMinSavings
 		cfg.FrameRate = *videoFPS
 		cfg.MaxWidth = *videoMaxWidth
+		cfg.FallbackEncoder = *videoFallbackEncoder
 		videoCompression = &cfg
 	}
 	var cameraScorer cameraselect.Scorer
@@ -323,6 +326,17 @@ func main() {
 		} else {
 			log.Print("no -post-to/token (pre-provisioning): -heartbeat is inert until provisioned")
 		}
+	}
+
+	// The local health log needs no server: it records temp/load/throttle in
+	// the journal so unattended windows (car parked in the heat) are auditable.
+	if *healthLogInterval > 0 {
+		log.Printf("health: logging temp/load/throttle locally every %s", *healthLogInterval)
+		go func() {
+			if err := health.LocalLog(ctx, *healthLogInterval, *copyTo, log.Printf); err != nil && ctx.Err() == nil {
+				log.Printf("health: local log stopped (agent continues): %v", err)
+			}
+		}()
 	}
 
 	runErr := pipeline.Run(ctx, pipeline.Config{
