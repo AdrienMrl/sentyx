@@ -20,6 +20,14 @@ class Navigator(initial: Route = Route.Welcome) {
 
     val showTabBar: Boolean get() = current.isTabRoot
 
+    /**
+     * Whether system back should be consumed by [back] instead of leaving the
+     * app: anything on the stack pops, and non-Events tab roots fall back to
+     * Events. Back on Events (or a flow root like Welcome) exits the app.
+     */
+    val handlesBack: Boolean
+        get() = stack.isNotEmpty() || (current.isTabRoot && current != Route.Events)
+
     fun go(route: Route) {
         stack.addLast(current)
         current = route

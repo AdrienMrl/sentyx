@@ -26,7 +26,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.backhandler.BackHandler
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
@@ -103,6 +105,7 @@ import com.sentyx.app.feature.transfers.TransfersViewModel
  * [LocalAppContainer], hosts the [Navigator], renders the current [Route] to
  * its screen (+ ViewModels), and overlays the bottom tab bar and toast host.
  */
+@OptIn(ExperimentalComposeUiApi::class)
 @Composable
 fun AppRoot() {
     val scope = rememberCoroutineScope()
@@ -123,10 +126,10 @@ fun AppRoot() {
                 Box(Modifier.fillMaxSize()) {
                     val navigator = remember { Navigator(Route.Welcome) }
 
-                    // System-back handling (Android BackHandler) is intentionally
-                    // omitted: the multiplatform BackHandler lives in the separate
-                    // org.jetbrains.compose.ui:ui-backhandler artifact, which is not
-                    // on the classpath, and this task forbids adding dependencies.
+                    // System back pops the navigator stack; when the navigator has
+                    // nothing to handle (Events root, Welcome), the system default
+                    // applies and the app exits.
+                    BackHandler(enabled = navigator.handlesBack) { navigator.back() }
 
                     Column(Modifier.fillMaxSize()) {
                         Box(Modifier.weight(1f).fillMaxWidth()) {
