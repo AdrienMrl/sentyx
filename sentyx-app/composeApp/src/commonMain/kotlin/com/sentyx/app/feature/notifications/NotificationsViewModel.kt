@@ -3,11 +3,14 @@ package com.sentyx.app.feature.notifications
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.sentyx.app.core.ui.ToastController
+import com.sentyx.app.core.ui.ToastData
+import com.sentyx.app.core.ui.ToastTone
+import com.sentyx.app.domain.model.MinThreatLevel
 import com.sentyx.app.domain.model.NotificationEntry
 import com.sentyx.app.domain.model.NotificationRule
 import com.sentyx.app.domain.model.QuietHours
-import com.sentyx.app.domain.model.Severity
 import com.sentyx.app.domain.repository.NotificationSettingsRepository
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
@@ -16,7 +19,7 @@ import kotlinx.coroutines.launch
 
 /** Immutable UI state for the notifications screens. */
 data class NotificationsUiState(
-    val minSeverity: Severity,
+    val minThreatLevel: MinThreatLevel,
     val rules: List<NotificationRule>,
     val quietHours: QuietHours,
     val hidePreviewContent: Boolean,
@@ -25,8 +28,10 @@ data class NotificationsUiState(
 
 /**
  * Drives the alerts, quiet-hours, and notification-history screens. Reads the
- * repository's [NotificationSettingsRepository.prefs] and [history] flows and
- * writes user changes back through the repository (single source of truth).
+ * repository's [NotificationSettingsRepository.minThreatLevel], [prefs], and
+ * [history] flows and writes user changes back through the repository (single
+ * source of truth). The threshold write is optimistic in the repository; a
+ * failure rolls the flow back and this ViewModel surfaces a toast.
  */
 class NotificationsViewModel(
     private val settings: NotificationSettingsRepository,
@@ -34,9 +39,13 @@ class NotificationsViewModel(
 ) : ViewModel() {
 
     val state: StateFlow<NotificationsUiState> =
-        combine(settings.prefs, settings.history) { prefs, history ->
+        combine(
+            settings.minThreatLevel,
+            settings.prefs,
+            settings.history,
+        ) { minThreatLevel, prefs, history ->
             NotificationsUiState(
-                minSeverity = prefs.minSeverity,
+                minThreatLevel = minThreatLevel,
                 rules = prefs.rules,
                 quietHours = prefs.quietHours,
                 hidePreviewContent = prefs.hidePreviewContent,
@@ -46,7 +55,7 @@ class NotificationsViewModel(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5_000),
             initialValue = NotificationsUiState(
-                minSeverity = settings.prefs.value.minSeverity,
+                minThreatLevel = settings.minThreatLevel.value,
                 rules = settings.prefs.value.rules,
                 quietHours = settings.prefs.value.quietHours,
                 hidePreviewContent = settings.prefs.value.hidePreviewContent,
@@ -54,12 +63,27 @@ class NotificationsViewModel(
             ),
         )
 
-    fun setRuleEnabled(key: String, enabled: Boolean) {
-        viewModelScope.launch { settings.setRuleEnabled(key, enabled) }
+    fun setMinThreatLevel(level: MinThreatLevel) {
+        viewModelScope.launch {
+            try {
+                settings.setMinThreatLevel(level)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                // The repository has already rolled the flow back to its prior value.
+                toasts.show(
+                    ToastData(
+                        title = "Couldn't update alerts",
+                        subtitle = e.message ?: "Please try again",
+                        tone = ToastTone.Urgent,
+                    ),
+                )
+            }
+        }
     }
 
-    fun setMinSeverity(severity: Severity) {
-        viewModelScope.launch { settings.setMinSeverity(severity) }
+    fun setRuleEnabled(key: String, enabled: Boolean) {
+        viewModelScope.launch { settings.setRuleEnabled(key, enabled) }
     }
 
     fun setQuietHoursEnabled(enabled: Boolean) {

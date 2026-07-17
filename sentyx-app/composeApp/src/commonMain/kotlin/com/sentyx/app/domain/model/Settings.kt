@@ -20,11 +20,41 @@ data class QuietHours(
 )
 
 data class NotificationPrefs(
-    val minSeverity: Severity,
     val rules: List<NotificationRule>,
     val quietHours: QuietHours,
     val hidePreviewContent: Boolean,
 )
+
+/**
+ * Push-notification threshold: the server pushes a verdict only when its threat
+ * level is at least this high. Mirrors the server's `min_threat_level` contract
+ * where the ordering is none < low < medium < high, and "off" means never.
+ *
+ * [wire] is the exact string the `/v1/me/notification-settings` endpoint accepts;
+ * [label]/[detail] are the user-facing copy for the single-choice selector.
+ */
+enum class MinThreatLevel(val wire: String, val label: String, val detail: String) {
+    /** Never notify. */
+    Off("off", "Off", "Never notify me"),
+
+    /** Only high-threat verdicts (threshold "high"). */
+    HighOnly("high", "High only", "Only the most serious events"),
+
+    /** Medium and high verdicts (threshold "medium"). */
+    MediumAndUp("medium", "Medium and up", "Medium and high threats"),
+
+    /** Low, medium, and high verdicts (threshold "low"). */
+    LowAndUp("low", "Low and up", "Low, medium, and high threats"),
+
+    /** Every analyzed verdict (threshold "none"). */
+    Everything("none", "Everything", "Every analyzed event");
+
+    companion object {
+        /** Parse a server `min_threat_level` string; throws on an unknown value (no silent default). */
+        fun fromWire(wire: String): MinThreatLevel = entries.firstOrNull { it.wire == wire }
+            ?: throw IllegalArgumentException("Unknown min_threat_level: \"$wire\"")
+    }
+}
 
 /** A past notification, tappable when it references an event. */
 data class NotificationEntry(

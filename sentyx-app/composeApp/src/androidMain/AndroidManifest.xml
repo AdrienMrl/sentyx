@@ -3,6 +3,10 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!-- Push notifications (Android 13+): runtime permission requested from the
+         Notifications settings screen. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
     <!-- BLE pairing (API 31+): runtime permissions requested at pairing time. -->
     <uses-permission
         android:name="android.permission.BLUETOOTH_SCAN"
@@ -35,6 +39,22 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- Firebase Cloud Messaging entry point (token refresh + foreground/data
+             messages). Inert until a real google-services.json replaces the
+             placeholder. -->
+        <service
+            android:name="com.sentyx.app.core.push.SentyxMessagingService"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
+
+        <!-- Default channel for backgrounded notification messages that omit one. -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_channel_id"
+            android:value="sentry_alerts" />
     </application>
 
 </manifest>

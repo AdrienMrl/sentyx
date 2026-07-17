@@ -24,6 +24,12 @@ if [[ -n "${SUPABASE_JWKS_URL:-}" || -n "${SUPABASE_ISSUER:-}" ]]; then
   args+=(-supabase-jwks-url "$SUPABASE_JWKS_URL" -supabase-issuer "$SUPABASE_ISSUER")
   echo ">> user-account auth ON (issuer $SUPABASE_ISSUER)"
 fi
+# FCM push notifications: opt-in, passthrough when a credentials file is given.
+if [[ -n "${FCM_CREDENTIALS_FILE:-}" ]]; then
+  args+=(-fcm-credentials-file "$FCM_CREDENTIALS_FILE")
+  echo ">> FCM push ON (credentials $FCM_CREDENTIALS_FILE)"
+fi
+
 if [[ "${ANALYZE:-}" == "1" ]]; then
   if [[ -n "${ANALYZE_CMD:-}" ]]; then
     # Escape hatch: run an external analyzer command instead of the

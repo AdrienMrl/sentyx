@@ -3,9 +3,11 @@ package com.sentyx.app.data.api
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
+import io.ktor.client.request.delete
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.post
+import io.ktor.client.request.put
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsText
@@ -149,6 +151,84 @@ class SentyxApi(
         return response.body()
     }
 
+    /**
+     * Register (upsert) a push token for the signed-in user.
+     * `PUT {base}/v1/me/push-tokens` with `{"token","platform"}`; expects 204.
+     * A non-success response throws [SentyxApiException].
+     */
+    suspend fun registerPushToken(token: String, platform: String) {
+        val response = authed { t ->
+            client.put("$base/v1/me/push-tokens") {
+                header(HttpHeaders.Authorization, "Bearer $t")
+                contentType(ContentType.Application.Json)
+                setBody(PushTokenRequest(token = token, platform = platform))
+            }
+        }
+        if (!response.status.isSuccess()) {
+            throw SentyxApiException(
+                "Push token registration failed (${response.status}): ${response.bodyAsText()}",
+            )
+        }
+    }
+
+    /**
+     * Remove a push token for the signed-in user (called on sign-out, while the
+     * session is still valid). `DELETE {base}/v1/me/push-tokens/{token}`; the
+     * token is URL-path-encoded. A 404 (already gone) is treated as success; any
+     * other non-success throws [SentyxApiException].
+     */
+    suspend fun deletePushToken(token: String) {
+        val response = authed { t ->
+            client.delete("$base/v1/me/push-tokens/${token.encodeURLPathPart()}") {
+                header(HttpHeaders.Authorization, "Bearer $t")
+            }
+        }
+        if (!response.status.isSuccess() && response.status != HttpStatusCode.NotFound) {
+            throw SentyxApiException(
+                "Push token delete failed (${response.status}): ${response.bodyAsText()}",
+            )
+        }
+    }
+
+    /**
+     * Fetch the signed-in user's push threshold.
+     * `GET {base}/v1/me/notification-settings` → `{"min_threat_level": "..."}`.
+     * A non-success response throws [SentyxApiException].
+     */
+    suspend fun getNotificationSettings(): NotificationSettingsDto {
+        val response = authed { t ->
+            client.get("$base/v1/me/notification-settings") {
+                header(HttpHeaders.Authorization, "Bearer $t")
+            }
+        }
+        if (!response.status.isSuccess()) {
+            throw SentyxApiException(
+                "Notification settings fetch failed (${response.status}): ${response.bodyAsText()}",
+            )
+        }
+        return response.body()
+    }
+
+    /**
+     * Update the signed-in user's push threshold.
+     * `PUT {base}/v1/me/notification-settings` with `{"min_threat_level"}`;
+     * expects 204. A non-success response throws [SentyxApiException].
+     */
+    suspend fun putNotificationSettings(minThreatLevel: String) {
+        val response = authed { t ->
+            client.put("$base/v1/me/notification-settings") {
+                header(HttpHeaders.Authorization, "Bearer $t")
+                contentType(ContentType.Application.Json)
+                setBody(NotificationSettingsDto(minThreatLevel = minThreatLevel))
+            }
+        }
+        if (!response.status.isSuccess()) {
+            throw SentyxApiException(
+                "Notification settings update failed (${response.status}): ${response.bodyAsText()}",
+            )
+        }
+    }
+
     /** True if `GET {base}/healthz` (open, no auth) returns a success status. */
     suspend fun healthz(): Boolean =
         client.get("$base/healthz").status.isSuccess()
@@ -186,6 +266,20 @@ class DeviceNotFoundException(deviceId: String) :
 
 @Serializable
 private data class RegisterDeviceRequest(val deviceId: String, val name: String)
+
+/** App → server push-token upsert body (`PUT /v1/me/push-tokens`). */
+@Serializable
+private data class PushTokenRequest(val token: String, val platform: String)
+
+/**
+ * Push threshold document for `GET`/`PUT /v1/me/notification-settings`. The JSON
+ * key is the server's snake_case `min_threat_level`; the value is one of
+ * `off`/`none`/`low`/`medium`/`high` (see [com.sentyx.app.domain.model.MinThreatLevel]).
+ */
+@Serializable
+data class NotificationSettingsDto(
+    @SerialName("min_threat_level") val minThreatLevel: String,
+)
 
 @Serializable
 private data class RegisterDeviceResponse(val deviceId: String, val token: String)

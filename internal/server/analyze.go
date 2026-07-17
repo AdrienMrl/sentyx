@@ -101,9 +101,9 @@ func (c *Server) analyzeEvent(ctx context.Context, eventID string, logf func(str
 		}
 	}
 
-	// The verdict is now durably stored, so a notification failure below is
-	// logged and swallowed — it must never fail the analysis flow.
-	c.notify(ctx, Notification{
+	// The verdict is now durably stored, so a delivery failure below is logged
+	// and swallowed — neither path must ever fail the analysis flow.
+	n := Notification{
 		EventID:           eventID,
 		ThreatLevel:       parsed.ThreatLevel,
 		WhatHappened:      parsed.WhatHappened,
@@ -116,7 +116,9 @@ func (c *Server) analyzeEvent(ctx context.Context, eventID string, logf func(str
 		Usage:             res.Usage,
 		EstimatedCostUSD:  res.EstimatedCostUSD,
 		FramePath:         framePath,
-	}, logf)
+	}
+	c.notify(ctx, n, logf)
+	c.dispatchPush(ctx, ev.DeviceID, n, logf)
 }
 
 // extractEventFrame decodes the exact moment selected by Gemini. Seeking after

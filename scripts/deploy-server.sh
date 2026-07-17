@@ -28,6 +28,7 @@
 #   /etc/teslcam/server.env              config: listen addr, Gemini, Telegram
 #   /etc/teslcam/ingest.token            API bearer token (give it to the agent)
 #   /etc/teslcam/telegram.token          Telegram bot token (optional)
+#   /etc/teslcam/fcm-credentials.json    FCM service-account JSON (optional, 640 root:teslcam)
 #   /etc/systemd/system/teslcam-server.service
 set -euo pipefail
 
@@ -117,6 +118,11 @@ TELEGRAM_CHAT_ID=
 # Adds upload receipts and full Gemini JSON/token/cost messages. The normal
 # frame+description alert is still sent. Requires Telegram configuration.
 TELEGRAM_DEBUG=0
+# FCM push notifications are off until this points at a Google service-account
+# JSON file (convention: /etc/teslcam/fcm-credentials.json, mode 640
+# root:teslcam). The Firebase project id and auth are read from that JSON.
+# Paste the JSON there, set the path below, then: systemctl restart teslcam-server.
+FCM_CREDENTIALS_FILE=
 ENV
   chmod 640 /etc/teslcam/server.env
   chown root:teslcam /etc/teslcam/server.env
@@ -142,6 +148,16 @@ if [[ ! -f /etc/teslcam/telegram.token ]]; then
   echo "wrote empty /etc/teslcam/telegram.token"
 else
   echo "/etc/teslcam/telegram.token already exists — left untouched"
+fi
+
+# FCM service-account JSON placeholder: created once (empty), never overwritten.
+# Paste the service-account JSON here and set FCM_CREDENTIALS_FILE in server.env
+# to enable push notifications.
+if [[ ! -f /etc/teslcam/fcm-credentials.json ]]; then
+  install -m 640 -o root -g teslcam /dev/null /etc/teslcam/fcm-credentials.json
+  echo "wrote empty /etc/teslcam/fcm-credentials.json"
+else
+  echo "/etc/teslcam/fcm-credentials.json already exists — left untouched"
 fi
 
 # Launcher: assembles the server flags from server.env, passing optional flags
@@ -190,6 +206,16 @@ if [[ -n "${TELEGRAM_CHAT_ID:-}" ]]; then
     exit 1
   fi
   args+=(-telegram-chat-id "$TELEGRAM_CHAT_ID" -telegram-token-file "$token_file")
+fi
+
+# FCM push notifications: opt-in. Pass the flag only when the path is non-empty
+# (the server rejects an empty required flag value by design).
+if [[ -n "${FCM_CREDENTIALS_FILE:-}" ]]; then
+  if [[ ! -s "$FCM_CREDENTIALS_FILE" ]]; then
+    echo "teslcam-server-start: FCM_CREDENTIALS_FILE=$FCM_CREDENTIALS_FILE is empty or missing — paste the service-account JSON there" >&2
+    exit 1
+  fi
+  args+=(-fcm-credentials-file "$FCM_CREDENTIALS_FILE")
 fi
 
 exec /usr/local/bin/teslcam-server "${args[@]}"

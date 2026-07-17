@@ -17,6 +17,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/AdrienMrl/teslcam/internal/fcm"
 	"github.com/AdrienMrl/teslcam/internal/gemini"
 	"github.com/AdrienMrl/teslcam/internal/server"
 	"github.com/AdrienMrl/teslcam/internal/telegram"
@@ -34,6 +35,7 @@ func main() {
 	supabaseIssuer := flag.String("supabase-issuer", "", "expected iss claim of Supabase user JWTs (requires -supabase-jwks-url)")
 	telegramTokenFile := flag.String("telegram-token-file", "", "file holding the Telegram bot token; set (with -telegram-chat-id) to send live alerts on completed analyses")
 	telegramChatID := flag.String("telegram-chat-id", "", "Telegram chat ID to alert on completed analyses; required with -telegram-token-file")
+	fcmCredentialsFile := flag.String("fcm-credentials-file", "", "Google service-account JSON for FCM HTTP v1 push notifications; empty = push disabled")
 	flag.Parse()
 	if *dataDir == "" || *listen == "" {
 		log.Fatal("both -data and -listen are required")
@@ -95,6 +97,17 @@ func main() {
 		log.Fatal("TELEGRAM_DEBUG requires Telegram notifications to be configured")
 	}
 
+	// FCM push notifications are off unless a credentials file is given; the
+	// project id and auth are read from that JSON (no implicit default).
+	var pusher server.Pusher
+	if *fcmCredentialsFile != "" {
+		fc, err := fcm.New(*fcmCredentialsFile)
+		if err != nil {
+			log.Fatal(err)
+		}
+		pusher = fc
+	}
+
 	var analyzeCmd []string
 	if *analyze != "" {
 		analyzeCmd = strings.Fields(*analyze)
@@ -108,6 +121,7 @@ func main() {
 		SupabaseJWKSURL:    *supabaseJWKSURL,
 		SupabaseIssuer:     *supabaseIssuer,
 		Notifier:           notifier,
+		Pusher:             pusher,
 		DebugNotifications: telegramDebug,
 	})
 	if err != nil {

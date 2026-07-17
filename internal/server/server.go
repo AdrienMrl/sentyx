@@ -43,6 +43,11 @@ type Config struct {
 	// gets a live alert. Nil = no notifications. Delivery failures are logged
 	// and never fail the analysis flow (the verdict is already persisted).
 	Notifier Notifier
+	// Pusher, if set, sends an FCM push on each completed verdict to the phones
+	// of the user who owns the event's device, subject to that user's severity
+	// threshold. Nil = push disabled. Delivery failures are logged and never
+	// fail the analysis flow (the verdict is already persisted).
+	Pusher Pusher
 	// DebugNotifications sends an additional upload-received notification and
 	// includes raw analysis JSON, token usage, and per-call cost on completion.
 	DebugNotifications bool
@@ -56,6 +61,7 @@ type Server struct {
 	store    *store
 	analyzer Analyzer     // nil = record only
 	notifier Notifier     // nil = no notifications
+	pusher   Pusher       // nil = push disabled
 	jwt      *jwtVerifier // nil = Supabase user-JWT auth disabled
 }
 
@@ -89,7 +95,7 @@ func New(cfg Config) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Server{cfg: cfg, store: st, analyzer: analyzer, notifier: cfg.Notifier, jwt: jwtVer}, nil
+	return &Server{cfg: cfg, store: st, analyzer: analyzer, notifier: cfg.Notifier, pusher: cfg.Pusher, jwt: jwtVer}, nil
 }
 
 // Run serves the ingest API and drives event completion until ctx is

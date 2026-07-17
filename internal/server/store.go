@@ -74,6 +74,12 @@ CREATE TABLE IF NOT EXISTS users (
   email      TEXT,                            -- kept fresh on each auth
   created_at INTEGER NOT NULL                 -- unix milliseconds
 );
+CREATE TABLE IF NOT EXISTS push_tokens (
+  token      TEXT PRIMARY KEY,                -- FCM registration token
+  user_id    TEXT NOT NULL,                   -- owning Supabase user id
+  platform   TEXT NOT NULL,                   -- android | ios
+  updated_at INTEGER NOT NULL                 -- unix milliseconds
+);
 CREATE TABLE IF NOT EXISTS analysis_jobs (
   event_id     TEXT NOT NULL REFERENCES events(id),
   generation   INTEGER NOT NULL,
@@ -118,11 +124,18 @@ func openStore(path string) (*store, error) {
 		`ALTER TABLE devices ADD COLUMN last_heartbeat_json TEXT`,
 		`ALTER TABLE devices ADD COLUMN last_heartbeat_at INTEGER`,
 		`ALTER TABLE devices ADD COLUMN owner_user_id TEXT`,
+		`ALTER TABLE users ADD COLUMN notify_min_threat TEXT`,
 	} {
 		if _, err := db.Exec(stmt); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
 			db.Close()
 			return nil, fmt.Errorf("server: migrating schema: %w", err)
 		}
+	}
+	// Backfill the notification threshold for users created before the column
+	// existed, to the product's starting value (matches upsertUser's INSERT).
+	if _, err := db.Exec(`UPDATE users SET notify_min_threat = 'low' WHERE notify_min_threat IS NULL`); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("server: backfilling notify_min_threat: %w", err)
 	}
 	// A process crash may leave a leased job marked running. With one local
 	// worker there is no competing lease holder after startup, so reclaim it.
@@ -370,11 +383,89 @@ func (s *store) upsertUser(id, email string, now time.Time) error {
 	if email != "" {
 		em = email
 	}
+	// notify_min_threat is set once, on first insert, to the product's starting
+	// threshold; the conflict path leaves the user's chosen value untouched.
 	_, err := s.db.Exec(`
-		INSERT INTO users (id, email, created_at)
-		VALUES (?, ?, ?)
+		INSERT INTO users (id, email, created_at, notify_min_threat)
+		VALUES (?, ?, ?, 'low')
 		ON CONFLICT(id) DO UPDATE SET email = excluded.email`,
 		id, em, now.UnixMilli())
+	return err
+}
+
+// pushToken is one registered device for a user.
+type pushToken struct {
+	Token    string
+	Platform string
+}
+
+// upsertPushToken records (or refreshes) a device's FCM token. Re-registering
+// an existing token reassigns its owner, so a phone that switches accounts
+// moves with the login.
+func (s *store) upsertPushToken(token, userID, platform string, now time.Time) error {
+	_, err := s.db.Exec(`
+		INSERT INTO push_tokens (token, user_id, platform, updated_at)
+		VALUES (?, ?, ?, ?)
+		ON CONFLICT(token) DO UPDATE SET
+		    user_id = excluded.user_id,
+		    platform = excluded.platform,
+		    updated_at = excluded.updated_at`,
+		token, userID, platform, now.UnixMilli())
+	return err
+}
+
+// deletePushToken removes a token only if it belongs to the given user.
+func (s *store) deletePushToken(token, userID string) error {
+	_, err := s.db.Exec(`DELETE FROM push_tokens WHERE token = ? AND user_id = ?`, token, userID)
+	return err
+}
+
+// deletePushTokenByToken removes a token regardless of owner. Used to prune a
+// token FCM has reported as unregistered.
+func (s *store) deletePushTokenByToken(token string) error {
+	_, err := s.db.Exec(`DELETE FROM push_tokens WHERE token = ?`, token)
+	return err
+}
+
+// pushTokensForUser returns all device tokens registered to a user.
+func (s *store) pushTokensForUser(userID string) ([]pushToken, error) {
+	rows, err := s.db.Query(`SELECT token, platform FROM push_tokens WHERE user_id = ? ORDER BY updated_at`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []pushToken
+	for rows.Next() {
+		var t pushToken
+		if err := rows.Scan(&t.Token, &t.Platform); err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+// userNotifyMinThreat returns a user's minimum push threat threshold. An
+// unknown user yields ""; a NULL/empty column coerces to "low" (the starting
+// threshold set on insert and backfill).
+func (s *store) userNotifyMinThreat(userID string) (string, error) {
+	var v sql.NullString
+	err := s.db.QueryRow(`SELECT notify_min_threat FROM users WHERE id = ?`, userID).Scan(&v)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	if !v.Valid || v.String == "" {
+		return "low", nil
+	}
+	return v.String, nil
+}
+
+// setUserNotifyMinThreat updates a user's push threat threshold.
+func (s *store) setUserNotifyMinThreat(userID, level string) error {
+	_, err := s.db.Exec(`UPDATE users SET notify_min_threat = ? WHERE id = ?`, level, userID)
 	return err
 }
 

@@ -1,19 +1,19 @@
 package com.sentyx.app.di
 
+import com.sentyx.app.core.push.PushTokenProvider
 import com.sentyx.app.core.storage.KeyValueStore
 import com.sentyx.app.core.ui.ToastController
-import com.sentyx.app.data.api.SentyxApi
-import com.sentyx.app.data.auth.SupabaseAuthClient
 import com.sentyx.app.data.auth.SupabaseAuthRepository
-import com.sentyx.app.data.auth.SupabaseSessionManager
 import com.sentyx.app.data.ble.BleDeviceWifiService
 import com.sentyx.app.data.ble.BlePairingService
 import com.sentyx.app.data.demo.DemoAppSettingsRepository
 import com.sentyx.app.data.device.RealDeviceRepository
 import com.sentyx.app.data.event.RealEventRepository
+import com.sentyx.app.data.notifications.RealNotificationSettingsRepository
+import com.sentyx.app.data.push.PushAwareAuthRepository
+import com.sentyx.app.data.push.PushController
 import com.sentyx.app.data.thumbnail.EventThumbnailLoader
 import com.sentyx.app.data.thumbnail.SentyxThumbnailLoader
-import com.sentyx.app.data.demo.DemoNotificationSettingsRepository
 import com.sentyx.app.data.demo.DemoStateController
 import com.sentyx.app.data.demo.DemoSubscriptionRepository
 import com.sentyx.app.data.demo.DemoTransferRepository
@@ -47,25 +47,30 @@ class RealAppContainer(
 
     private val demoStateController = DemoStateController()
 
-    // One key/value store shared by pairing (writes the paired device id), the
-    // device repository (reads it, polls status), and the auth session manager
-    // (persists tokens).
+    // One key/value store shared by pairing (writes the paired device id) and
+    // the device repository (reads it, polls status).
     private val keyValueStore = KeyValueStore()
 
-    // Supabase auth: the session manager owns the persisted session and refreshes
-    // it; the backend client authenticates every server call with that session's
-    // access token, refreshing once on a 401.
-    private val supabaseAuthClient = SupabaseAuthClient(
-        supabaseUrl = config.supabaseUrl,
-        anonKey = config.supabaseAnonKey,
-    )
-    private val sessionManager = SupabaseSessionManager(supabaseAuthClient, keyValueStore)
+    // Supabase auth + backend client: process-wide singletons ([RealServices]),
+    // shared with the Android FCM service — refresh tokens are single-use, so
+    // there must never be a second SupabaseSessionManager in the process.
+    private val supabaseAuthClient = RealServices.authClient
+    private val sessionManager = RealServices.sessionManager
+    private val api = RealServices.api
 
-    private val api = SentyxApi(
-        baseUrl = config.serverBaseUrl,
-        accessToken = { sessionManager.validAccessToken() },
-        refreshToken = { sessionManager.forceRefresh() },
+    // Push-token lifecycle: registers on sign-in / app start (via the session
+    // flow) and deletes on sign-out (via the auth decorator below). On iOS the
+    // provider yields no token, so this is inert.
+    private val pushController = PushController(
+        scope = scope,
+        api = api,
+        session = sessionManager.session,
+        tokenProvider = PushTokenProvider(),
     )
+
+    init {
+        pushController.start()
+    }
 
     override val demoState: DemoStateController? = null
 
@@ -86,11 +91,14 @@ class RealAppContainer(
     }
 
     override val auth: AuthRepository by lazy {
-        SupabaseAuthRepository(scope, supabaseAuthClient, sessionManager)
+        PushAwareAuthRepository(
+            delegate = SupabaseAuthRepository(scope, supabaseAuthClient, sessionManager),
+            push = pushController,
+        )
     }
 
     override val notifications: NotificationSettingsRepository by lazy {
-        DemoNotificationSettingsRepository()
+        RealNotificationSettingsRepository(scope, api)
     }
 
     override val subscription: SubscriptionRepository by lazy {

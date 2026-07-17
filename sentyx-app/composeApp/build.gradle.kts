@@ -8,6 +8,15 @@ plugins {
     alias(libs.plugins.kotlinSerialization)
 }
 
+// Apply the google-services plugin only when a google-services.json is present.
+// A PLACEHOLDER file is committed so CI/dev builds stay green; the plugin still
+// requires the file to exist, and guarding on its presence means removing it (or
+// swapping in the real one) never breaks assembleDebug/installDebug. Push is
+// inert at runtime until the real file replaces the placeholder.
+if (project.file("google-services.json").exists()) {
+    apply(plugin = libs.plugins.googleServices.get().pluginId)
+}
+
 kotlin {
     androidTarget {
         compilerOptions {
@@ -32,6 +41,7 @@ kotlin {
             implementation(compose.preview)
             implementation(libs.androidx.activity.compose)
             implementation(libs.ktor.client.okhttp)
+            implementation(libs.firebase.messaging)
         }
         commonMain.dependencies {
             implementation(compose.runtime)
