@@ -3,10 +3,12 @@ package com.sentyx.app.di
 import com.sentyx.app.core.storage.KeyValueStore
 import com.sentyx.app.core.ui.ToastController
 import com.sentyx.app.data.api.SentyxApi
+import com.sentyx.app.data.auth.SupabaseAuthClient
+import com.sentyx.app.data.auth.SupabaseAuthRepository
+import com.sentyx.app.data.auth.SupabaseSessionManager
 import com.sentyx.app.data.ble.BleDeviceWifiService
 import com.sentyx.app.data.ble.BlePairingService
 import com.sentyx.app.data.demo.DemoAppSettingsRepository
-import com.sentyx.app.data.demo.DemoAuthRepository
 import com.sentyx.app.data.device.RealDeviceRepository
 import com.sentyx.app.data.event.RealEventRepository
 import com.sentyx.app.data.thumbnail.EventThumbnailLoader
@@ -45,10 +47,25 @@ class RealAppContainer(
 
     private val demoStateController = DemoStateController()
 
-    // One backend client and one key/value store shared by pairing (writes the
-    // paired device id) and the device repository (reads it, polls status).
-    private val api = SentyxApi(baseUrl = config.serverBaseUrl, operatorToken = config.operatorToken)
+    // One key/value store shared by pairing (writes the paired device id), the
+    // device repository (reads it, polls status), and the auth session manager
+    // (persists tokens).
     private val keyValueStore = KeyValueStore()
+
+    // Supabase auth: the session manager owns the persisted session and refreshes
+    // it; the backend client authenticates every server call with that session's
+    // access token, refreshing once on a 401.
+    private val supabaseAuthClient = SupabaseAuthClient(
+        supabaseUrl = config.supabaseUrl,
+        anonKey = config.supabaseAnonKey,
+    )
+    private val sessionManager = SupabaseSessionManager(supabaseAuthClient, keyValueStore)
+
+    private val api = SentyxApi(
+        baseUrl = config.serverBaseUrl,
+        accessToken = { sessionManager.validAccessToken() },
+        refreshToken = { sessionManager.forceRefresh() },
+    )
 
     override val demoState: DemoStateController? = null
 
@@ -68,7 +85,9 @@ class RealAppContainer(
         DemoTransferRepository(scope, device)
     }
 
-    override val auth: AuthRepository by lazy { DemoAuthRepository() }
+    override val auth: AuthRepository by lazy {
+        SupabaseAuthRepository(scope, supabaseAuthClient, sessionManager)
+    }
 
     override val notifications: NotificationSettingsRepository by lazy {
         DemoNotificationSettingsRepository()

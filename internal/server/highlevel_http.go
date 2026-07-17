@@ -19,7 +19,21 @@ import (
 
 const maxJSONBody = 4 << 20
 
+// denyUserIngest rejects Supabase user JWTs on ingest write endpoints, which
+// are for device (or operator) tokens only. Reports whether the request was
+// rejected.
+func (c *Server) denyUserIngest(w http.ResponseWriter, r *http.Request) bool {
+	if c.cfg.Token != "" && authFrom(r.Context()).UserID != "" {
+		http.Error(w, "ingest requires a device or operator token", http.StatusForbidden)
+		return true
+	}
+	return false
+}
+
 func (c *Server) handlePutEventV1(w http.ResponseWriter, r *http.Request) {
+	if c.denyUserIngest(w, r) {
+		return
+	}
 	key := r.PathValue("event")
 	if key == "" || strings.Contains(key, "/") || len(key) > 512 {
 		http.Error(w, "invalid event key", http.StatusBadRequest)
@@ -61,6 +75,17 @@ func (c *Server) handleGetEventV1(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	if c.cfg.Token != "" {
+		ok, err := c.eventReadable(authFrom(r.Context()), ev)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if !ok {
+			http.Error(w, "not permitted to read this event", http.StatusForbidden)
+			return
+		}
+	}
 	files, err := c.store.eventFiles(id)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -73,6 +98,9 @@ func (c *Server) handleGetEventV1(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c *Server) handlePutBlobV1(w http.ResponseWriter, r *http.Request) {
+	if c.denyUserIngest(w, r) {
+		return
+	}
 	want := strings.ToLower(r.PathValue("sha256"))
 	if !validSHA256(want) {
 		http.Error(w, "sha256 must be 64 lowercase or uppercase hexadecimal characters", http.StatusBadRequest)
@@ -126,6 +154,9 @@ func (c *Server) handlePutBlobV1(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c *Server) handlePutManifestV1(w http.ResponseWriter, r *http.Request) {
+	if c.denyUserIngest(w, r) {
+		return
+	}
 	generation, ok := parseGeneration(w, r)
 	if !ok {
 		return
@@ -162,6 +193,9 @@ func (c *Server) handlePutManifestV1(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c *Server) handleFinalizeManifestV1(w http.ResponseWriter, r *http.Request) {
+	if c.denyUserIngest(w, r) {
+		return
+	}
 	generation, ok := parseGeneration(w, r)
 	if !ok {
 		return

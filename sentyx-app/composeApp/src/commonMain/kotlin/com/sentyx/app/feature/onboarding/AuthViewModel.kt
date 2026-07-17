@@ -13,17 +13,13 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
-/**
- * Immutable UI state shared by the onboarding screens. Fields are prefilled with
- * the design's demo values so the flow completes with a single tap, but every
- * input is genuinely editable.
- */
+/** Immutable UI state shared by the onboarding screens. */
 data class AuthUiState(
-    val name: String = "Alex Rivera",
-    val email: String = "alex@example.com",
-    val password: String = "password",
-    /** Six-digit verification code; prefilled with the design's demo code. */
-    val code: String = "482913",
+    val name: String = "",
+    val email: String = "",
+    val password: String = "",
+    /** Six-digit verification code (unused while email verification is disabled). */
+    val code: String = "",
     /** True while a suspend auth call is in flight; screens disable CTAs. */
     val loading: Boolean = false,
 )

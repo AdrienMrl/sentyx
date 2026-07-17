@@ -124,7 +124,13 @@ fun AppRoot() {
         SentyxTheme {
             Surface(modifier = Modifier.fillMaxSize(), color = SxColors.Bg) {
                 Box(Modifier.fillMaxSize()) {
-                    val navigator = remember { Navigator(Route.Welcome) }
+                    // Start on the events feed when a persisted session was restored
+                    // (real flavor); otherwise begin onboarding at Welcome. The demo
+                    // container starts signed out, so it always begins at Welcome.
+                    val startRoute = remember(container) {
+                        if (container.auth.profile.value != null) Route.Events else Route.Welcome
+                    }
+                    val navigator = remember { Navigator(startRoute) }
 
                     // System back pops the navigator stack; when the navigator has
                     // nothing to handle (Events root, Welcome), the system default
@@ -178,9 +184,13 @@ private fun RouteContent(navigator: Navigator, c: AppContainer) {
         Route.CreateAccount -> CreateAccountScreen(
             vm = viewModel { AuthViewModel(c.auth, c.toasts) },
             onBack = { navigator.back() },
-            onContinueToVerify = { navigator.go(Route.VerifyEmail) },
+            // Email verification is disabled: createAccount establishes the
+            // session directly, so a new user goes straight into pairing.
+            onCreated = { navigator.go(Route.PairIntro) },
         )
 
+        // Retained but unreachable: email verification is disabled, so the
+        // create-account flow never routes here (see [CreateAccountScreen]).
         Route.VerifyEmail -> VerifyEmailScreen(
             vm = viewModel { AuthViewModel(c.auth, c.toasts) },
             onBack = { navigator.back() },

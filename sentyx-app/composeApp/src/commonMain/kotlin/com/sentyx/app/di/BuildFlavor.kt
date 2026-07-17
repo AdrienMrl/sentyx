@@ -7,7 +7,7 @@ package com.sentyx.app.di
  * To run against a real Sentyx Pi and backend:
  *  1. set [useRealPairing] = true, and
  *  2. set [appConfig] to a non-null [AppConfig] with your server URL and
- *     operator token.
+ *     Supabase auth credentials.
  *
  * Selecting the real flavor with a null/blank [appConfig] fails fast (see
  * [requireRealConfig]) rather than silently falling back to a default.
@@ -17,13 +17,13 @@ object BuildFlavor {
     val useRealPairing: Boolean = true
 
     /**
-     * Required when [useRealPairing] is true; must stay non-null with both
-     * fields filled. Example:
-     * `AppConfig("https://teslcam.161-35-232-246.sslip.io", "<operator-token>")`.
+     * Required when [useRealPairing] is true; must stay non-null with every
+     * field filled.
      */
     val appConfig: AppConfig? = AppConfig(
         serverBaseUrl = "https://teslcam.161-35-232-246.sslip.io",
-        operatorToken = "b0ef519dc682144c4b2e7a4258f905b21a13182fffc12f4fd5cf8e950e4a0607",
+        supabaseUrl = "https://gbnngbqqkjaqqrxqhsrl.supabase.co",
+        supabaseAnonKey = "sb_publishable_V7Mb-cQt11qmEAs86cT4cA_dPCjppvq",
     )
 
     /**
@@ -33,6 +33,7 @@ object BuildFlavor {
     fun requireRealConfig(): AppConfig = appConfig
         ?: error(
             "BuildFlavor.useRealPairing is true but BuildFlavor.appConfig is null. " +
-                "Set appConfig to an AppConfig(serverBaseUrl, operatorToken) to use the real wiring.",
+                "Set appConfig to an AppConfig(serverBaseUrl, supabaseUrl, supabaseAnonKey) " +
+                "to use the real wiring.",
         )
 }

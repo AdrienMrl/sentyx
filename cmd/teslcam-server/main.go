@@ -30,6 +30,8 @@ func main() {
 	geminiMediaRes := flag.String("gemini-media-resolution", "", "video token budget per frame: low, medium or high; empty = API default (low is ~4x cheaper)")
 	analyze := flag.String("analyze", "", "external analyzer command run on the selected clip (path appended); must print JSON to stdout; mutually exclusive with -gemini-model")
 	tokenFile := flag.String("token-file", "", "file holding the bearer token required on the API (all endpoints but /healthz); empty = no auth")
+	supabaseJWKSURL := flag.String("supabase-jwks-url", "", "Supabase JWKS URL for verifying user JWTs (enables user-account auth; requires -supabase-issuer)")
+	supabaseIssuer := flag.String("supabase-issuer", "", "expected iss claim of Supabase user JWTs (requires -supabase-jwks-url)")
 	telegramTokenFile := flag.String("telegram-token-file", "", "file holding the Telegram bot token; set (with -telegram-chat-id) to send live alerts on completed analyses")
 	telegramChatID := flag.String("telegram-chat-id", "", "Telegram chat ID to alert on completed analyses; required with -telegram-token-file")
 	flag.Parse()
@@ -57,6 +59,12 @@ func main() {
 	}
 	if token == "" {
 		log.Print("WARNING: no -token-file — the API is unauthenticated; do not expose it beyond a trusted network")
+	}
+
+	// Supabase user-JWT auth is opt-in and requires BOTH flags — no implicit
+	// default. (server.New re-checks, but fail fast here with a clear message.)
+	if (*supabaseJWKSURL == "") != (*supabaseIssuer == "") {
+		log.Fatal("-supabase-jwks-url and -supabase-issuer must both be set to enable user-account auth")
 	}
 
 	// Telegram notifications are off unless configured, and require BOTH the
@@ -97,6 +105,8 @@ func main() {
 		Analyzer:           analyzer,
 		AnalyzeCmd:         analyzeCmd,
 		Token:              token,
+		SupabaseJWKSURL:    *supabaseJWKSURL,
+		SupabaseIssuer:     *supabaseIssuer,
 		Notifier:           notifier,
 		DebugNotifications: telegramDebug,
 	})

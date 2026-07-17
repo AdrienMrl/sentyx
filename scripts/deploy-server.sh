@@ -105,6 +105,12 @@ LISTEN_ADDR=$LISTEN
 GEMINI_API_KEY=
 GEMINI_MODEL=
 GEMINI_MEDIA_RESOLUTION=
+# Supabase user-account auth is off until BOTH are set (then: systemctl restart
+# teslcam-server). SUPABASE_JWKS_URL is the project's JWKS endpoint
+# (https://<ref>.supabase.co/auth/v1/.well-known/jwks.json); SUPABASE_ISSUER is
+# the expected iss claim (https://<ref>.supabase.co/auth/v1).
+SUPABASE_JWKS_URL=
+SUPABASE_ISSUER=
 # Telegram alerts are off unless TELEGRAM_CHAT_ID is set AND the bot token is
 # written to /etc/teslcam/telegram.token; then: systemctl restart teslcam-server.
 TELEGRAM_CHAT_ID=
@@ -164,6 +170,16 @@ if [[ -n "${GEMINI_MODEL:-}" ]]; then
   if [[ -n "${GEMINI_MEDIA_RESOLUTION:-}" ]]; then
     args+=(-gemini-media-resolution "$GEMINI_MEDIA_RESOLUTION")
   fi
+fi
+
+# Supabase user-account auth: opt-in. Both vars required together (the server
+# rejects a half-configured pair).
+if [[ -n "${SUPABASE_JWKS_URL:-}" || -n "${SUPABASE_ISSUER:-}" ]]; then
+  if [[ -z "${SUPABASE_JWKS_URL:-}" || -z "${SUPABASE_ISSUER:-}" ]]; then
+    echo "teslcam-server-start: SUPABASE_JWKS_URL and SUPABASE_ISSUER must both be set in /etc/teslcam/server.env" >&2
+    exit 1
+  fi
+  args+=(-supabase-jwks-url "$SUPABASE_JWKS_URL" -supabase-issuer "$SUPABASE_ISSUER")
 fi
 
 # Telegram alerts: opt-in. Chat ID implies a non-empty token file.

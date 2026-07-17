@@ -107,7 +107,7 @@ class RealDeviceRepository(
             passed = healthOk,
         )
         val authOk = try {
-            api.operatorTokenValid()
+            api.sessionValid()
         } catch (e: CancellationException) {
             throw e
         } catch (e: Throwable) {
@@ -115,7 +115,7 @@ class RealDeviceRepository(
         }
         steps += ConnectionTestStep(
             title = "Backend authenticated",
-            subtitle = if (authOk) "Operator token accepted" else "Authentication failed",
+            subtitle = if (authOk) "Signed-in session accepted" else "Authentication failed",
             passed = authOk,
         )
         return steps

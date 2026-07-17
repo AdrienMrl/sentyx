@@ -58,10 +58,12 @@ func (c *Server) Handler() http.Handler {
 }
 
 // authInfo records how a request authenticated: with the shared operator
-// token, or with a per-device token (DeviceID set).
+// token, with a per-device token (DeviceID set), or with a Supabase user JWT
+// (UserID set). Exactly one of Operator/DeviceID/UserID is populated.
 type authInfo struct {
 	Operator bool
 	DeviceID string
+	UserID   string
 }
 
 type authCtxKey struct{}
@@ -69,6 +71,46 @@ type authCtxKey struct{}
 func authFrom(ctx context.Context) authInfo {
 	ai, _ := ctx.Value(authCtxKey{}).(authInfo)
 	return ai
+}
+
+// deviceReadable reports whether the authenticated caller may read the given
+// device's status: the operator, the device itself, or the owning user.
+func (c *Server) deviceReadable(ai authInfo, deviceID string) (bool, error) {
+	switch {
+	case ai.Operator:
+		return true, nil
+	case ai.DeviceID != "":
+		return ai.DeviceID == deviceID, nil
+	case ai.UserID != "":
+		owner, exists, err := c.store.deviceOwner(deviceID)
+		if err != nil {
+			return false, err
+		}
+		return exists && owner == ai.UserID, nil
+	default:
+		return false, nil
+	}
+}
+
+// eventReadable reports whether the caller may read the given event. Operator
+// and device tokens see all events (unchanged); a user sees only events whose
+// device they own. Events with no device_id are operator-only.
+func (c *Server) eventReadable(ai authInfo, ev *EventSummary) (bool, error) {
+	switch {
+	case ai.Operator, ai.DeviceID != "":
+		return true, nil
+	case ai.UserID != "":
+		if ev.DeviceID == "" {
+			return false, nil
+		}
+		owner, exists, err := c.store.deviceOwner(ev.DeviceID)
+		if err != nil {
+			return false, err
+		}
+		return exists && owner == ai.UserID, nil
+	default:
+		return false, nil
+	}
 }
 
 // requireToken rejects requests with 401 unless they carry the configured
@@ -89,6 +131,24 @@ func (c *Server) requireToken(next http.Handler) http.Handler {
 			return
 		}
 		if tok, ok := strings.CutPrefix(auth, "Bearer "); ok {
+			// A credential with exactly two dots looks like a JWT; verify it as a
+			// Supabase user token when JWT auth is enabled.
+			if c.jwt != nil && strings.Count(tok, ".") == 2 {
+				claims, err := c.jwt.verify(tok)
+				if err != nil {
+					w.Header().Set("WWW-Authenticate", "Bearer")
+					http.Error(w, "invalid JWT: "+err.Error(), http.StatusUnauthorized)
+					return
+				}
+				// Cheap upsert on every request keeps the stored email fresh.
+				if err := c.store.upsertUser(claims.Subject, claims.Email, time.Now()); err != nil {
+					http.Error(w, err.Error(), http.StatusInternalServerError)
+					return
+				}
+				ctx := context.WithValue(r.Context(), authCtxKey{}, authInfo{UserID: claims.Subject})
+				next.ServeHTTP(w, r.WithContext(ctx))
+				return
+			}
 			// Lookup is by sha256 of the presented token, so no secret-dependent
 			// comparison happens on the raw value.
 			h := sha256.Sum256([]byte(tok))
@@ -109,11 +169,14 @@ func (c *Server) requireToken(next http.Handler) http.Handler {
 }
 
 // handleRegisterDevice mints (or rotates) a per-device bearer token. The
-// token is returned exactly once; only its sha256 is stored. Requires the
-// operator token — a device token cannot register other devices.
+// token is returned exactly once; only its sha256 is stored. Allowed with the
+// operator token or a user JWT — a device token cannot register other devices.
+// A user registering a device becomes its owner; re-registration by a
+// different user is rejected.
 func (c *Server) handleRegisterDevice(w http.ResponseWriter, r *http.Request) {
-	if c.cfg.Token != "" && !authFrom(r.Context()).Operator {
-		http.Error(w, "device registration requires the operator token", http.StatusForbidden)
+	ai := authFrom(r.Context())
+	if c.cfg.Token != "" && !ai.Operator && ai.UserID == "" {
+		http.Error(w, "device registration requires the operator token or a user token", http.StatusForbidden)
 		return
 	}
 	var req struct {
@@ -132,6 +195,22 @@ func (c *Server) handleRegisterDevice(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "name is required", http.StatusBadRequest)
 		return
 	}
+	// Resolve the owner to record. Operators preserve any existing owner (NULL
+	// for a brand-new device); a user claims ownership but cannot take over a
+	// device already owned by someone else.
+	existingOwner, exists, err := c.store.deviceOwner(req.DeviceID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	owner := existingOwner
+	if ai.UserID != "" {
+		if exists && existingOwner != "" && existingOwner != ai.UserID {
+			http.Error(w, "device is registered to another user", http.StatusForbidden)
+			return
+		}
+		owner = ai.UserID
+	}
 	raw := make([]byte, 32)
 	if _, err := rand.Read(raw); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -139,7 +218,7 @@ func (c *Server) handleRegisterDevice(w http.ResponseWriter, r *http.Request) {
 	}
 	token := hex.EncodeToString(raw)
 	hash := sha256.Sum256([]byte(token))
-	if err := c.store.upsertDevice(req.DeviceID, req.Name, hex.EncodeToString(hash[:]), time.Now()); err != nil {
+	if err := c.store.upsertDevice(req.DeviceID, req.Name, hex.EncodeToString(hash[:]), owner, time.Now()); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -190,9 +269,16 @@ func (c *Server) handleDeviceHeartbeat(w http.ResponseWriter, r *http.Request) {
 func (c *Server) handleDeviceStatus(w http.ResponseWriter, r *http.Request) {
 	deviceID := r.PathValue("deviceId")
 	ai := authFrom(r.Context())
-	if c.cfg.Token != "" && !ai.Operator && ai.DeviceID != deviceID {
-		http.Error(w, "a device may only read its own status", http.StatusForbidden)
-		return
+	if c.cfg.Token != "" {
+		ok, err := c.deviceReadable(ai, deviceID)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if !ok {
+			http.Error(w, "not permitted to read this device", http.StatusForbidden)
+			return
+		}
 	}
 	ds, err := c.store.deviceStatus(deviceID)
 	if err != nil {
@@ -227,7 +313,16 @@ func (c *Server) handleDeviceStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
-	evs, err := c.store.events()
+	ai := authFrom(r.Context())
+	var evs []EventSummary
+	var err error
+	// A user sees only events on devices they own; operators and device tokens
+	// see all (unchanged), as does the unauthenticated dev mode.
+	if c.cfg.Token != "" && ai.UserID != "" {
+		evs, err = c.store.eventsOwnedBy(ai.UserID)
+	} else {
+		evs, err = c.store.events()
+	}
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -240,8 +335,12 @@ func (c *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleUsage reports aggregate analysis token spend per model, for cost
-// accounting (multiply by the model's per-token prices).
+// accounting (multiply by the model's per-token prices). Operator-only.
 func (c *Server) handleUsage(w http.ResponseWriter, r *http.Request) {
+	if c.cfg.Token != "" && !authFrom(r.Context()).Operator {
+		http.Error(w, "usage is available to the operator only", http.StatusForbidden)
+		return
+	}
 	totals, err := c.store.usageTotals()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -265,6 +364,17 @@ func (c *Server) handleEvent(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	if c.cfg.Token != "" {
+		ok, err := c.eventReadable(authFrom(r.Context()), ev)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if !ok {
+			http.Error(w, "not permitted to read this event", http.StatusForbidden)
+			return
+		}
+	}
 	files, err := c.store.eventFiles(id)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -282,6 +392,26 @@ func (c *Server) handleEvent(w http.ResponseWriter, r *http.Request) {
 // anything: thumbnails are produced eagerly in the analysis pipeline.
 func (c *Server) handleEventThumb(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	if c.cfg.Token != "" {
+		ev, err := c.store.event(id)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if ev == nil {
+			http.NotFound(w, r)
+			return
+		}
+		ok, err := c.eventReadable(authFrom(r.Context()), ev)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if !ok {
+			http.Error(w, "not permitted to read this event", http.StatusForbidden)
+			return
+		}
+	}
 	if thumb := eventThumbPath(c.cfg.DataDir, id); fileExists(thumb) {
 		w.Header().Set("Content-Type", "image/jpeg")
 		http.ServeFile(w, r, thumb)

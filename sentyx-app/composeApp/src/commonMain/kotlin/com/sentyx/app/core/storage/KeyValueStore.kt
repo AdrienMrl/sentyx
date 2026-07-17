@@ -23,4 +23,16 @@ object StorageKeys {
 
     /** JSON blob of per-event user annotations (favorite/reviewed/override/feedback). */
     const val EVENT_META: String = "eventMeta"
+
+    // ---- Supabase auth session (persisted so a signed-in user survives relaunch) ----
+    const val AUTH_ACCESS_TOKEN: String = "authAccessToken"
+    const val AUTH_REFRESH_TOKEN: String = "authRefreshToken"
+
+    /** Access-token expiry as unix epoch seconds (string-encoded). */
+    const val AUTH_EXPIRES_AT: String = "authExpiresAt"
+    const val AUTH_USER_ID: String = "authUserId"
+    const val AUTH_USER_EMAIL: String = "authUserEmail"
+
+    /** Display name from GoTrue user_metadata, if any. */
+    const val AUTH_USER_NAME: String = "authUserName"
 }

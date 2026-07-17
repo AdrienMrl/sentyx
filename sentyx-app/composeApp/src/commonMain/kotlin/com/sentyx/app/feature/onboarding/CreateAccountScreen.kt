@@ -19,13 +19,14 @@ import com.sentyx.app.core.designsystem.SxColors
 
 /**
  * Create-account screen: name/email/password, then Continue runs
- * [AuthViewModel.createAccount] and advances to email verification.
+ * [AuthViewModel.createAccount]. Email verification is disabled, so a successful
+ * create establishes the session and [onCreated] advances straight on.
  */
 @Composable
 fun CreateAccountScreen(
     vm: AuthViewModel,
     onBack: () -> Unit,
-    onContinueToVerify: () -> Unit,
+    onCreated: () -> Unit,
 ) {
     val state by vm.state.collectAsState()
     Column(
@@ -69,7 +70,7 @@ fun CreateAccountScreen(
         AuthPrimaryButton(
             text = "Continue",
             loading = state.loading,
-            onClick = { vm.createAccount(onContinueToVerify) },
+            onClick = { vm.createAccount(onCreated) },
         )
     }
 }

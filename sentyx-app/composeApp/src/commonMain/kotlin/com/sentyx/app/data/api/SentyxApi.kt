@@ -23,26 +23,48 @@ import kotlinx.serialization.json.Json
 /**
  * Thin Ktor client for the Sentyx cloud backend. Uses the platform default
  * engine (OkHttp on Android, Darwin on iOS — both are on the classpath) and
- * authenticates with the operator bearer token.
+ * authenticates every call with the signed-in user's Supabase access token.
+ *
+ * [accessToken] returns a currently-valid token (the session manager refreshes
+ * proactively); if it returns null the user is signed out and the call throws.
+ * On a 401 the request is retried once after [refreshToken] forces a refresh —
+ * covering the window where a token expired between the proactive check and the
+ * server validating it.
  */
 class SentyxApi(
     baseUrl: String,
-    private val operatorToken: String,
+    private val accessToken: suspend () -> String?,
+    private val refreshToken: suspend () -> String?,
     private val client: HttpClient = defaultClient(),
 ) {
     /** Base URL without a trailing slash so path concatenation is unambiguous. */
     private val base: String = baseUrl.trimEnd('/')
 
     /**
+     * Run an authenticated request, retrying once on a 401 after forcing a token
+     * refresh. [block] receives the bearer token to apply to the request.
+     */
+    private suspend fun authed(block: suspend (token: String) -> HttpResponse): HttpResponse {
+        val token = accessToken() ?: throw SentyxApiException("Not signed in.")
+        val response = block(token)
+        if (response.status != HttpStatusCode.Unauthorized) return response
+        val refreshed = refreshToken()
+            ?: throw SentyxApiException("Session expired. Please sign in again.")
+        return block(refreshed)
+    }
+
+    /**
      * Register a freshly paired Pi with the backend and return the per-device
-     * ingest token it should use. `POST {base}/v1/devices` with the operator
-     * bearer token; a non-2xx response throws with the status and body.
+     * ingest token it should use. `POST {base}/v1/devices` with the signed-in
+     * user's bearer token; a non-2xx response throws with the status and body.
      */
     suspend fun registerDevice(deviceId: String, name: String): String {
-        val response: HttpResponse = client.post("$base/v1/devices") {
-            header(HttpHeaders.Authorization, "Bearer $operatorToken")
-            contentType(ContentType.Application.Json)
-            setBody(RegisterDeviceRequest(deviceId = deviceId, name = name))
+        val response = authed { token ->
+            client.post("$base/v1/devices") {
+                header(HttpHeaders.Authorization, "Bearer $token")
+                contentType(ContentType.Application.Json)
+                setBody(RegisterDeviceRequest(deviceId = deviceId, name = name))
+            }
         }
         if (!response.status.isSuccess()) {
             throw SentyxApiException(
@@ -53,14 +75,15 @@ class SentyxApi(
     }
 
     /**
-     * Fetch the latest server-side status for [deviceId]. `GET {base}/v1/devices/{deviceId}`
-     * with the operator bearer token. A 404 (unknown device id) throws
-     * [DeviceNotFoundException] so the caller can treat it as "no data yet";
-     * any other non-2xx throws [SentyxApiException].
+     * Fetch the latest server-side status for [deviceId]. `GET {base}/v1/devices/{deviceId}`.
+     * A 404 (unknown device id) throws [DeviceNotFoundException] so the caller can
+     * treat it as "no data yet"; any other non-2xx throws [SentyxApiException].
      */
     suspend fun deviceStatus(deviceId: String): DeviceStatusDto {
-        val response: HttpResponse = client.get("$base/v1/devices/$deviceId") {
-            header(HttpHeaders.Authorization, "Bearer $operatorToken")
+        val response = authed { token ->
+            client.get("$base/v1/devices/$deviceId") {
+                header(HttpHeaders.Authorization, "Bearer $token")
+            }
         }
         if (response.status == HttpStatusCode.NotFound) {
             throw DeviceNotFoundException(deviceId)
@@ -74,13 +97,14 @@ class SentyxApi(
     }
 
     /**
-     * List all events for the operator, newest-first ordering left to the
-     * caller. `GET {base}/events` with the operator bearer token; a non-2xx
-     * response throws [SentyxApiException].
+     * List all events for the signed-in user, newest-first ordering left to the
+     * caller. `GET {base}/events`; a non-2xx response throws [SentyxApiException].
      */
     suspend fun events(): List<EventSummaryDto> {
-        val response: HttpResponse = client.get("$base/events") {
-            header(HttpHeaders.Authorization, "Bearer $operatorToken")
+        val response = authed { token ->
+            client.get("$base/events") {
+                header(HttpHeaders.Authorization, "Bearer $token")
+            }
         }
         if (!response.status.isSuccess()) {
             throw SentyxApiException(
@@ -91,13 +115,15 @@ class SentyxApi(
     }
 
     /**
-     * Fetch one event with its received files. `GET {base}/events/{id}` with the
-     * operator bearer token. A 404 throws [SentyxApiException] like any other
-     * non-2xx (the feed is the source of truth for which ids exist).
+     * Fetch one event with its received files. `GET {base}/events/{id}`. A 404
+     * throws [SentyxApiException] like any other non-2xx (the feed is the source
+     * of truth for which ids exist).
      */
     suspend fun event(id: String): EventDetailDto {
-        val response: HttpResponse = client.get("$base/events/$id") {
-            header(HttpHeaders.Authorization, "Bearer $operatorToken")
+        val response = authed { token ->
+            client.get("$base/events/$id") {
+                header(HttpHeaders.Authorization, "Bearer $token")
+            }
         }
         if (!response.status.isSuccess()) {
             throw SentyxApiException(
@@ -108,15 +134,16 @@ class SentyxApi(
     }
 
     /**
-     * Fetch the thumbnail image bytes for [id]. `GET {base}/events/{id}/thumb`
-     * with the operator bearer token; returns `image/jpeg` or `image/png` bytes
-     * on success. Returns null for a 404 (no thumbnail yet — event still
-     * uploading or analyzing) or any other non-2xx. The id is URL-path-encoded
-     * because event ids contain `:`.
+     * Fetch the thumbnail image bytes for [id]. `GET {base}/events/{id}/thumb`;
+     * returns `image/jpeg` or `image/png` bytes on success. Returns null for a
+     * 404 (no thumbnail yet — event still uploading or analyzing) or any other
+     * non-2xx. The id is URL-path-encoded because event ids contain `:`.
      */
     suspend fun eventThumb(id: String): ByteArray? {
-        val response: HttpResponse = client.get("$base/events/${id.encodeURLPathPart()}/thumb") {
-            header(HttpHeaders.Authorization, "Bearer $operatorToken")
+        val response = authed { token ->
+            client.get("$base/events/${id.encodeURLPathPart()}/thumb") {
+                header(HttpHeaders.Authorization, "Bearer $token")
+            }
         }
         if (!response.status.isSuccess()) return null
         return response.body()
@@ -127,12 +154,15 @@ class SentyxApi(
         client.get("$base/healthz").status.isSuccess()
 
     /**
-     * True if the operator token is accepted by an authenticated endpoint
-     * (`GET {base}/usage`). Used by the diagnostics connection test.
+     * True if the signed-in user's session is accepted by an authenticated
+     * endpoint (`GET {base}/events` — user-accessible; `/usage` is
+     * operator-only). Used by the diagnostics connection test.
      */
-    suspend fun operatorTokenValid(): Boolean =
-        client.get("$base/usage") {
-            header(HttpHeaders.Authorization, "Bearer $operatorToken")
+    suspend fun sessionValid(): Boolean =
+        authed { token ->
+            client.get("$base/events") {
+                header(HttpHeaders.Authorization, "Bearer $token")
+            }
         }.status.isSuccess()
 
     companion object {

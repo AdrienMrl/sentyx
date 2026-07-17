@@ -31,6 +31,14 @@ type Config struct {
 	// endpoint except /healthz. Empty = no auth (local dev / trusted
 	// network only — never expose an unauthenticated server).
 	Token string
+	// SupabaseJWKSURL and SupabaseIssuer enable Supabase user-JWT auth: a
+	// bearer credential that looks like a JWT is verified against the JWKS and
+	// its issuer, granting per-user access to that user's own devices/events.
+	// Both must be set together (or both empty). Empty = JWT auth disabled.
+	// Only consulted when Token is also set (JWTs cannot authenticate against
+	// an otherwise unauthenticated server).
+	SupabaseJWKSURL string
+	SupabaseIssuer  string
 	// Notifier, if set, is sent each completed event's verdict so the user
 	// gets a live alert. Nil = no notifications. Delivery failures are logged
 	// and never fail the analysis flow (the verdict is already persisted).
@@ -46,8 +54,9 @@ type Config struct {
 type Server struct {
 	cfg      Config
 	store    *store
-	analyzer Analyzer // nil = record only
-	notifier Notifier // nil = no notifications
+	analyzer Analyzer     // nil = record only
+	notifier Notifier     // nil = no notifications
+	jwt      *jwtVerifier // nil = Supabase user-JWT auth disabled
 }
 
 func New(cfg Config) (*Server, error) {
@@ -56,6 +65,15 @@ func New(cfg Config) (*Server, error) {
 	}
 	if cfg.Analyzer != nil && len(cfg.AnalyzeCmd) > 0 {
 		return nil, fmt.Errorf("server: Analyzer and AnalyzeCmd are mutually exclusive")
+	}
+	// Supabase user-JWT auth is opt-in and requires both the JWKS URL and the
+	// issuer — no implicit default for either.
+	var jwtVer *jwtVerifier
+	switch {
+	case cfg.SupabaseJWKSURL != "" && cfg.SupabaseIssuer != "":
+		jwtVer = newJWTVerifier(cfg.SupabaseJWKSURL, cfg.SupabaseIssuer)
+	case cfg.SupabaseJWKSURL != "" || cfg.SupabaseIssuer != "":
+		return nil, fmt.Errorf("server: SupabaseJWKSURL and SupabaseIssuer must both be set to enable user-JWT auth")
 	}
 	analyzer := cfg.Analyzer
 	if len(cfg.AnalyzeCmd) > 0 {
@@ -71,7 +89,7 @@ func New(cfg Config) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Server{cfg: cfg, store: st, analyzer: analyzer, notifier: cfg.Notifier}, nil
+	return &Server{cfg: cfg, store: st, analyzer: analyzer, notifier: cfg.Notifier, jwt: jwtVer}, nil
 }
 
 // Run serves the ingest API and drives event completion until ctx is

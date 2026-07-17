@@ -69,6 +69,11 @@ CREATE TABLE IF NOT EXISTS devices (
   token_sha256 TEXT NOT NULL UNIQUE,          -- hex sha256 of the bearer token
   created_at   INTEGER NOT NULL               -- unix milliseconds
 );
+CREATE TABLE IF NOT EXISTS users (
+  id         TEXT PRIMARY KEY,                -- Supabase user id (JWT "sub")
+  email      TEXT,                            -- kept fresh on each auth
+  created_at INTEGER NOT NULL                 -- unix milliseconds
+);
 CREATE TABLE IF NOT EXISTS analysis_jobs (
   event_id     TEXT NOT NULL REFERENCES events(id),
   generation   INTEGER NOT NULL,
@@ -112,6 +117,7 @@ func openStore(path string) (*store, error) {
 		`ALTER TABLE events ADD COLUMN total_tokens INTEGER`,
 		`ALTER TABLE devices ADD COLUMN last_heartbeat_json TEXT`,
 		`ALTER TABLE devices ADD COLUMN last_heartbeat_at INTEGER`,
+		`ALTER TABLE devices ADD COLUMN owner_user_id TEXT`,
 	} {
 		if _, err := db.Exec(stmt); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
 			db.Close()
@@ -245,17 +251,33 @@ func (s *store) usageTotals() ([]UsageTotal, error) {
 	return out, rows.Err()
 }
 
+// eventsSelect is the shared column list for the API event views; callers append
+// a WHERE/ORDER BY clause.
+const eventsSelect = `
+	SELECT e.id, e.first_seen, e.last_file_at, e.completed_at,
+	       COALESCE(e.event_ts,''), COALESCE(e.city,''), COALESCE(e.reason,''), COALESCE(e.camera,''),
+	       e.analysis_state, COALESCE(e.analyzed_clip,''), COALESCE(e.threat_level,''),
+	       COALESCE(e.analysis_json,''), COALESCE(e.analysis_error,''),
+	       COALESCE(e.analysis_model,''), e.prompt_tokens, e.output_tokens, e.total_tokens,
+	       (SELECT COUNT(*) FROM files f WHERE f.event_id = e.id),
+	       COALESCE(e.state,'receiving'), COALESCE(e.current_generation,0),
+	       COALESCE(e.device_id,''), COALESCE(e.source_event_id,'')
+	FROM events e`
+
 func (s *store) events() ([]EventSummary, error) {
-	rows, err := s.db.Query(`
-		SELECT e.id, e.first_seen, e.last_file_at, e.completed_at,
-		       COALESCE(e.event_ts,''), COALESCE(e.city,''), COALESCE(e.reason,''), COALESCE(e.camera,''),
-		       e.analysis_state, COALESCE(e.analyzed_clip,''), COALESCE(e.threat_level,''),
-		       COALESCE(e.analysis_json,''), COALESCE(e.analysis_error,''),
-		       COALESCE(e.analysis_model,''), e.prompt_tokens, e.output_tokens, e.total_tokens,
-		       (SELECT COUNT(*) FROM files f WHERE f.event_id = e.id),
-		       COALESCE(e.state,'receiving'), COALESCE(e.current_generation,0),
-		       COALESCE(e.device_id,''), COALESCE(e.source_event_id,'')
-		FROM events e ORDER BY e.id`)
+	return s.queryEvents(eventsSelect + ` ORDER BY e.id`)
+}
+
+// eventsOwnedBy returns events whose device is owned by the given user. Events
+// with a NULL device_id are excluded (visible to the operator only).
+func (s *store) eventsOwnedBy(userID string) ([]EventSummary, error) {
+	return s.queryEvents(eventsSelect+`
+		WHERE e.device_id IN (SELECT device_id FROM devices WHERE owner_user_id = ?)
+		ORDER BY e.id`, userID)
+}
+
+func (s *store) queryEvents(query string, args ...any) ([]EventSummary, error) {
+	rows, err := s.db.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -310,12 +332,49 @@ func (s *store) event(id string) (*EventSummary, error) {
 }
 
 // upsertDevice registers a device, rotating its token if it already exists.
-func (s *store) upsertDevice(deviceID, name, tokenSHA256 string, now time.Time) error {
+// ownerUserID sets the owning user; pass "" to store NULL (operator-owned).
+func (s *store) upsertDevice(deviceID, name, tokenSHA256, ownerUserID string, now time.Time) error {
+	var owner any
+	if ownerUserID != "" {
+		owner = ownerUserID
+	}
 	_, err := s.db.Exec(`
-		INSERT INTO devices (device_id, name, token_sha256, created_at)
-		VALUES (?, ?, ?, ?)
-		ON CONFLICT(device_id) DO UPDATE SET name = excluded.name, token_sha256 = excluded.token_sha256`,
-		deviceID, name, tokenSHA256, now.UnixMilli())
+		INSERT INTO devices (device_id, name, token_sha256, created_at, owner_user_id)
+		VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT(device_id) DO UPDATE SET
+		    name = excluded.name,
+		    token_sha256 = excluded.token_sha256,
+		    owner_user_id = excluded.owner_user_id`,
+		deviceID, name, tokenSHA256, now.UnixMilli(), owner)
+	return err
+}
+
+// deviceOwner returns the owning user id of a device (empty when unowned) and
+// whether the device exists.
+func (s *store) deviceOwner(deviceID string) (owner string, exists bool, err error) {
+	var o sql.NullString
+	err = s.db.QueryRow(`SELECT owner_user_id FROM devices WHERE device_id = ?`, deviceID).Scan(&o)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	return o.String, true, nil
+}
+
+// upsertUser records (or refreshes) a Supabase user seen on a verified JWT,
+// keeping the email current.
+func (s *store) upsertUser(id, email string, now time.Time) error {
+	var em any
+	if email != "" {
+		em = email
+	}
+	_, err := s.db.Exec(`
+		INSERT INTO users (id, email, created_at)
+		VALUES (?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET email = excluded.email`,
+		id, em, now.UnixMilli())
 	return err
 }
 

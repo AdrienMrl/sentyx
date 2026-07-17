@@ -14,6 +14,16 @@ PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd -P)"
 cd "$PROJECT_DIR"
 
 args=(-data "$DATA" -listen "$LISTEN")
+
+# Supabase user-account auth: opt-in, both vars required together.
+if [[ -n "${SUPABASE_JWKS_URL:-}" || -n "${SUPABASE_ISSUER:-}" ]]; then
+  if [[ -z "${SUPABASE_JWKS_URL:-}" || -z "${SUPABASE_ISSUER:-}" ]]; then
+    echo "SUPABASE_JWKS_URL and SUPABASE_ISSUER must both be set to enable user-account auth" >&2
+    exit 1
+  fi
+  args+=(-supabase-jwks-url "$SUPABASE_JWKS_URL" -supabase-issuer "$SUPABASE_ISSUER")
+  echo ">> user-account auth ON (issuer $SUPABASE_ISSUER)"
+fi
 if [[ "${ANALYZE:-}" == "1" ]]; then
   if [[ -n "${ANALYZE_CMD:-}" ]]; then
     # Escape hatch: run an external analyzer command instead of the
