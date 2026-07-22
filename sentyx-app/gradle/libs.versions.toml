@@ -17,6 +17,7 @@ ktor = "3.2.3"
 kable = "0.43.1"
 googleServices = "4.4.2"
 firebaseMessaging = "24.1.0"
+media3 = "1.4.1"
 
 [libraries]
 # Android-only
@@ -47,6 +48,10 @@ kable-core = { module = "com.juul.kable:kable-core", version.ref = "kable" }
 
 # Firebase Cloud Messaging (Android push) — androidMain only
 firebase-messaging = { module = "com.google.firebase:firebase-messaging", version.ref = "firebaseMessaging" }
+
+# Media3 ExoPlayer (Android video playback in the event detail screen) — androidMain only
+androidx-media3-exoplayer = { module = "androidx.media3:media3-exoplayer", version.ref = "media3" }
+androidx-media3-ui = { module = "androidx.media3:media3-ui", version.ref = "media3" }
 
 [plugins]
 androidApplication = { id = "com.android.application", version.ref = "agp" }

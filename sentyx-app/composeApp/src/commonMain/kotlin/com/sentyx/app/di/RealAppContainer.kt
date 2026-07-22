@@ -12,6 +12,8 @@ import com.sentyx.app.data.event.RealEventRepository
 import com.sentyx.app.data.notifications.RealNotificationSettingsRepository
 import com.sentyx.app.data.push.PushAwareAuthRepository
 import com.sentyx.app.data.push.PushController
+import com.sentyx.app.data.clip.EventClipLoader
+import com.sentyx.app.data.clip.SentyxClipLoader
 import com.sentyx.app.data.thumbnail.EventThumbnailLoader
 import com.sentyx.app.data.thumbnail.SentyxThumbnailLoader
 import com.sentyx.app.data.demo.DemoStateController
@@ -77,6 +79,8 @@ class RealAppContainer(
     override val toasts: ToastController by lazy { ToastController(scope) }
 
     override val thumbnails: EventThumbnailLoader by lazy { SentyxThumbnailLoader(api) }
+
+    override val clips: EventClipLoader by lazy { SentyxClipLoader(api) }
 
     override val events: EventRepository by lazy {
         RealEventRepository(scope, api, keyValueStore)

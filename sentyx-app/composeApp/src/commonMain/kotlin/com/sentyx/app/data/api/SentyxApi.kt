@@ -18,6 +18,7 @@ import io.ktor.http.contentType
 import io.ktor.http.encodeURLPathPart
 import io.ktor.http.isSuccess
 import io.ktor.serialization.kotlinx.json.json
+import com.sentyx.app.data.clip.ClipSource
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -149,6 +150,23 @@ class SentyxApi(
         }
         if (!response.status.isSuccess()) return null
         return response.body()
+    }
+
+    /**
+     * Build a playable [ClipSource] for [id]'s clip: the `GET {base}/events/{id}/clip`
+     * URL plus a currently-valid bearer `Authorization` header for the platform
+     * player to send on every (range) request. The id is URL-path-encoded because
+     * event ids contain `:`. Unlike the JSON calls this does not fetch anything —
+     * the player streams the URL directly — so there is no 401 retry here; a
+     * signed-out session throws [SentyxApiException]. Whether a clip actually
+     * exists is decided at playback time (the endpoint 404s until one is uploaded).
+     */
+    suspend fun clipSource(id: String): ClipSource {
+        val token = accessToken() ?: throw SentyxApiException("Not signed in.")
+        return ClipSource(
+            url = "$base/events/${id.encodeURLPathPart()}/clip",
+            headers = mapOf(HttpHeaders.Authorization to "Bearer $token"),
+        )
     }
 
     /**

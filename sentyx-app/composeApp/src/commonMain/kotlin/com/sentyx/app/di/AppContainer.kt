@@ -2,6 +2,7 @@ package com.sentyx.app.di
 
 import androidx.compose.runtime.staticCompositionLocalOf
 import com.sentyx.app.core.ui.ToastController
+import com.sentyx.app.data.clip.EventClipLoader
 import com.sentyx.app.data.demo.DemoStateController
 import com.sentyx.app.data.thumbnail.EventThumbnailLoader
 import com.sentyx.app.domain.repository.AppSettingsRepository
@@ -34,6 +35,9 @@ interface AppContainer {
 
     /** Decodes/caches event feed thumbnails; a no-op in demo builds. */
     val thumbnails: EventThumbnailLoader
+
+    /** Builds authenticated clip sources for playback; a no-op in demo builds. */
+    val clips: EventClipLoader
 
     /** Present only in demo builds; null once real data sources exist. */
     val demoState: DemoStateController?
