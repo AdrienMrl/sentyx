@@ -172,6 +172,8 @@ func estimatedStandardCostUSD(usage *server.TokenUsage) *float64 {
 	}
 	var inputPerMillion, outputPerMillion float64
 	switch usage.Model {
+	case "gemini-3.6-flash": // pricing published 2026-07; output cut from 3.5's 9.00
+		inputPerMillion, outputPerMillion = 1.50, 7.50
 	case "gemini-3.5-flash": // pricing published 2026-07-09
 		inputPerMillion, outputPerMillion = 1.50, 9.00
 	default:

@@ -36,7 +36,7 @@ fronted by the existing Caddy install with automatic TLS:
   `status` / `logs`); target override via `TESLCAM_VPS=user@host`.
 - On the VPS: binary at `/usr/local/bin/teslcam-server`, exec'd through the
   config-driven launcher `/usr/local/bin/teslcam-server-start`; config in
-  `/etc/teslcam/server.env` (GEMINI_API_KEY + GEMINI_MODEL=gemini-3.5-flash,
+  `/etc/teslcam/server.env` (GEMINI_API_KEY + GEMINI_MODEL=gemini-3.6-flash,
   GEMINI_MEDIA_RESOLUTION=low set; TELEGRAM_CHAT_ID empty = alerts off); data in
   `/var/lib/teslcam`; agent bearer token in `/etc/teslcam/ingest.token`.
 - `/healthz` is open; every other endpoint requires the bearer token.

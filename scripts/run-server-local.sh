@@ -41,11 +41,11 @@ if [[ "${ANALYZE:-}" == "1" ]]; then
       # The key historically lives in the experiment's .env.
       set -a; source "$PROJECT_DIR/experiments/gemini/.env"; set +a
     fi
-    args+=(-gemini-model "${GEMINI_MODEL:-gemini-3.5-flash}")
+    args+=(-gemini-model "${GEMINI_MODEL:-gemini-3.6-flash}")
     if [[ -n "${GEMINI_MEDIA_RESOLUTION:-}" ]]; then
       args+=(-gemini-media-resolution "$GEMINI_MEDIA_RESOLUTION")
     fi
-    echo ">> analysis ON (native Gemini, model ${GEMINI_MODEL:-gemini-3.5-flash}${GEMINI_MEDIA_RESOLUTION:+, media resolution $GEMINI_MEDIA_RESOLUTION})"
+    echo ">> analysis ON (native Gemini, model ${GEMINI_MODEL:-gemini-3.6-flash}${GEMINI_MEDIA_RESOLUTION:+, media resolution $GEMINI_MEDIA_RESOLUTION})"
   fi
 else
   echo ">> record-only (set ANALYZE=1 to enable Gemini analysis)"

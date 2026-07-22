@@ -4,7 +4,7 @@
 // event with Gemini.
 //
 //	GEMINI_API_KEY=... teslcam-server -data ~/teslcam-data \
-//	  -listen 127.0.0.1:8090 -gemini-model gemini-3.5-flash
+//	  -listen 127.0.0.1:8090 -gemini-model gemini-3.6-flash
 package main
 
 import (
