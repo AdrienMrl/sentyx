@@ -266,7 +266,7 @@ private fun RouteContent(navigator: Navigator, c: AppContainer) {
 
         is Route.EventDetail -> EventDetailScreen(
             vm = viewModel(key = "detail-" + route.eventId) {
-                EventDetailViewModel(route.eventId, c.events, c.transfers, c.device, c.toasts)
+                EventDetailViewModel(route.eventId, c.events, c.transfers, c.device, c.toasts, c.clips)
             },
             onBack = { navigator.back() },
             onGoToTransfers = { navigator.switchTab(Route.Transfers) },

@@ -30,7 +30,10 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.sentyx.app.feature.player.VideoPlayer
 import com.sentyx.app.core.designsystem.StripedThumb
 import com.sentyx.app.core.designsystem.SxColors
 import com.sentyx.app.core.designsystem.SxPrimaryButton
@@ -83,6 +86,41 @@ fun EventDetailScreen(
                     onDismiss = vm::dismissRouteSheet,
                 )
             }
+            state.clip?.let { clip ->
+                if (state.fullscreen) {
+                    FullScreenPlayer(clip = clip, onClose = vm::closeFullscreen)
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Full-screen playback overlay: the same [VideoPlayer] filling a black-backed
+ * [Dialog] (a true dialog window on Android, a full-bleed overlay on iOS), with
+ * a close affordance. Kept intentionally minimal — the native transport controls
+ * come from the player itself.
+ */
+@Composable
+private fun FullScreenPlayer(clip: com.sentyx.app.data.clip.ClipSource, onClose: () -> Unit) {
+    Dialog(
+        onDismissRequest = onClose,
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        Box(Modifier.fillMaxSize().background(Color.Black)) {
+            VideoPlayer(source = clip, modifier = Modifier.fillMaxSize(), autoPlay = true)
+            Box(
+                Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(top = 44.dp, end = 16.dp)
+                    .size(36.dp)
+                    .clip(CircleShape)
+                    .background(SxColors.Bg.copy(alpha = 0.9f))
+                    .clickable(onClick = onClose),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text("✕", color = SxColors.Ink, fontSize = 16.sp)
+            }
         }
     }
 }
@@ -106,7 +144,12 @@ private fun DetailContent(
             activeCam = activeCam,
             duration = event.durationLabel,
             seekPct = state.seekPct,
-            onFullscreen = vm::fullscreen,
+            clip = state.clip,
+            // Unmount the inline player while the full-screen overlay is up so
+            // two players never stream (and play audio) at once.
+            playingInline = state.playingInline && !state.fullscreen,
+            onPlay = vm::play,
+            onFullscreen = vm::openFullscreen,
             onBack = onBack,
         )
 
@@ -210,12 +253,31 @@ private fun VideoArea(
     activeCam: String,
     duration: String,
     seekPct: Int,
+    clip: com.sentyx.app.data.clip.ClipSource?,
+    playingInline: Boolean,
+    onPlay: () -> Unit,
     onFullscreen: () -> Unit,
     onBack: () -> Unit,
 ) {
     val playable = state == AnalysisState.Complete
     val notPlayable = state != AnalysisState.Complete && state != AnalysisState.Analyzing && state != AnalysisState.Failed
     Box(Modifier.fillMaxWidth().aspectRatio(16f / 11f)) {
+        if (playingInline && clip != null) {
+            // Real inline playback once the user taps play: the platform player
+            // replaces the striped placeholder, with a full-screen chip on top.
+            VideoPlayer(source = clip, modifier = Modifier.fillMaxSize(), autoPlay = true)
+            Box(
+                Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(top = 60.dp, end = 16.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(Color(0x8C2B271F))
+                    .clickable(onClick = onFullscreen)
+                    .padding(horizontal = 9.dp, vertical = 5.dp),
+            ) {
+                Text("⛶ Full screen", color = SxColors.OnInk, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            }
+        } else {
         StripedThumb(Modifier.fillMaxSize())
 
         if (playable) {
@@ -225,7 +287,7 @@ private fun VideoArea(
                     .size(56.dp)
                     .clip(CircleShape)
                     .background(SxColors.Ink)
-                    .clickable(onClick = onFullscreen),
+                    .clickable(onClick = onPlay),
                 contentAlignment = Alignment.Center,
             ) {
                 Text("▶", color = SxColors.OnInk, fontSize = 18.sp)
@@ -285,6 +347,7 @@ private fun VideoArea(
                     fontWeight = FontWeight.Bold,
                 )
             }
+        }
         }
 
         // Floating back button (top-left, ~60dp down).

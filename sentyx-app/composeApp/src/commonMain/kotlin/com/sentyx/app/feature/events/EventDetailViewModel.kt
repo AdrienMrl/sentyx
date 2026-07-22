@@ -5,6 +5,8 @@ import androidx.lifecycle.viewModelScope
 import com.sentyx.app.core.ui.ToastController
 import com.sentyx.app.core.ui.ToastData
 import com.sentyx.app.core.ui.ToastTone
+import com.sentyx.app.data.clip.ClipSource
+import com.sentyx.app.data.clip.EventClipLoader
 import com.sentyx.app.domain.model.AnalysisFeedback
 import com.sentyx.app.domain.model.AnalysisState
 import com.sentyx.app.domain.model.DeviceSnapshot
@@ -39,6 +41,16 @@ data class EventDetailUiState(
     val routeSheet: Boolean = false,
     /** Route currently chosen inside the download sheet. */
     val selectedRoute: TransferRoute = TransferRoute.WifiDirect,
+    /**
+     * Authenticated clip source once fetched; null until the user taps play (or
+     * in demo builds / when the fetch yields nothing). Presence is what lets the
+     * UI mount a real player.
+     */
+    val clip: ClipSource? = null,
+    /** Inline player mounted in the video area. */
+    val playingInline: Boolean = false,
+    /** Full-screen player overlay shown. */
+    val fullscreen: Boolean = false,
 ) {
     val seekPct: Int get() = seekMoment ?: 0
 }
@@ -49,6 +61,9 @@ private data class DetailLocalUi(
     val severitySheet: Boolean = false,
     val routeSheet: Boolean = false,
     val selectedRoute: TransferRoute = TransferRoute.WifiDirect,
+    val clip: ClipSource? = null,
+    val playingInline: Boolean = false,
+    val fullscreen: Boolean = false,
 )
 
 class EventDetailViewModel(
@@ -57,6 +72,7 @@ class EventDetailViewModel(
     private val transfers: TransferRepository,
     private val device: DeviceRepository,
     private val toasts: ToastController,
+    private val clips: EventClipLoader,
 ) : ViewModel() {
 
     private val local = MutableStateFlow(DetailLocalUi())
@@ -71,6 +87,9 @@ class EventDetailViewModel(
                 severitySheet = ui.severitySheet,
                 routeSheet = ui.routeSheet,
                 selectedRoute = ui.selectedRoute,
+                clip = ui.clip,
+                playingInline = ui.playingInline,
+                fullscreen = ui.fullscreen,
             )
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), EventDetailUiState())
 
@@ -136,9 +155,32 @@ class EventDetailViewModel(
         ToastData("Delete event?", "Mock — not deleted", ToastTone.Urgent),
     )
 
-    fun fullscreen() = toasts.show(
-        ToastData("Full-screen playback", "Mock player", ToastTone.Info),
-    )
+    /**
+     * Start inline playback in the video area. Loads the clip source on first use
+     * (a no-op in demo builds, where the loader returns null); does nothing until
+     * analysis is [AnalysisState.Complete], i.e. a clip exists on the server.
+     */
+    fun play() = loadClipThen { it.copy(playingInline = true) }
+
+    /** Present the full-screen player overlay (loads the clip source if needed). */
+    fun openFullscreen() = loadClipThen { it.copy(fullscreen = true) }
+
+    /** Dismiss the full-screen player overlay. */
+    fun closeFullscreen() = local.update { it.copy(fullscreen = false) }
+
+    /**
+     * Fetch (once) an authenticated [ClipSource] for this event, then apply
+     * [show] to reveal a player. Only meaningful when the clip is on the server
+     * ([AnalysisState.Complete]); a null source (demo build or signed-out) leaves
+     * the placeholder untouched — no error surfaced, matching the thumbnail flow.
+     */
+    private fun loadClipThen(show: (DetailLocalUi) -> DetailLocalUi) {
+        if (state.value.event?.event?.state != AnalysisState.Complete) return
+        viewModelScope.launch {
+            val source = local.value.clip ?: clips.clipSource(eventId) ?: return@launch
+            local.update { show(it.copy(clip = source)) }
+        }
+    }
 
     fun extendRetention() = toasts.show(
         ToastData("Retention extended", "Kept for 30 days", ToastTone.Success),
