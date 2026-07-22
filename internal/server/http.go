@@ -28,6 +28,7 @@ import (
 //	GET  /events                                                  all events (JSON)
 //	GET  /events/<id>                                             one event + its files
 //	GET  /events/<id>/thumb                                       event thumbnail (JPEG, or uploaded thumb.png)
+//	GET  /events/<id>/clip                                        analyzed clip video (MP4, Range-capable)
 //	GET  /usage                                                   analysis token spend per model
 //	GET  /healthz                                                 always unauthenticated
 //
@@ -52,6 +53,7 @@ func (c *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /events", c.handleEvents)
 	mux.HandleFunc("GET /events/{id}", c.handleEvent)
 	mux.HandleFunc("GET /events/{id}/thumb", c.handleEventThumb)
+	mux.HandleFunc("GET /events/{id}/clip", c.handleEventClip)
 	mux.HandleFunc("GET /usage", c.handleUsage)
 	authed := c.requireToken(mux)
 
@@ -432,6 +434,73 @@ func (c *Server) handleEventThumb(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.NotFound(w, r)
+}
+
+// handleEventClip streams the event's analyzed clip (the same MP4 the analyzer
+// examined, identified by EventSummary.AnalyzedClip) so the app can play it.
+// It serves the on-disk blob via http.ServeContent, which honors Range requests
+// with 206 partial responses — iOS AVPlayer requires working range support.
+// Returns 404 when the event does not exist, is not readable by the caller, has
+// not been analyzed yet (no AnalyzedClip), or its clip file is not on disk.
+func (c *Server) handleEventClip(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	ev, err := c.store.event(id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if ev == nil {
+		http.NotFound(w, r)
+		return
+	}
+	if c.cfg.Token != "" {
+		ok, err := c.eventReadable(authFrom(r.Context()), ev)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if !ok {
+			http.Error(w, "not permitted to read this event", http.StatusForbidden)
+			return
+		}
+	}
+	// No analyzed clip yet (analysis not run) means there is nothing to play.
+	if ev.AnalyzedClip == "" {
+		http.NotFound(w, r)
+		return
+	}
+	files, err := c.store.eventFiles(id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	// Resolve exactly the file the analyzer used (thumbs.go uses the same lookup).
+	clip := fileByName(files, ev.AnalyzedClip)
+	if clip == nil {
+		http.NotFound(w, r)
+		return
+	}
+	path := filepath.Join(c.cfg.DataDir, clip.StoredPath)
+	f, err := os.Open(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			http.NotFound(w, r)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "video/mp4")
+	w.Header().Set("Accept-Ranges", "bytes")
+	// ServeContent adds Content-Length/Content-Range and the 206 status for Range
+	// requests; the clip name is only used for its extension, which we override.
+	http.ServeContent(w, r, clip.Name, info.ModTime(), f)
 }
 
 func fileExists(path string) bool {
