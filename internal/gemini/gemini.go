@@ -1,7 +1,8 @@
 // Package gemini analyzes sentry clips natively with the Gemini API: it
-// uploads the clip via the Files API, waits for processing, requests a
-// schema-constrained JSON verdict, and reports token usage for cost
-// accounting. It is the production replacement for the
+// uploads the clip via the Files API, waits for processing, runs a two-stage
+// analysis (a free-text observation pass over the video, then a
+// schema-constrained JSON verdict over that log), and reports combined token
+// usage for cost accounting. It is the production replacement for the
 // experiments/gemini/analyze-video.ts subprocess.
 package gemini
 
@@ -22,12 +23,34 @@ import (
 	"github.com/AdrienMrl/teslcam/internal/server"
 )
 
-const prompt = `You are a security analyst reviewing footage from a Tesla vehicle's
-Sentry Mode / TeslaCam system. This camera activates when the parked car detects a
-potential threat nearby.
+// Analysis runs in two stages. A single schema-constrained call reliably
+// under-attends to the video: it emits a plausible one-line gist ("person
+// walks by") without examining proximity or hand movements, and no prompt
+// wording, thinking level, or media resolution fixes that in one shot
+// (verified against a real missed window-tampering event, 2026-07-23).
+// Stage 1 asks only for a directed free-text observation log — the open-ended
+// output is what makes the model actually look. Stage 2 judges that log
+// against the threat rubric without re-sending the video.
+const observePrompt = `This clip comes from a camera mounted ON a parked car (Tesla Sentry Mode /
+TeslaCam: the front, back, or a side "repeater" camera). The car itself is mostly
+out of frame — at most a sliver of its own bodywork shows along a frame edge — so
+treat proximity to the CAMERA as proximity to the car.
 
-Watch the video carefully and report any nefarious, threatening, or concerning
-activity directed at the vehicle or its surroundings. Consider things like:
+Describe everything that happens in the clip in chronological detail with
+timestamps: every person, vehicle, and action. For each person, pay particular
+attention to how close they get to the camera, what their hands are doing, and
+whether they ever lean toward, reach toward, or make contact with the car or
+anything near the frame edges.`
+
+const judgePrompt = `You are a security analyst reviewing footage from a Tesla vehicle's
+Sentry Mode / TeslaCam system. This camera activates when the parked car detects a
+potential threat nearby. You are given a detailed chronological observation log of
+the clip instead of the video itself.
+
+Report any nefarious, threatening, or concerning activity directed at the vehicle
+or its surroundings. The camera is mounted on the parked car, so a person who gets
+close to the camera, leans or reaches toward it, or makes contact near a frame
+edge is doing so to the car. Consider things like:
 - Someone touching, hitting, kicking, keying, or otherwise damaging the vehicle
 - Attempted break-in, theft, or tampering (door handles, windows, wheels, charge port)
 - A person loitering, casing the vehicle, or behaving suspiciously
@@ -36,10 +59,13 @@ activity directed at the vehicle or its surroundings. Consider things like:
 
 Return the requested verdict. Keep each text field to one short sentence of at most
 20 words. Set event_timestamp_seconds to the moment that best shows the activity
-described in what_happened, measured from the start of this clip. Always choose a
-representative scene containing the relevant person, vehicle, or action; avoid title
-cards, blank frames, fades, and transitions. Set concern_detected to false exactly
-when threat_level is none. Be precise and do not speculate beyond what is visible.`
+described in what_happened, measured from the start of the clip, using the log's
+timestamps. Set concern_detected to false exactly when threat_level is none. Be
+precise and do not speculate beyond what the observation log supports.
+
+Observation log of the clip:
+
+`
 
 // verdictSchema constrains the model to the verdict object the server stores.
 var verdictSchema = map[string]any{
@@ -97,7 +123,10 @@ type Client struct {
 	// mediaResolution is the API enum value ("MEDIA_RESOLUTION_LOW", ...);
 	// empty omits the field so the API default applies.
 	mediaResolution string
-	baseURL         string
+	// fps is the video sampling rate passed via videoMetadata; 0 omits the
+	// field so the API default (1 fps) applies.
+	fps     int
+	baseURL string
 	httpc           *http.Client
 	// pollInterval between Files API state checks and retryBackoff for the
 	// first retry delay; tests shrink both.
@@ -108,13 +137,18 @@ type Client struct {
 // New returns a Client. Both the API key and the model are required — there
 // is no default model. mediaResolution trades video detail for tokens:
 // "low" (66 tokens/frame instead of 258), "medium", "high", or "" for the
-// API default.
-func New(apiKey, model, mediaResolution string) (*Client, error) {
+// API default. fps sets the video sampling rate (frames per second); 0 omits
+// it so the API default of 1 fps applies. A higher fps captures brief actions
+// that fall between 1 fps samples, at proportionally more tokens.
+func New(apiKey, model, mediaResolution string, fps int) (*Client, error) {
 	if apiKey == "" {
 		return nil, errors.New("gemini: API key is required")
 	}
 	if model == "" {
 		return nil, errors.New("gemini: model is required")
+	}
+	if fps < 0 {
+		return nil, fmt.Errorf("gemini: fps must be zero (API default) or positive, got %d", fps)
 	}
 	var mediaRes string
 	switch mediaResolution {
@@ -128,6 +162,7 @@ func New(apiKey, model, mediaResolution string) (*Client, error) {
 		apiKey:          apiKey,
 		model:           model,
 		mediaResolution: mediaRes,
+		fps:             fps,
 		baseURL:         "https://generativelanguage.googleapis.com",
 		httpc:           &http.Client{},
 		pollInterval:    2 * time.Second,
@@ -302,21 +337,77 @@ func (c *Client) waitActive(ctx context.Context, file *geminiFile) error {
 }
 
 func (c *Client) generate(ctx context.Context, file *geminiFile) ([]byte, *server.TokenUsage, error) {
-	genConfig := c.generationConfig()
+	observations, obsUsage, err := c.observe(ctx, file)
+	if err != nil {
+		return nil, nil, fmt.Errorf("observe: %w", err)
+	}
+	verdictJSON, judgeUsage, err := c.judge(ctx, observations)
+	if err != nil {
+		return nil, nil, fmt.Errorf("judge: %w", err)
+	}
+	usage := &server.TokenUsage{
+		Model:        c.model,
+		PromptTokens: obsUsage.PromptTokens + judgeUsage.PromptTokens,
+		OutputTokens: obsUsage.OutputTokens + judgeUsage.OutputTokens,
+		TotalTokens:  obsUsage.TotalTokens + judgeUsage.TotalTokens,
+	}
+	return verdictJSON, usage, nil
+}
+
+// observe is stage 1: a free-text, attention-directed description of the clip.
+func (c *Client) observe(ctx context.Context, file *geminiFile) (string, *server.TokenUsage, error) {
+	videoPart := map[string]any{"fileData": map[string]any{"fileUri": file.URI, "mimeType": file.MIMEType}}
+	if c.fps > 0 {
+		videoPart["videoMetadata"] = map[string]any{"fps": c.fps}
+	}
 	reqBody, err := json.Marshal(map[string]any{
 		"contents": []map[string]any{{
-			"role": "user",
-			"parts": []map[string]any{
-				{"fileData": map[string]any{"fileUri": file.URI, "mimeType": file.MIMEType}},
-				{"text": prompt},
-			},
+			"role":  "user",
+			"parts": []map[string]any{videoPart, {"text": observePrompt}},
 		}},
-		"generationConfig": genConfig,
+		"generationConfig": c.observeGenerationConfig(),
+	})
+	if err != nil {
+		return "", nil, err
+	}
+	text, usage, err := c.generateContent(ctx, reqBody)
+	if err != nil {
+		return "", nil, err
+	}
+	if strings.TrimSpace(text) == "" {
+		return "", nil, errors.New("empty observation log")
+	}
+	return text, usage, nil
+}
+
+// judge is stage 2: the schema-constrained verdict over the observation log.
+// The video is not re-sent — the log carries the evidence, at a fraction of
+// the tokens.
+func (c *Client) judge(ctx context.Context, observations string) ([]byte, *server.TokenUsage, error) {
+	reqBody, err := json.Marshal(map[string]any{
+		"contents": []map[string]any{{
+			"role":  "user",
+			"parts": []map[string]any{{"text": judgePrompt + observations}},
+		}},
+		"generationConfig": c.judgeGenerationConfig(),
 	})
 	if err != nil {
 		return nil, nil, err
 	}
+	text, usage, err := c.generateContent(ctx, reqBody)
+	if err != nil {
+		return nil, nil, err
+	}
+	verdictJSON, err := validateVerdict([]byte(text))
+	if err != nil {
+		return nil, nil, fmt.Errorf("invalid verdict: %w", err)
+	}
+	return verdictJSON, usage, nil
+}
 
+// generateContent posts one generateContent request and returns the candidate
+// text plus its token usage.
+func (c *Client) generateContent(ctx context.Context, reqBody []byte) (string, *server.TokenUsage, error) {
 	var resp struct {
 		Candidates []struct {
 			Content struct {
@@ -333,7 +424,7 @@ func (c *Client) generate(ctx context.Context, file *geminiFile) ([]byte, *serve
 			TotalTokenCount      int64 `json:"totalTokenCount"`
 		} `json:"usageMetadata"`
 	}
-	err = c.withRetry(ctx, func() error {
+	err := c.withRetry(ctx, func() error {
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost,
 			c.baseURL+"/v1beta/models/"+c.model+":generateContent", bytes.NewReader(reqBody))
 		if err != nil {
@@ -343,25 +434,21 @@ func (c *Client) generate(ctx context.Context, file *geminiFile) ([]byte, *serve
 		return c.doJSON(req, &resp)
 	})
 	if err != nil {
-		return nil, nil, err
+		return "", nil, err
 	}
 
 	if len(resp.Candidates) == 0 {
-		return nil, nil, errors.New("response has no candidates")
+		return "", nil, errors.New("response has no candidates")
 	}
 	if resp.Candidates[0].FinishReason != "STOP" {
-		return nil, nil, fmt.Errorf("candidate finished with %s", resp.Candidates[0].FinishReason)
+		return "", nil, fmt.Errorf("candidate finished with %s", resp.Candidates[0].FinishReason)
 	}
 	var text strings.Builder
 	for _, p := range resp.Candidates[0].Content.Parts {
 		text.WriteString(p.Text)
 	}
-	verdictJSON, err := validateVerdict([]byte(text.String()))
-	if err != nil {
-		return nil, nil, fmt.Errorf("invalid verdict: %w", err)
-	}
 	if resp.UsageMetadata == nil {
-		return nil, nil, errors.New("response has no usageMetadata")
+		return "", nil, errors.New("response has no usageMetadata")
 	}
 	// Thinking tokens bill at the output rate, so fold them into output.
 	usage := &server.TokenUsage{
@@ -370,10 +457,28 @@ func (c *Client) generate(ctx context.Context, file *geminiFile) ([]byte, *serve
 		OutputTokens: resp.UsageMetadata.CandidatesTokenCount + resp.UsageMetadata.ThoughtsTokenCount,
 		TotalTokens:  resp.UsageMetadata.TotalTokenCount,
 	}
-	return verdictJSON, usage, nil
+	return text.String(), usage, nil
 }
 
-func (c *Client) generationConfig() map[string]any {
+// observeGenerationConfig is the stage-1 config. The API-default thinking
+// level is deliberate: this is the pass that must actually look at the
+// frames, and it is the configuration the two-stage design was validated
+// with.
+func (c *Client) observeGenerationConfig() map[string]any {
+	genConfig := map[string]any{
+		// A guardrail, not a brevity control: the log for a 60s clip runs a
+		// few hundred tokens, and Gemini's limit includes thinking tokens.
+		"maxOutputTokens": 8192,
+	}
+	if c.mediaResolution != "" {
+		genConfig["mediaResolution"] = c.mediaResolution
+	}
+	return genConfig
+}
+
+// judgeGenerationConfig is the stage-2 config: schema-constrained JSON over a
+// short text log, no media.
+func (c *Client) judgeGenerationConfig() map[string]any {
 	genConfig := map[string]any{
 		"responseMimeType": "application/json",
 		"responseSchema":   verdictSchema,
@@ -384,13 +489,10 @@ func (c *Client) generationConfig() map[string]any {
 		"maxOutputTokens": 2048,
 	}
 	// Gemini 3 models support thinkingLevel; older model families reject it.
-	// LOW retains useful video reasoning while avoiding the costlier MEDIUM
-	// default used by Gemini 3.5 Flash for this narrow classification task.
+	// LOW suffices here: the hard perceptual work happened in observe, and
+	// judging a short text log is a narrow classification task.
 	if strings.HasPrefix(c.model, "gemini-3") {
 		genConfig["thinkingConfig"] = map[string]any{"thinkingLevel": "low"}
-	}
-	if c.mediaResolution != "" {
-		genConfig["mediaResolution"] = c.mediaResolution
 	}
 	return genConfig
 }

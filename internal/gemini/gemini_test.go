@@ -25,11 +25,16 @@ type fakeAPI struct {
 	pollsRemaining  atomic.Int32 // how many GETs still return PROCESSING
 	generateFails   atomic.Int32 // how many generateContent calls 503 first
 	deleted         atomic.Bool
-	mediaRes        atomic.Value // generationConfig.mediaResolution seen (string)
+	mediaRes        atomic.Value // observe generationConfig.mediaResolution seen (string)
 	displayName     atomic.Value // logical filename sent to the Files API
-	maxOutput       atomic.Int64 // generationConfig.maxOutputTokens seen
+	judgeMaxOutput  atomic.Int64 // judge generationConfig.maxOutputTokens seen
 	schemaDescribed atomic.Bool  // every response schema property has a description
+	judgeSawLog     atomic.Bool  // judge prompt contained the observation text
 }
+
+// observationLog is what the fake observe call returns; the judge call must
+// receive it verbatim inside its prompt.
+const observationLog = "At 00:48 the person leans toward the camera and reaches past the frame edge."
 
 func (f *fakeAPI) handler() http.Handler {
 	mux := http.NewServeMux()
@@ -95,18 +100,43 @@ func (f *fakeAPI) handler() http.Handler {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		if len(req.Contents) != 1 || len(req.Contents[0].Parts) != 2 {
+		if len(req.Contents) != 1 {
 			http.Error(w, "unexpected contents shape", http.StatusBadRequest)
+			return
+		}
+		if _, hasSchema := req.GenerationConfig["responseSchema"]; !hasSchema {
+			// Stage 1 (observe): video part + directed-description text part,
+			// free-text output.
+			if len(req.Contents[0].Parts) != 2 {
+				http.Error(w, "observe call should have video+text parts", http.StatusBadRequest)
+				return
+			}
+			mr, _ := req.GenerationConfig["mediaResolution"].(string)
+			f.mediaRes.Store(mr)
+			fmt.Fprintf(w, `{
+				"candidates": [{"content": {"parts": [{"text": %q}]}, "finishReason": "STOP"}],
+				"usageMetadata": {"promptTokenCount": 15000, "candidatesTokenCount": 300, "thoughtsTokenCount": 100, "totalTokenCount": 15400}
+			}`, observationLog)
+			return
+		}
+		// Stage 2 (judge): text-only prompt carrying the observation log,
+		// schema-constrained JSON verdict.
+		if len(req.Contents[0].Parts) != 1 {
+			http.Error(w, "judge call should have a single text part", http.StatusBadRequest)
 			return
 		}
 		if req.GenerationConfig["responseMimeType"] != "application/json" {
 			http.Error(w, "missing responseMimeType", http.StatusBadRequest)
 			return
 		}
-		mr, _ := req.GenerationConfig["mediaResolution"].(string)
-		f.mediaRes.Store(mr)
+		if _, hasMedia := req.GenerationConfig["mediaResolution"]; hasMedia {
+			http.Error(w, "judge call must not send mediaResolution", http.StatusBadRequest)
+			return
+		}
+		text, _ := req.Contents[0].Parts[0]["text"].(string)
+		f.judgeSawLog.Store(strings.Contains(text, observationLog))
 		if max, ok := req.GenerationConfig["maxOutputTokens"].(float64); ok {
-			f.maxOutput.Store(int64(max))
+			f.judgeMaxOutput.Store(int64(max))
 		}
 		described := true
 		schema, _ := req.GenerationConfig["responseSchema"].(map[string]any)
@@ -123,7 +153,7 @@ func (f *fakeAPI) handler() http.Handler {
 		f.schemaDescribed.Store(described)
 		fmt.Fprint(w, `{
 			"candidates": [{"content": {"parts": [{"text": "{\"concern_detected\":true,\"threat_level\":\"low\",\"what_happened\":\"A person approached the car.\",\"evidence\":\"The person stopped beside the door.\",\"recommended_action\":\"Review the footage.\",\"event_timestamp_seconds\":12}"}]}, "finishReason": "STOP"}],
-			"usageMetadata": {"promptTokenCount": 15000, "candidatesTokenCount": 120, "thoughtsTokenCount": 80, "totalTokenCount": 15200}
+			"usageMetadata": {"promptTokenCount": 500, "candidatesTokenCount": 120, "thoughtsTokenCount": 80, "totalTokenCount": 700}
 		}`)
 	})
 	mux.HandleFunc("DELETE /v1beta/files/abc123", func(w http.ResponseWriter, r *http.Request) {
@@ -138,7 +168,7 @@ func newTestClient(t *testing.T, api *fakeAPI) (*Client, string) {
 	t.Cleanup(srv.Close)
 	api.baseURL = srv.URL
 
-	c, err := New("test-key", "test-model", "")
+	c, err := New("test-key", "test-model", "", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,7 +204,9 @@ func TestAnalyze(t *testing.T) {
 	if u == nil {
 		t.Fatal("no usage returned")
 	}
-	if u.Model != "test-model" || u.PromptTokens != 15000 || u.OutputTokens != 200 || u.TotalTokens != 15200 {
+	// Two stages: observe (15000 prompt, 300+100 output) + judge
+	// (500 prompt, 120+80 output), summed.
+	if u.Model != "test-model" || u.PromptTokens != 15500 || u.OutputTokens != 600 || u.TotalTokens != 16100 {
 		t.Errorf("usage = %+v", *u)
 	}
 	if got := api.uploadedBytes.Load(); got != int64(len("fake mp4 bytes")) {
@@ -186,11 +218,14 @@ func TestAnalyze(t *testing.T) {
 	if got, _ := api.mediaRes.Load().(string); got != "" {
 		t.Errorf("mediaResolution sent without being configured: %q", got)
 	}
-	if got := api.maxOutput.Load(); got != 2048 {
-		t.Errorf("maxOutputTokens = %d, want 2048", got)
+	if got := api.judgeMaxOutput.Load(); got != 2048 {
+		t.Errorf("judge maxOutputTokens = %d, want 2048", got)
 	}
 	if !api.schemaDescribed.Load() {
 		t.Error("response schema properties are missing descriptions")
+	}
+	if !api.judgeSawLog.Load() {
+		t.Error("judge prompt did not contain the observation log")
 	}
 }
 
@@ -226,14 +261,19 @@ func TestEstimatedStandardCostUSD(t *testing.T) {
 
 func TestGenerationConfigUsesModernThinkingControlForGemini3(t *testing.T) {
 	c := &Client{model: "gemini-3.5-flash"}
-	cfg := c.generationConfig()
+	cfg := c.judgeGenerationConfig()
 	thinking, _ := cfg["thinkingConfig"].(map[string]any)
 	if thinking["thinkingLevel"] != "low" {
 		t.Fatalf("thinkingConfig = %#v", thinking)
 	}
 	c.model = "gemini-2.5-flash"
-	if _, ok := c.generationConfig()["thinkingConfig"]; ok {
+	if _, ok := c.judgeGenerationConfig()["thinkingConfig"]; ok {
 		t.Fatal("thinkingLevel sent to an older model family")
+	}
+	// The observe pass keeps the API-default thinking level: the two-stage
+	// design was validated with it, and forcing LOW there is untested.
+	if _, ok := c.observeGenerationConfig()["thinkingConfig"]; ok {
+		t.Fatal("observe pass must not override the default thinking level")
 	}
 }
 
@@ -275,12 +315,12 @@ func TestNewMediaResolutionValues(t *testing.T) {
 		"": "", "low": "MEDIA_RESOLUTION_LOW",
 		"medium": "MEDIA_RESOLUTION_MEDIUM", "high": "MEDIA_RESOLUTION_HIGH",
 	} {
-		c, err := New("k", "m", in)
+		c, err := New("k", "m", in, 0)
 		if err != nil || c.mediaResolution != want {
 			t.Errorf("New(%q): got %q, %v; want %q", in, c.mediaResolution, err, want)
 		}
 	}
-	if _, err := New("k", "m", "ultra"); err == nil {
+	if _, err := New("k", "m", "ultra", 0); err == nil {
 		t.Error("invalid media resolution accepted")
 	}
 }
@@ -295,7 +335,7 @@ func TestAnalyzeRetriesTransientErrors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Usage == nil || res.Usage.TotalTokens != 15200 {
+	if res.Usage == nil || res.Usage.TotalTokens != 16100 {
 		t.Errorf("usage = %+v", res.Usage)
 	}
 }

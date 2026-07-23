@@ -29,6 +29,7 @@ func main() {
 	listen := flag.String("listen", "", "HTTP listen address, e.g. 127.0.0.1:8090")
 	geminiModel := flag.String("gemini-model", "", "analyze completed events with this Gemini model (requires GEMINI_API_KEY); empty = record only")
 	geminiMediaRes := flag.String("gemini-media-resolution", "", "video token budget per frame: low, medium or high; empty = API default (low is ~4x cheaper)")
+	geminiFPS := flag.Int("gemini-fps", 0, "video sampling rate in frames per second; 0 = API default (1 fps). Higher captures brief actions at more tokens")
 	analyze := flag.String("analyze", "", "external analyzer command run on the selected clip (path appended); must print JSON to stdout; mutually exclusive with -gemini-model")
 	tokenFile := flag.String("token-file", "", "file holding the bearer token required on the API (all endpoints but /healthz); empty = no auth")
 	supabaseJWKSURL := flag.String("supabase-jwks-url", "", "Supabase JWKS URL for verifying user JWTs (enables user-account auth; requires -supabase-issuer)")
@@ -49,7 +50,7 @@ func main() {
 		if apiKey == "" {
 			log.Fatal("GEMINI_API_KEY must be set when -gemini-model is used")
 		}
-		g, err := gemini.New(apiKey, *geminiModel, *geminiMediaRes)
+		g, err := gemini.New(apiKey, *geminiModel, *geminiMediaRes, *geminiFPS)
 		if err != nil {
 			log.Fatal(err)
 		}
