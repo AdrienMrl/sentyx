@@ -1,13 +1,13 @@
 {
   "project_info": {
-    "project_number": "000000000000",
-    "project_id": "sentyx-placeholder",
-    "storage_bucket": "sentyx-placeholder.appspot.com"
+    "project_number": "184194456803",
+    "project_id": "sentyx-c804d",
+    "storage_bucket": "sentyx-c804d.firebasestorage.app"
   },
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:000000000000:android:0000000000000000000000",
+        "mobilesdk_app_id": "1:184194456803:android:123fa0c54034e64e2139d6",
         "android_client_info": {
           "package_name": "com.sentyx.app"
         }
@@ -15,7 +15,7 @@
       "oauth_client": [],
       "api_key": [
         {
-          "current_key": "AIzaSyPLACEHOLDER00000000000000000000000"
+          "current_key": "AIzaSyDHaMVzQjW16xYPNYdS5I4f8e70WJMsI-Q"
         }
       ],
       "services": {
