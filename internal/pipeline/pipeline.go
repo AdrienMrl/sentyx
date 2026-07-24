@@ -7,6 +7,7 @@ package pipeline
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"path/filepath"
 	"strings"
 	"time"
@@ -38,6 +39,7 @@ type Config struct {
 
 	PostTo           string        // server base URL; extracted files are pushed there
 	PostToken        string        // bearer token for the server; empty = none
+	HTTPClient       *http.Client  // used for uploads when set (e.g. the LTE fallback client); nil keeps the uploader's default
 	DeviceID         string        // stable source device identifier used in event keys
 	RetryDelay       time.Duration // upload retry delay; required when PostTo is set
 	EventSettleDelay time.Duration // quiet time after the last stable file before finalization
@@ -133,6 +135,7 @@ func Run(ctx context.Context, cfg Config) error {
 			BaseURL: cfg.PostTo, RetryDelay: cfg.RetryDelay,
 			SettleDelay: cfg.EventSettleDelay, DeviceID: cfg.DeviceID, Token: cfg.PostToken,
 			SpoolDBPath: cfg.SpoolDBPath, SpoolMaxBytes: cfg.SpoolMaxBytes, Logf: cfg.Logf,
+			HTTPClient: cfg.HTTPClient,
 		})
 		if err != nil {
 			return err

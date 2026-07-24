@@ -57,6 +57,12 @@ in-flight Sentry events, clean gadget teardown. The car writes plaintext MP4s
 (firmware 2026.14; 2026.20+ encrypts by default on Ryzen-MCU cars — design note:
 detect encrypted clips before upload; possible key-broker decrypt-on-Pi later).
 
+An LTE USB dongle (`eth1`, metered — Hologram SIM) provides upload-only
+fallback internet: no default route ever; only the agent's fallback dialer
+(`internal/lte`, `-lte-iface`) can send over it, an nftables allowlist
+restricts eth1 egress to the server, and background update timers are off.
+Full dongle protocol/API + protection design: `hardware/lte-dongle.md`.
+
 ## Running the server locally
 
 Use `scripts/run-server-local.sh` (not a bare `go run ./cmd/teslcam-server`) —
@@ -69,6 +75,21 @@ it sets sensible dev defaults (data dir, listen addr).
 `cmd/teslcam-test` is a CLI that pushes one real clip through the ingest API
 and prints the analyzer result (library code in `internal/testcli`). Use it to
 exercise the server end-to-end; see `cmd/teslcam-test/README.md`.
+
+## Building field-unit images
+
+`scripts/build-image.sh <backing-gb> <authorized-keys-file>` produces a
+flashable golden image (`build/teslcam-pi4-<version>.img.xz`) for new Pi 4
+units — Raspberry Pi OS Lite arm64 (pinned release) with the agent, scorer,
+dwc2 gadget config, and systemd units baked in; no secrets (BLE onboarding
+provisions on first pairing). The same image flashes to SD card or USB SSD
+(PARTUUID boot + EEPROM SD→USB order). Builds inside the Lima dev VM
+(native arm64 chroot); first boot creates the sparse exFAT backing image.
+`scripts/flash-image.sh` interactively flashes it on macOS (external-disk
+detection, hard confirm). `scripts/test-image.sh` smoke-tests a built image
+without a Pi: runs first-boot provisioning in a chroot and boots the
+userspace via systemd-nspawn in the VM — only the Pi firmware/EEPROM/dwc2/BLE
+hardware paths need the real board.
 
 ## Dev VM (gadget testing without hardware)
 

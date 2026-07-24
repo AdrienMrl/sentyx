@@ -20,6 +20,7 @@ import (
 	"errors"
 	"flag"
 	"log"
+	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -33,6 +34,7 @@ import (
 	"github.com/AdrienMrl/teslcam/internal/eventupload"
 	"github.com/AdrienMrl/teslcam/internal/gadget"
 	"github.com/AdrienMrl/teslcam/internal/health"
+	"github.com/AdrienMrl/teslcam/internal/lte"
 	"github.com/AdrienMrl/teslcam/internal/pipeline"
 	"github.com/AdrienMrl/teslcam/internal/tokenfile"
 	"github.com/AdrienMrl/teslcam/internal/videocompress"
@@ -88,6 +90,9 @@ func main() {
 	heartbeat := flag.Bool("heartbeat", false, "POST periodic device-status heartbeats to the server (requires -post-to, -token-file and -heartbeat-interval)")
 	heartbeatInterval := flag.Duration("heartbeat-interval", 0, "heartbeat POST interval, e.g. 30s (required, > 0, with -heartbeat; no implicit default)")
 	healthLogInterval := flag.Duration("health-log-interval", 0, "log a local health line (SoC temp, load, throttle flags) at this interval, e.g. 1m; 0 disables")
+	lteIface := flag.String("lte-iface", "", "metered LTE fallback interface, e.g. eth1; uploads and heartbeats retry bound to it when the default route fails (empty = disabled)")
+	lteDNS := flag.String("lte-dns", "", "DNS resolver dialed over the LTE interface, e.g. 8.8.8.8:53 (required with -lte-iface)")
+	lteDialTimeout := flag.Duration("lte-dial-timeout", 0, "per-attempt dial timeout before falling back to LTE, e.g. 10s (required, > 0, with -lte-iface)")
 	flag.Parse()
 	if *imagePath == "" || *udc == "" {
 		log.Fatal("both -image and -udc are required")
@@ -114,6 +119,16 @@ func main() {
 		}
 	} else if *selectClips || *cameraScorerPath != "" {
 		log.Print("no -post-to (pre-provisioning): uploads off; -select-clips/-camera-scorer are inert until provisioned")
+	}
+	// The LTE fallback needs its resolver and timeout explicit: the system
+	// resolver is unreachable exactly when the fallback engages, and the dial
+	// timeout decides how long every upload waits on dead Wi-Fi before paying
+	// for metered bytes — neither may be an implicit default.
+	if *lteIface != "" && (*lteDNS == "" || *lteDialTimeout <= 0) {
+		log.Fatal("-lte-dns and -lte-dial-timeout (> 0) are required with -lte-iface")
+	}
+	if *lteIface == "" && (*lteDNS != "" || *lteDialTimeout != 0) {
+		log.Fatal("-lte-dns/-lte-dial-timeout set without -lte-iface")
 	}
 	// Heartbeat needs an explicit interval whenever enabled (no implicit
 	// default, per project rule). Like clip selection it is only actually active
@@ -269,6 +284,28 @@ func main() {
 		}()
 	}
 
+	// With -lte-iface, server traffic (uploads and heartbeats) dials the
+	// default route first and retries bound to the LTE interface when that
+	// fails. Both clients share one transport so Wi-Fi -> LTE transitions are
+	// detected (and logged) once. Everything else on the box stays off LTE by
+	// construction: the dongle has no default route, and only sockets bound to
+	// its address can leave through it (see hardware/lte-dongle.md).
+	var uploadClient, heartbeatClient *http.Client
+	if *lteIface != "" {
+		lteTransport, err := lte.NewTransport(lte.FallbackConfig{
+			Interface:   *lteIface,
+			DNS:         *lteDNS,
+			DialTimeout: *lteDialTimeout,
+			Logf:        log.Printf,
+		})
+		if err != nil {
+			log.Fatal(err)
+		}
+		uploadClient = &http.Client{Timeout: 5 * time.Minute, Transport: lteTransport}
+		heartbeatClient = &http.Client{Timeout: 30 * time.Second, Transport: lteTransport}
+		log.Printf("lte: fallback enabled on %s (dns %s, dial timeout %s)", *lteIface, *lteDNS, *lteDialTimeout)
+	}
+
 	// uploaderRef is published by the pipeline once the durable upload client
 	// exists, letting the heartbeat reporter read the live pending-upload
 	// backlog without the reporter and pipeline sharing lifecycle. Reads before
@@ -295,6 +332,7 @@ func main() {
 				StoragePath:  storagePath,
 				Interval:     *heartbeatInterval,
 				AgentVersion: version,
+				HTTPClient:   heartbeatClient,
 				Logf:         log.Printf,
 				// Live pending-upload backlog from the durable spool, surfaced via
 				// the pipeline's UploaderReady callback below.
@@ -344,6 +382,7 @@ func main() {
 		CopyPrefix:            *copyPrefix,
 		PostTo:                *postTo,
 		PostToken:             token,
+		HTTPClient:            uploadClient,
 		DeviceID:              *deviceID,
 		RetryDelay:            5 * time.Second,
 		EventSettleDelay:      *eventSettle,

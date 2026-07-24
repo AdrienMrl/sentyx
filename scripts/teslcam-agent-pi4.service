@@ -39,7 +39,10 @@ ExecStart=/usr/local/bin/teslcam-agent \
   -ble-config-dir /etc/teslcam \
   -heartbeat \
   -heartbeat-interval 30s \
-  -health-log-interval 1m
+  -health-log-interval 1m \
+  -lte-iface eth1 \
+  -lte-dns 8.8.8.8:53 \
+  -lte-dial-timeout 10s
 Restart=on-failure
 RestartSec=5
 
