@@ -32,3 +32,10 @@ third_party/
 # stray compiled agent binary at repo root (rebuild: go build ./cmd/teslcam-agent)
 /teslcam-agent
 supabase/.temp/
+
+# experiment build artifacts (module-named binaries)
+experiments/tesla-ble-pair/tesla-ble-pair
+experiments/tesla-clip/tesla-clip
+experiments/tesla-clip/dashcam
+experiments/tesla-fleet-auth/tesla-fleet-auth
+experiments/tesla-signaling/tesla-signaling

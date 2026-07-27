@@ -63,6 +63,12 @@ fallback internet: no default route ever; only the agent's fallback dialer
 restricts eth1 egress to the server, and background update timers are off.
 Full dongle protocol/API + protection design: `hardware/lte-dongle.md`.
 
+Shell access in the field goes over a WireGuard tunnel (`wg1`, `10.8.0.0/24`,
+udp/51821) that the Pi dials out to the VPS, since carrier CGNAT makes the unit
+unreachable inbound; keys are per-unit and provisioned at flash time, never
+baked into the image. Requires inbound UDP 51821 on the DigitalOcean cloud
+firewall. See `docs/remote-access-wireguard.md`.
+
 ## Running the server locally
 
 Use `scripts/run-server-local.sh` (not a bare `go run ./cmd/teslcam-server`) —
