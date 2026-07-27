@@ -26,6 +26,10 @@
 #     supplies server URL/device ID/token on first pairing; no secrets baked in
 #   - first-boot oneshot: creates the sparse MBR+exFAT backing image sized
 #     <backing-gb>, unblocks Wi-Fi rfkill
+#   - remote-access tunnel support (wireguard-tools + a provisioning unit that
+#     installs a per-unit wg1 config dropped on the boot partition by
+#     scripts/flash-image.sh); no key is baked in — see
+#     docs/remote-access-wireguard.md
 #   - boot-time trims: apt/man-db timers off, swap off,
 #     NetworkManager-wait-online off (gadget must come up before connectivity)
 #
@@ -176,8 +180,14 @@ export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
 # Runtime set matches install-agent.sh; build tools stay in the image like they
 # do on the hand-provisioned Pi (simple, and disk is cheap on a 32G+ card).
+#
+# pi-bluetooth is NOT in the trixie Lite base image (the bookworm-era images
+# the prototype was provisioned from shipped it). It attaches the Pi's
+# UART-connected Bluetooth module and brings up hci0; without it there is no
+# hci0, so BLE onboarding fails silently and a fresh unit is unreachable.
+# Found the hard way on the first field flash (2026-07).
 apt-get install -y --no-install-recommends \
-  ffmpeg exfatprogs bluez network-manager \
+  ffmpeg exfatprogs bluez pi-bluetooth network-manager wireguard-tools \
   cmake g++ make libopencv-dev
 
 # Camera scorer, built against this image's own OpenCV so .so versions match.
@@ -210,6 +220,135 @@ chmod 440 /etc/sudoers.d/010-teslcam-admin
 # ssh-login block. Mask, not disable: getty pulls it in statically.
 systemctl mask userconfig.service 2>/dev/null || true
 rm -f /etc/ssh/sshd_config.d/rename_user.conf
+
+# Persistent journal, bounded. The default ends up volatile on this image
+# (journald never created /var/log/journal/<machine-id>/), so every runtime
+# log dies with the power — an unbootable or unreachable unit leaves nothing
+# to autopsy, and in-car units lose power constantly by design. Size-capped
+# so it can never eat the card.
+# Radios: Pi OS ships Wi-Fi AND Bluetooth rfkill-soft-blocked until the
+# wireless-country wizard unblocks them — a wizard this image skips. The
+# firstboot `rfkill unblock wifi` is not enough: it runs before the radio
+# devices exist (~6 s in) and never covered Bluetooth, which left field units
+# with hci0 present but administratively dead — no BLE onboarding, no way in.
+# A udev rule unblocks every rfkill device the moment it appears, every boot.
+cat > /etc/udev/rules.d/90-teslcam-rfkill-unblock.rules <<'RFKILL'
+ACTION=="add", SUBSYSTEM=="rfkill", RUN+="/usr/sbin/rfkill unblock all"
+RFKILL
+
+# NOTE the 99- prefix: Pi OS ships
+# /usr/lib/systemd/journald.conf.d/40-rpi-volatile-storage.conf with
+# Storage=volatile (SD-wear protection), and journald merges fragments sorted
+# by FILENAME across /usr/lib and /etc — a 10- prefix here parses first and
+# silently loses to the 40- file. Found after a field unit booted healthy with
+# this set to persistent and still wrote no journal.
+mkdir -p /etc/systemd/journald.conf.d
+cat > /etc/systemd/journald.conf.d/99-teslcam.conf <<'JOURNAL'
+[Journal]
+Storage=persistent
+SystemMaxUse=64M
+SystemMaxFileSize=8M
+JOURNAL
+
+# --- Black-box boot report on the FAT partition.
+# The one place any machine can read without tooling is /boot/firmware, so the
+# unit writes its own health summary there: a unit that never shows up on BLE,
+# Wi-Fi, or Ethernet is diagnosed by pulling the card and reading a text file
+# on any laptop — no debugfs, no ext4, no shell on the unit. Written at boot
+# completion and refreshed by timer while running; belt-and-braces alongside
+# the persistent journal (and the reason it exists: the journald persistence
+# above was once observed not to take effect on real hardware).
+cat > /usr/local/sbin/teslcam-boot-report <<'REPORT'
+#!/bin/bash
+# Write a plain-text health report to the FAT boot partition. Refreshed by
+# timer; atomic (tmp + mv) so a power cut never leaves a torn file.
+OUT=/boot/firmware/teslcam-boot-report.txt
+TMP="$OUT.tmp"
+{
+  echo "teslcam boot report  $(date -Is)  uptime: $(cut -d' ' -f1 /proc/uptime)s"
+  echo "machine-id: $(cat /etc/machine-id 2>/dev/null)"
+  echo "system: $(systemctl is-system-running 2>/dev/null)"
+  echo
+  echo "== failed units =="
+  systemctl list-units --failed --no-legend --plain 2>/dev/null || echo "(none)"
+  echo
+  echo "== network =="
+  for i in eth0 wlan0 eth1; do
+    ip -brief addr show "$i" 2>/dev/null || echo "$i: absent"
+  done
+  echo "default route: $(ip route show default 2>/dev/null | head -1)"
+  echo "carrier eth0: $(cat /sys/class/net/eth0/carrier 2>/dev/null)"
+  echo
+  echo "== bluetooth =="
+  echo "adapters: $(ls /sys/class/bluetooth 2>/dev/null || echo NONE)"
+  rfkill list bluetooth 2>/dev/null
+  hciconfig hci0 2>/dev/null | head -3
+  echo
+  echo "== teslcam-agent =="
+  systemctl show teslcam-agent -p ActiveState,SubState,NRestarts,ExecMainStatus --value 2>/dev/null | paste -sd' ' -
+  echo
+  echo "== gadget =="
+  echo "udc: $(ls /sys/class/udc 2>/dev/null || echo NONE)"
+  for g in /sys/kernel/config/usb_gadget/*/UDC; do
+    [ -f "$g" ] && echo "gadget bound: $(cat "$g")"
+  done
+  echo
+  echo "== wireguard =="
+  wg show wg1 latest-handshakes 2>/dev/null || echo "wg1 not up"
+  echo
+  echo "== power =="
+  vcgencmd get_throttled 2>/dev/null
+  echo
+  echo "== journal: last errors this boot =="
+  journalctl -p err -b --no-pager -n 20 -o short-monotonic 2>/dev/null
+  echo
+  echo "== journal: teslcam-agent tail =="
+  journalctl -u teslcam-agent -b --no-pager -n 40 -o short-monotonic 2>/dev/null
+} > "$TMP" 2>&1
+mv -f "$TMP" "$OUT"
+sync -f /boot/firmware 2>/dev/null || sync
+REPORT
+chmod 755 /usr/local/sbin/teslcam-boot-report
+
+cat > /etc/systemd/system/teslcam-boot-report.service <<'UNIT'
+[Unit]
+Description=teslcam black-box report to the FAT boot partition
+After=multi-user.target teslcam-agent.service
+RequiresMountsFor=/boot/firmware
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/teslcam-boot-report
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+cat > /etc/systemd/system/teslcam-boot-report.timer <<'UNIT'
+[Unit]
+Description=refresh the teslcam boot report while running
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target
+UNIT
+
+# SSH hardening, stated explicitly. Pi OS ships PasswordAuthentication only as
+# a comment, and sshd's compiled-in default is *yes* — so leaving it unset
+# means password auth is enabled. It is currently unexploitable because the
+# admin password is locked, but a single `passwd` would open it, and the
+# WireGuard tunnel exposes sshd to the VPS. Units are key-only by construction.
+cat > /etc/ssh/sshd_config.d/010-teslcam-hardening.conf <<'SSHD'
+# teslcam field units are key-only; see docs/remote-access-wireguard.md
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PermitRootLogin no
+SSHD
+chmod 644 /etc/ssh/sshd_config.d/010-teslcam-hardening.conf
 
 echo "$HOSTNAME_BAKED" > /etc/hostname
 sed -i "s/raspberrypi/$HOSTNAME_BAKED/g" /etc/hosts
@@ -273,6 +412,48 @@ RemainAfterExit=yes
 WantedBy=multi-user.target
 UNIT
 
+# --- Remote access tunnel (see docs/remote-access-wireguard.md).
+# On LTE the unit is behind the dongle's NAT *and* carrier CGNAT, so nothing
+# can connect in to it; the Pi must dial out to the VPS and we ride back down
+# that tunnel. No key is baked into the image — every unit would otherwise
+# share one private key and collide on the same tunnel IP. Instead
+# scripts/flash-image.sh drops a per-unit config onto the FAT boot partition
+# (the only partition a Mac can write), and this unit installs it.
+#
+# Runs every boot rather than once, so re-provisioning a unit is just a matter
+# of dropping a new teslcam-wg1.conf onto its boot partition — no reflash.
+cat > /usr/local/sbin/teslcam-wg-provision <<'WGPROV'
+#!/bin/sh
+set -eu
+SRC=/boot/firmware/teslcam-wg1.conf
+DST=/etc/wireguard/wg1.conf
+[ -f "$SRC" ] || exit 0
+mkdir -p /etc/wireguard
+install -m 600 -o root -g root "$SRC" "$DST"
+# Remove the private key from the FAT partition: it has no ownership or mode
+# bits and is readable by any machine the card is later plugged into.
+rm -f "$SRC"
+sync
+systemctl enable wg-quick@wg1
+systemctl restart wg-quick@wg1
+echo "teslcam-wg-provision: installed wg1 config, tunnel enabled" | logger -t teslcam-wg-provision
+WGPROV
+chmod 755 /usr/local/sbin/teslcam-wg-provision
+cat > /etc/systemd/system/teslcam-wg-provision.service <<'UNIT'
+[Unit]
+Description=teslcam remote-access tunnel provisioning (from boot partition)
+After=local-fs.target
+Before=teslcam-agent.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/teslcam-wg-provision
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
 # --- Metered LTE dongle (optional USB RNDIS stick, ASR-based; see
 # hardware/lte-dongle.md). Three invariants keep it from burning data:
 #  1. The NM profile gives it NO default route; its default lives in policy
@@ -324,6 +505,7 @@ table inet lte_guard {
     oifname != "eth1" accept
     ip daddr 192.168.8.0/24 accept comment "dongle LAN: web API, DNS relay, DHCP"
     ip daddr 161.35.232.246 tcp dport 443 accept comment "teslcam server"
+    ip daddr 161.35.232.246 udp dport 51821 accept comment "wg1 remote access"
     ip daddr { 8.8.8.8, 8.8.4.4 } udp dport 53 accept comment "dongle upstream DNS"
     counter log prefix "lte-guard drop: " drop
   }
@@ -388,7 +570,8 @@ WantedBy=timers.target
 UNIT
 
 systemctl enable ssh bluetooth teslcam-firstboot teslcam-agent \
-  teslcam-lte-guard teslcam-lte-watchdog.timer
+  teslcam-lte-guard teslcam-lte-watchdog.timer teslcam-wg-provision \
+  teslcam-boot-report.service teslcam-boot-report.timer
 
 # Boot-time trims. NetworkManager-wait-online would stall boot on the (usual)
 # no-connectivity cold start in the car; the agent spools offline anyway.

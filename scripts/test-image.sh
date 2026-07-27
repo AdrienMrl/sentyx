@@ -149,6 +149,26 @@ FB="$(systemctl -M "$MACHINE" is-active teslcam-firstboot 2>/dev/null || true)"
 [[ "$FB" == inactive ]] && ok "teslcam-firstboot skipped (condition)" || bad "teslcam-firstboot state: $FB"
 chk_enabled userconfig.service masked
 
+# Persistent journal must actually engage: Storage=persistent was once
+# verified present in an image whose journald still never wrote a byte to
+# /var/log/journal on real hardware. The config existing is not the property
+# we care about — the directory being created and written at boot is.
+JDIR="$(ls -d "$MNT/var/log/journal/"*/ 2>/dev/null | head -1 || true)"
+if [[ -n "$JDIR" ]] && ls "$JDIR"*.journal >/dev/null 2>&1; then
+  ok "journald persisting to /var/log/journal/$(basename "$JDIR")"
+else
+  bad "journald NOT persisting (no machine-id dir with .journal files under /var/log/journal)"
+fi
+
+# The black-box report must land on the FAT partition during boot.
+if [[ -f "$MNT/boot/firmware/teslcam-boot-report.txt" ]]; then
+  ok "boot report written to FAT partition"
+  grep -q "== bluetooth ==" "$MNT/boot/firmware/teslcam-boot-report.txt" \
+    && ok "boot report has expected sections" || bad "boot report malformed"
+else
+  bad "teslcam-boot-report.txt missing from /boot/firmware after boot"
+fi
+
 # Anything failed beyond the known container artifacts is a real problem.
 ALLOW='rpi-eeprom-update|systemd-growfs-root|systemd-remount-fs'
 UNEXPECTED="$(systemctl -M "$MACHINE" list-units --failed --no-legend --plain 2>/dev/null \

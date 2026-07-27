@@ -188,46 +188,120 @@ func main() {
 		}
 	}
 
-	udcName := *udc
-	if udcName == "auto" {
-		var err error
-		udcName, err = gadget.FindUDC(*udcClass)
-		if err != nil {
-			log.Fatal(err)
-		}
-		log.Printf("udc: auto-detected %s", udcName)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	// BLE onboarding starts before gadget setup, and deliberately so.
+	// Everything below this point is fatal on error — no UDC, a missing or
+	// corrupt backing image — and with Restart=on-failure a fatal start turns
+	// into a permanent crash loop. If onboarding lived downstream of that, a
+	// unit that failed first-boot provisioning would advertise nothing and
+	// accept no SSH (it has no network yet either), leaving no way to reach or
+	// recover it short of pulling the card. Onboarding is the recovery path,
+	// so it must not depend on the parts that break.
+	//
+	// It handles provisioning and, once provisioned, Wi-Fi management; a
+	// failure here must never take down the agent, so we only log it. The
+	// nmcli manager is constructed here (harmless on any OS); it only does I/O
+	// on the Pi, where NetworkManager runs.
+	if *bleOnboard {
+		go func() {
+			err := blepair.Run(ctx, blepair.Config{
+				Adapter:      *bleAdapter,
+				Name:         *bleName,
+				DeviceID:     *deviceID,
+				Hardware:     "pi4",
+				AgentVersion: version,
+				ConfigDir:    *bleConfigDir,
+				Wifi:         wifi.NewNMCLI(),
+				Restart: func() {
+					if err := exec.Command("systemctl", "restart", "teslcam-agent").Run(); err != nil {
+						log.Printf("blepair: restart teslcam-agent: %v", err)
+					}
+				},
+				Logf: log.Printf,
+			})
+			if err != nil && ctx.Err() == nil {
+				log.Printf("blepair: onboarding service error (agent continues): %v", err)
+			}
+		}()
 	}
 
-	g, err := gadget.New(gadget.Config{
-		ConfigFSDir:  *configfs,
-		Name:         *gadgetName,
-		BackingImage: *imagePath,
-		UDC:          udcName,
-		VendorID:     "0x1d6b", // Linux Foundation
-		ProductID:    "0x0104", // Multifunction Composite Gadget
-		Manufacturer: "teslcam",
-		Product:      "TeslaCam Drive",
-		SerialNumber: "teslcam-0001",
-	})
-	if err != nil {
-		log.Fatal(err)
+	// Gadget bring-up. Any failure here (no UDC because dwc2 did not load, a
+	// missing or corrupt backing image, configfs refusing the LUN) means the
+	// car sees no drive, and there is nothing this process can do about it.
+	//
+	// It must not be fatal when BLE onboarding is enabled, though. The agent
+	// is the only thing serving onboarding, and with Restart=on-failure a
+	// fatal turns into a 5-second crash loop: the adapter would advertise for
+	// a fraction of a second at a time, far too briefly to pair with. A unit
+	// that failed first-boot provisioning would then be unreachable over BLE
+	// *and* SSH (it has no network yet), leaving no recovery short of pulling
+	// the card. Onboarding is the recovery path, so it outlives this.
+	degrade := func(format string, args ...interface{}) bool {
+		if *bleOnboard {
+			log.Printf("gadget: "+format, args...)
+			return true
+		}
+		log.Fatalf("gadget: "+format, args...)
+		return false
+	}
+
+	degraded := false
+	udcName := *udc
+	if udcName == "auto" {
+		found, err := gadget.FindUDC(*udcClass)
+		if err != nil {
+			degraded = degrade("no usable UDC: %v", err)
+		} else {
+			udcName = found
+			log.Printf("udc: auto-detected %s", udcName)
+		}
+	}
+
+	var g *gadget.Gadget
+	if !degraded {
+		var err error
+		g, err = gadget.New(gadget.Config{
+			ConfigFSDir:  *configfs,
+			Name:         *gadgetName,
+			BackingImage: *imagePath,
+			UDC:          udcName,
+			VendorID:     "0x1d6b", // Linux Foundation
+			ProductID:    "0x0104", // Multifunction Composite Gadget
+			Manufacturer: "teslcam",
+			Product:      "TeslaCam Drive",
+			SerialNumber: "teslcam-0001",
+		})
+		if err != nil {
+			degraded = degrade("invalid configuration: %v", err)
+		}
 	}
 
 	// A gadget left over from a crashed run would keep the old LUN config;
 	// replace it so the car always sees the image this process was given.
-	if g.Exists() {
+	if !degraded && g.Exists() {
 		log.Printf("gadget: removing leftover %s/%s", *configfs, *gadgetName)
 		if err := g.Teardown(); err != nil {
-			log.Fatalf("gadget: leftover teardown: %v", err)
+			degraded = degrade("leftover teardown: %v", err)
 		}
 	}
-	if err := g.Setup(); err != nil {
-		log.Fatal(err)
+	if !degraded {
+		if err := g.Setup(); err != nil {
+			degraded = degrade("setup: %v", err)
+		}
+	}
+
+	if degraded {
+		// Onboarding-only mode: no drive is exposed and no clip pipeline runs,
+		// but the unit stays pairable and diagnosable until it is fixed.
+		log.Print("gadget: unavailable — serving BLE onboarding only, no drive exposed to the car")
+		<-ctx.Done()
+		log.Print("shutting down")
+		return
 	}
 	log.Printf("gadget: %s exposed on %s", *imagePath, udcName)
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 	var videoCompression *videocompress.Config
 	if *compressVideo && *postTo != "" {
 		cfg := videocompress.DefaultConfig(*videoEncoder)
@@ -254,34 +328,6 @@ func main() {
 		if err != nil {
 			log.Fatal(err)
 		}
-	}
-
-	// The BLE service runs beside the pipeline on the same signal ctx so
-	// shutdown stays clean. It handles provisioning and, once provisioned,
-	// Wi-Fi management; a failure here must never take down the agent, so we
-	// only log it. The nmcli manager is constructed here (harmless on any OS);
-	// it only does I/O on the Pi, where NetworkManager runs.
-	if *bleOnboard {
-		go func() {
-			err := blepair.Run(ctx, blepair.Config{
-				Adapter:      *bleAdapter,
-				Name:         *bleName,
-				DeviceID:     *deviceID,
-				Hardware:     "pi4",
-				AgentVersion: version,
-				ConfigDir:    *bleConfigDir,
-				Wifi:         wifi.NewNMCLI(),
-				Restart: func() {
-					if err := exec.Command("systemctl", "restart", "teslcam-agent").Run(); err != nil {
-						log.Printf("blepair: restart teslcam-agent: %v", err)
-					}
-				},
-				Logf: log.Printf,
-			})
-			if err != nil && ctx.Err() == nil {
-				log.Printf("blepair: onboarding service error (agent continues): %v", err)
-			}
-		}()
 	}
 
 	// With -lte-iface, server traffic (uploads and heartbeats) dials the

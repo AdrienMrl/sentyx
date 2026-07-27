@@ -12,6 +12,11 @@
 # Flashing is identical for SD cards and USB SSDs; after first boot the unit
 # expands its rootfs, creates the exFAT backing image, and waits for BLE
 # onboarding (see scripts/build-image.sh).
+#
+# After flashing, offers to provision remote access: generates a per-unit
+# WireGuard keypair and writes it to the FAT boot partition, so the unit can
+# be reached over LTE despite carrier CGNAT. Needs `brew install
+# wireguard-tools`. See docs/remote-access-wireguard.md.
 set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd -P)"
@@ -27,6 +32,16 @@ command -v xz >/dev/null || die "xz not found — install with: brew install xz"
 for c in diskutil plutil dd; do
   command -v "$c" >/dev/null || die "$c not found on PATH (expected stock macOS tool)"
 done
+
+# wg is only needed for the remote-access step, which runs *after* the write —
+# so a missing wg used to surface fifteen minutes in, once the flash was
+# already done. Warn here instead, while stopping is still cheap. Not fatal:
+# flashing itself does not need WireGuard, and the tunnel can be provisioned
+# later by dropping a config on the boot partition (no reflash).
+if ! command -v wg >/dev/null; then
+  printf '\033[1;33mnote:\033[0m wg not found — remote-access (WireGuard) provisioning will be unavailable.\n'
+  printf '      install with: brew install wireguard-tools    (flashing itself works without it)\n\n'
+fi
 
 # ------------------------------------------------------------- pick an image
 IMAGE="${1:-}"
@@ -51,9 +66,38 @@ fi
 say "image: $IMAGE"
 
 # ------------------------------------------------------------- pick the disk
+# `diskutil list external physical` is the obvious enumeration and it is wrong
+# here: macOS reports a *built-in* SD card reader as Internal=true, so a card
+# in the slot is invisible to it while being plainly visible in Finder.
+#
+# Internal is therefore not the safety property we want. The discriminator is
+# Ejectable: the SD reader is Internal=true/Ejectable=true, while the soldered
+# APPLE SSD is Internal=true/Ejectable=false. A candidate must be a whole
+# physical disk that is either external or ejectable — which admits SD cards
+# and USB SSDs, and excludes the boot SSD, disk images, and APFS synthesized
+# devices.
+disk_attr() { diskutil info -plist "$1" 2>/dev/null | plutil -extract "$2" raw -o - - 2>/dev/null; }
+
+is_flashable() {
+  local d="$1"
+  [[ "$(disk_attr "$d" VirtualOrPhysical)" == "Physical" ]] || return 1
+  [[ "$(disk_attr "$d" WholeDisk)" == "true" ]] || return 1
+  # Never the disk the running system booted from, whatever its flags say.
+  local root_whole; root_whole="$(diskutil info -plist / 2>/dev/null | plutil -extract ParentWholeDisk raw -o - - 2>/dev/null)"
+  [[ -n "$root_whole" && "$d" == "$root_whole" ]] && return 1
+  df / 2>/dev/null | grep -q "^/dev/${d}s" && return 1
+  local internal ejectable
+  internal="$(disk_attr "$d" Internal)"
+  ejectable="$(disk_attr "$d" Ejectable)"
+  [[ "$internal" == "false" || "$ejectable" == "true" ]] || return 1
+  return 0
+}
+
 list_external_disks() {
-  diskutil list external physical 2>/dev/null \
-    | awk -F'[/ ]' '/^\/dev\/disk/ {print $3}'
+  local d
+  for d in $(diskutil list 2>/dev/null | grep -oE '^/dev/disk[0-9]+' | sed 's|/dev/||'); do
+    is_flashable "$d" && printf '%s\n' "$d"
+  done
 }
 
 DISKS=()
@@ -82,10 +126,13 @@ read -r -p "Disk number to FLASH: " PICK
   || die "invalid selection: $PICK"
 DISK="${DISKS[$((PICK - 1))]}"
 
-# Re-verify right before erasing: still attached, still external.
-INTERNAL="$(diskutil info -plist "$DISK" | plutil -extract Internal raw -o - - 2>/dev/null)" \
+# Re-verify right before erasing: still attached, still a removable target,
+# still not the boot disk. Re-running the same predicate (rather than trusting
+# the earlier scan) closes the window where a disk is swapped mid-prompt.
+disk_attr "$DISK" DeviceIdentifier >/dev/null \
   || die "/dev/$DISK vanished — was it unplugged?"
-[[ "$INTERNAL" == "false" ]] || die "/dev/$DISK looks internal — refusing"
+is_flashable "$DISK" \
+  || die "/dev/$DISK is not a removable whole disk (or is the boot disk) — refusing"
 
 echo
 printf '\033[1;31mThis will ERASE /dev/%s completely.\033[0m\n' "$DISK"
@@ -102,9 +149,109 @@ say "flashing (raw device, ~5–15 min for an SD card; progress below)"
 xz -dc "$IMAGE" | sudo dd of="/dev/r$DISK" bs=4m status=progress
 sync
 
+# ------------------------------------------------ remote access provisioning
+# On LTE a unit sits behind the dongle's NAT *and* carrier CGNAT, so it has no
+# reachable address and nothing can connect in to it. Reaching a unit in the
+# field requires it to dial out to the VPS; we ride back down that tunnel.
+# See docs/remote-access-wireguard.md.
+#
+# Each unit needs its OWN keypair — a key baked into the golden image would be
+# shared by every unit, and they would all collide on one tunnel IP. So the
+# key is generated here, per flash. macOS cannot write the ext4 rootfs, so the
+# config is handed over on the FAT boot partition; teslcam-wg-provision moves
+# it to /etc/wireguard on first boot and deletes it from the FAT partition.
+WG_SUBNET_PREFIX="10.8.0"
+WG_HUB_ENDPOINT="161.35.232.246:51821"
+WG_HUB_PUBKEY="623glhgUggvKQPQmkrrzlMdo2c+58EF4GujbUtH1ciw="
+
+# Provisioning is NOT optional and asks no questions: every field unit needs
+# the tunnel (CGNAT makes an unprovisioned unit unreachable in the field), and
+# the unit number comes from the hub itself — the VPS's peer table is the
+# single source of truth for which tunnel IPs are taken. Manual numbering is
+# exactly how two units end up fighting over one IP. Skip only with
+# TESLCAM_NO_REMOTE_ACCESS=1 (offline bench flash); the unit can be
+# provisioned later by dropping teslcam-wg1.conf onto the boot partition.
+WANT_WG=y
+if [[ "${TESLCAM_NO_REMOTE_ACCESS:-}" == 1 ]]; then
+  WANT_WG=n
+  say "remote access skipped (TESLCAM_NO_REMOTE_ACCESS=1)"
+fi
+if [[ "$WANT_WG" == y ]]; then
+  command -v wg >/dev/null \
+    || die "wg not found — install with: brew install wireguard-tools (or set TESLCAM_NO_REMOTE_ACCESS=1)"
+
+  say "asking the hub for the next free unit number"
+  TAKEN="$(ssh -o ConnectTimeout=15 "${TESLCAM_VPS:-adri@vps}" \
+    "sudo wg show wg1 allowed-ips" 2>/dev/null | grep -oE "$WG_SUBNET_PREFIX\.[0-9]+" | cut -d. -f4)" \
+    || die "cannot reach the hub to pick a unit number — fix connectivity or set TESLCAM_NO_REMOTE_ACCESS=1"
+  UNIT_NUM=""
+  for n in $(seq 1 253); do
+    echo "$TAKEN" | grep -qx "$((n + 1))" || { UNIT_NUM="$n"; break; }
+  done
+  [[ -n "$UNIT_NUM" ]] || die "no free unit numbers on the hub (all 253 taken?)"
+  UNIT_IP="$WG_SUBNET_PREFIX.$((UNIT_NUM + 1))"
+  say "unit $UNIT_NUM -> $UNIT_IP (next free on the hub)"
+
+  UNIT_KEY="$(wg genkey)"
+  UNIT_PUB="$(printf '%s' "$UNIT_KEY" | wg pubkey)"
+
+  # The boot partition is FAT and mounts on macOS; the rootfs (ext4) does not.
+  say "mounting boot partition"
+  diskutil mountDisk "/dev/$DISK" >/dev/null
+  BOOTVOL=""
+  for _ in $(seq 1 20); do
+    for v in /Volumes/bootfs /Volumes/boot; do
+      [[ -d "$v" ]] && { BOOTVOL="$v"; break 2; }
+    done
+    sleep 0.5
+  done
+  [[ -n "$BOOTVOL" ]] || die "boot partition did not mount — cannot provision"
+
+  # umask so the key is not world-readable on the Mac while it is staged here.
+  ( umask 077; cat > "$BOOTVOL/teslcam-wg1.conf" <<WGCONF
+# teslcam unit $UNIT_NUM remote access. Installed to /etc/wireguard/wg1.conf
+# on first boot by teslcam-wg-provision, which then deletes this file.
+#
+# AllowedIPs is deliberately ONLY the tunnel subnet, never 0.0.0.0/0: a default
+# route here would drag all of the unit's traffic over the metered SIM.
+[Interface]
+Address = $UNIT_IP/24
+PrivateKey = $UNIT_KEY
+
+[Peer]
+PublicKey = $WG_HUB_PUBKEY
+Endpoint = $WG_HUB_ENDPOINT
+AllowedIPs = $WG_SUBNET_PREFIX.0/24
+PersistentKeepalive = 60
+WGCONF
+  )
+  sync
+  say "wrote $BOOTVOL/teslcam-wg1.conf"
+
+  # The hub must know this peer or the handshake is refused. Register
+  # immediately — the number was allocated from the hub moments ago, and any
+  # delay is a window for a second flash to take the same slot.
+  REGISTER_CMD="sudo wg set wg1 peer $UNIT_PUB allowed-ips $UNIT_IP/32 && sudo wg-quick save wg1"
+  say "registering unit $UNIT_NUM on the hub"
+  if ssh -o ConnectTimeout=15 "${TESLCAM_VPS:-adri@vps}" "$REGISTER_CMD"; then
+    say "registered: $UNIT_PUB -> $UNIT_IP"
+  else
+    # The config is already on the card, so the unit will dial but be refused
+    # until this runs. Loud, with the exact command.
+    printf '\033[1;31merror:\033[0m hub registration failed — the unit cannot connect until you run:\n' >&2
+    echo "  ssh ${TESLCAM_VPS:-adri@vps} '$REGISTER_CMD'" >&2
+  fi
+fi
+
 say "ejecting"
 diskutil eject "/dev/$DISK"
 
 say "done — insert into the Pi and power up."
 echo "First boot expands the filesystem and creates the backing image (allow ~2 min),"
 echo "then the unit advertises for BLE onboarding from the app."
+if [[ "${WANT_WG:-}" == y ]]; then
+  echo
+  echo "Remote access (only while the car is awake — Tesla cuts USB power on sleep):"
+  echo "  ssh -J ${TESLCAM_VPS:-adri@vps} adri@${UNIT_IP}"
+  echo "Requires inbound UDP 51821 allowed in the DigitalOcean cloud firewall."
+fi

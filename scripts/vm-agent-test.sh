@@ -93,6 +93,7 @@ sudo "$WORK/bin/teslcam-agent" -image "$IMG" -udc auto -gadget-name "$GADGET_NAM
   -copy-to "$WORK/spool" -copy-prefix /TeslaCam/SentryClips \
   -device-id vm-test-pi -event-settle 5s \
   -post-to "http://$SERVER_ADDR" -token-file "$WORK/ingest.token" \
+  -spool-db "$WORK/spool.db" -spool-max-mb 512 \
   >"$WORK/agent.log" 2>&1 &
 AGENT_PID=$!
 
