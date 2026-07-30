@@ -178,7 +178,10 @@ class PairingViewModel(
     fun loadNetworks() {
         if (wifiLoadJob?.isActive == true) return
         wifiLoadJob = viewModelScope.launch {
-            val nets = pairing.availableNetworks()
+            // A building broadcasts the same SSID from many APs; the device
+            // reports them all. One row per SSID — the first (strongest, the
+            // device orders by signal) wins.
+            val nets = pairing.availableNetworks().distinctBy { it.ssid }
             _state.update { s ->
                 val first = nets.firstOrNull()
                 s.copy(

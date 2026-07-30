@@ -9,7 +9,9 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -45,8 +47,17 @@ fun WifiSetupScreen(
             "Wi-Fi lets Sentyx upload clips and reach the backend when you're away.",
             Modifier.padding(top = 10.dp),
         )
+        // The network list is the screen's one scrollable region (weight makes it
+        // absorb exactly the leftover height): a venue can broadcast a dozen APs,
+        // and without this the Connect button was pushed clean off the screen.
+        // The password field scrolls with the list — it belongs to the selected
+        // row — while the buttons stay pinned below.
         Column(
-            modifier = Modifier.padding(top = 20.dp),
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .padding(top = 20.dp),
             verticalArrangement = Arrangement.spacedBy(9.dp),
         ) {
             state.wifiNetworks.forEach { net ->
@@ -56,17 +67,17 @@ fun WifiSetupScreen(
                     onClick = { vm.selectNetwork(net.ssid) },
                 )
             }
+            if (selected != null && selected.requiresPassword) {
+                PairEditField(
+                    label = "Password for ${selected.ssid}",
+                    value = state.wifiPassword,
+                    onValueChange = vm::setWifiPassword,
+                    masked = true,
+                    modifier = Modifier.padding(top = 5.dp),
+                )
+            }
         }
-        if (selected != null && selected.requiresPassword) {
-            PairEditField(
-                label = "Password for ${selected.ssid}",
-                value = state.wifiPassword,
-                onValueChange = vm::setWifiPassword,
-                masked = true,
-                modifier = Modifier.padding(top = 14.dp),
-            )
-        }
-        Spacer(Modifier.weight(1f))
+        Spacer(Modifier.padding(top = 8.dp))
         Column(verticalArrangement = Arrangement.spacedBy(10.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             // Disabled until a network is picked: connectWifi() treats a missing
             // selection as an invariant violation (it throws), so the gate is here.
