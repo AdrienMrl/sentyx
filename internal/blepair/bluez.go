@@ -3,7 +3,9 @@ package blepair
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -311,7 +313,10 @@ func (g *gattServer) register() error {
 		// legacy mgmt Add Advertising op works. Fall back to btmgmt, which
 		// uses the legacy op. GATT itself is still served by bluetoothd.
 		g.logf("blepair: BlueZ advertisement registration failed (%v); falling back to btmgmt legacy advertising", err)
-		if err := g.registerLegacyAdv(); err != nil {
+		// Retry like the D-Bus registrations above: the watchdog that re-asserts
+		// a dropped instance only starts once this succeeds, so giving up on the
+		// first attempt costs onboarding for the entire boot.
+		if err := retry(3, 2*time.Second, g.registerLegacyAdv); err != nil {
 			return fmt.Errorf("blepair: registering advertisement (btmgmt fallback): %w", err)
 		}
 		g.legacyAdv.Store(true)
@@ -322,6 +327,58 @@ func (g *gattServer) register() error {
 // legacyAdvInstance is the mgmt advertising instance the btmgmt fallback
 // claims. Fixed: the Pi's onboarding advertisement is the only one expected.
 const legacyAdvInstance = "1"
+
+// legacyAdvSettle is the pause between rm-adv and add-adv — see
+// registerLegacyAdv for the measured race it avoids.
+const legacyAdvSettle = time.Second
+
+// Advertising interval for the legacy path, in the kernel's 0.625 ms units:
+// 160 = 100 ms, 240 = 150 ms.
+//
+// THIS is what makes the Pi discoverable in practice. The kernel initialises
+// hdev->le_adv_{min,max}_interval to 0x0800 — 1280 ms — and applies it to mgmt
+// advertising instances regardless of their discoverable flag or the adapter's
+// Discoverable setting (both tested: neither changes it). At 1280 ms a phone or
+// laptop only wins a scan window occasionally: measured 2 detections out of 5
+// twelve-second scans. At 100–150 ms it was 5 out of 5, -37 to -50 dBm.
+//
+// Reachable only through debugfs; there is no mgmt or D-Bus API for it.
+const (
+	advIntervalPath     = "/sys/kernel/debug/bluetooth"
+	advIntervalMinUnits = "160"
+	advIntervalMaxUnits = "240"
+)
+
+// btmgmtTimeout bounds every btmgmt invocation.
+//
+// btmgmt is built on BlueZ's bt_shell, which is interactive by design. Under
+// systemd there is no tty and stdin is not a terminal, and it has been observed
+// to block indefinitely instead of executing and exiting. An unbounded wait
+// here is silent and total: it strands the onboarding goroutine between the
+// "falling back" log and both the success and failure logs, so the agent looks
+// healthy (hci0 up, unit active) while nothing is ever advertised and no error
+// is ever reported. Bounding it converts that into a logged failure.
+const btmgmtTimeout = 10 * time.Second
+
+// runBtmgmt runs btmgmt with [btmgmtTimeout] and a closed stdin, so it can
+// neither wait on terminal input nor hang forever. Returns combined output for
+// error messages; a timeout is reported as such, since it means something quite
+// different from a non-zero exit.
+func (g *gattServer) runBtmgmt(args ...string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), btmgmtTimeout)
+	defer cancel()
+
+	full := append([]string{"--index", g.adapterIndex()}, args...)
+	cmd := exec.CommandContext(ctx, "btmgmt", full...)
+	// Explicitly empty (not inherited): bt_shell must see EOF, never a pipe or
+	// terminal it might read from.
+	cmd.Stdin = strings.NewReader("")
+	out, err := cmd.CombinedOutput()
+	if ctx.Err() == context.DeadlineExceeded {
+		return out, fmt.Errorf("btmgmt %s: timed out after %s", strings.Join(args, " "), btmgmtTimeout)
+	}
+	return out, err
+}
 
 func (g *gattServer) adapterIndex() string {
 	return strings.TrimPrefix(string(g.adapter), "/org/bluez/hci")
@@ -336,11 +393,66 @@ func (g *gattServer) adapterIndex() string {
 func (g *gattServer) registerLegacyAdv() error {
 	g.advMu.Lock()
 	defer g.advMu.Unlock()
+	// Bracket the btmgmt calls with logs. Without these, a btmgmt that never
+	// returns is invisible — the journal simply stops mid-sequence, which is
+	// indistinguishable from the goroutine never having run.
+	g.logf("blepair: legacy advertising: asserting instance %s via btmgmt", legacyAdvInstance)
+	// Must precede add-adv: the kernel snapshots these into the HCI parameters
+	// when the instance is enabled.
+	g.setAdvInterval()
+	// Set Advertising OFF first. This is the load-bearing step, established by
+	// on-air A/B measurement on a Pi 4 (BCM43455, kernel 6.12) — with it the
+	// instance broadcasts (our UUID visible at -47 dBm); without it the exact
+	// same rm-adv/add-adv sequence programs the controller successfully (btmon:
+	// ADV_IND + data + Set Advertise Enable, all Status Success, `advinfo` lists
+	// the instance) yet NOTHING is emitted. The off forces the kernel to fully
+	// tear down its advertising state machine, which bluetoothd's failed
+	// extended-advertising registrations (Invalid Parameters on this chip)
+	// otherwise leave wedged.
+	//
+	// Never `advertising on`: that is the adapter-wide Set Advertising mode,
+	// which replaces the instance on air with the kernel's default advertisement
+	// (ADV_SCAN_IND, non-connectable, random address, no service UUID) — the
+	// instance stays listed in `advinfo` while the wrong thing broadcasts.
+	if out, err := g.runBtmgmt("advertising", "off"); err != nil {
+		g.logf("blepair: legacy advertising: advertising off: %v: %s", err, strings.TrimSpace(string(out)))
+	}
 	// A previous failed run (or bluetoothd's own failed attempts) can leave a
-	// zombie instance behind; clear ours before re-adding. The rm-adv error is
-	// deliberately ignored — the instance may simply not exist.
-	exec.Command("btmgmt", "--index", g.adapterIndex(), "rm-adv", legacyAdvInstance).Run()
-	return g.addLegacyAdv()
+	// zombie instance behind; clear ours before re-adding. A non-zero exit is
+	// expected and ignored (the instance may simply not exist), but a timeout is
+	// worth surfacing — it means btmgmt itself is wedged.
+	if out, err := g.runBtmgmt("rm-adv", legacyAdvInstance); err != nil {
+		g.logf("blepair: legacy advertising: rm-adv: %v: %s", err, strings.TrimSpace(string(out)))
+	}
+	// rm-adv's teardown is asynchronous in the kernel; an add-adv issued
+	// back-to-back races it and loses its HCI enable (also measured on air —
+	// without the settle the re-added instance stays dark).
+	time.Sleep(legacyAdvSettle)
+	if err := g.addLegacyAdv(); err != nil {
+		return err
+	}
+	g.logf("blepair: legacy advertising: instance %s asserted", legacyAdvInstance)
+	return nil
+}
+
+// setAdvInterval narrows the controller's advertising interval to
+// [advIntervalMinUnits]..[advIntervalMaxUnits] — see the constants for why the
+// kernel's 1280 ms default makes the device effectively undiscoverable.
+//
+// Best-effort and non-fatal: debugfs can be unmounted or the files absent on
+// other kernels, in which case advertising still works, just slowly. Logged so
+// a slow-discovery report has a trail to follow.
+func (g *gattServer) setAdvInterval() {
+	dir := filepath.Join(advIntervalPath, strings.TrimPrefix(string(g.adapter), "/org/bluez/"))
+	for name, value := range map[string]string{
+		"adv_min_interval": advIntervalMinUnits,
+		"adv_max_interval": advIntervalMaxUnits,
+	} {
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, []byte(value+"\n"), 0o644); err != nil {
+			g.logf("blepair: legacy advertising: could not set %s (advertising will be slow): %v", p, err)
+		}
+	}
 }
 
 func (g *gattServer) addLegacyAdv() error {
@@ -351,10 +463,11 @@ func (g *gattServer) addLegacyAdv() error {
 	}
 	scanRsp := fmt.Sprintf("%02x09%x", len(name)+1, name)
 	// btmgmt prints nothing without a tty, but its exit code is reliable.
-	out, err := exec.Command("btmgmt", "--index", g.adapterIndex(),
-		"add-adv", "-u", UUIDService, "-c", "-s", scanRsp, legacyAdvInstance).CombinedOutput()
+	// -g sets the LE General Discoverable flag in the advertising data, which is
+	// what a central expects of a device offering pairing.
+	out, err := g.runBtmgmt("add-adv", "-u", UUIDService, "-c", "-g", "-s", scanRsp, legacyAdvInstance)
 	if err != nil {
-		return fmt.Errorf("btmgmt add-adv: %v: %s", err, out)
+		return fmt.Errorf("btmgmt add-adv: %v: %s", err, strings.TrimSpace(string(out)))
 	}
 	return nil
 }
@@ -392,7 +505,8 @@ func (g *gattServer) watchLegacyAdv(ctx context.Context) {
 
 func (g *gattServer) unregister() {
 	if g.legacyAdv.Load() {
-		exec.Command("btmgmt", "--index", g.adapterIndex(), "rm-adv", legacyAdvInstance).Run()
+		// Bounded like the others: teardown must not wedge agent shutdown.
+		g.runBtmgmt("rm-adv", legacyAdvInstance)
 	}
 	g.adapterObj().Call("org.bluez.LEAdvertisingManager1.UnregisterAdvertisement", 0, advPath)
 	g.adapterObj().Call("org.bluez.GattManager1.UnregisterApplication", 0, appPath)
