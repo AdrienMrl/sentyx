@@ -494,6 +494,18 @@ for flag in -ble-onboard -ble-adapter -ble-name -ble-config-dir; do
   grep -q -- "$flag" "$M/etc/systemd/system/teslcam-agent.service" \
     && p "agent unit passes $flag" || f "agent unit missing $flag"
 done
+
+# The baked agent must carry the BLE advertising fixes (bounded btmgmt with the
+# Set-Advertising-off teardown, and the debugfs advertising-interval write).
+# Checked by grepping the binary for their log/path strings — crude but exact:
+# an agent built before the fix lacks both, and that unit is undiscoverable in
+# practice (kernel-default 1280 ms interval + wedged adv state machine).
+if grep -aq "legacy advertising: asserting instance" "$M/usr/local/bin/teslcam-agent" \
+   && grep -aq "adv_min_interval" "$M/usr/local/bin/teslcam-agent"; then
+  p "agent binary contains the BLE advertising fixes (interval + teardown)"
+else
+  f "agent binary predates the BLE advertising fixes — onboarding will be undiscoverable"
+fi
 VMAUDIT
   local rc=$? seen=0 line
   while IFS= read -r line; do
