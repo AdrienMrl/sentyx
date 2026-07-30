@@ -29,6 +29,18 @@ type Config struct {
 	Manufacturer string
 	Product      string
 	SerialNumber string
+
+	// SerialConsole adds a CDC-ACM function alongside the mass-storage LUN,
+	// making the gadget composite: the host sees both a drive and a serial port
+	// (/dev/ttyGS0 on the gadget side). This exists so a unit with no network —
+	// LTE-only behind CGNAT, or a dead Wi-Fi link — can still be reached with a
+	// shell over the USB cable instead of by pulling its SD card.
+	//
+	// Opt-in and DEBUG-ONLY: it changes the device the Tesla MCU enumerates from
+	// a plain mass-storage device into a composite one, which is not something
+	// the car has been validated against. Leave it off for anything plugged into
+	// a vehicle.
+	SerialConsole bool
 }
 
 // Gadget manages one configfs mass-storage gadget.
@@ -129,6 +141,17 @@ func (g *Gadget) build() error {
 	if err := os.Symlink(fn, filepath.Join(cf, "mass_storage.0")); err != nil {
 		return fmt.Errorf("gadget: %w", err)
 	}
+	// Linked after mass_storage so the LUN keeps interface 0 — the car's view of
+	// the device stays as close to the non-composite case as possible.
+	if g.cfg.SerialConsole {
+		acm := filepath.Join(d, "functions", "acm.0")
+		if err := os.MkdirAll(acm, 0o755); err != nil {
+			return fmt.Errorf("gadget: serial console function: %w", err)
+		}
+		if err := os.Symlink(acm, filepath.Join(cf, "acm.0")); err != nil {
+			return fmt.Errorf("gadget: linking serial console: %w", err)
+		}
+	}
 	// Binding the UDC is what makes the gadget go live on the bus.
 	if err := writeAttr(filepath.Join(d, "UDC"), g.cfg.UDC); err != nil {
 		return fmt.Errorf("gadget: binding UDC %q: %w", g.cfg.UDC, err)
@@ -152,13 +175,19 @@ func (g *Gadget) Teardown() error {
 			errs = append(errs, err)
 		}
 	}
-	if err := os.Remove(filepath.Join(d, "configs", "c.1", "mass_storage.0")); err != nil && !errors.Is(err, fs.ErrNotExist) {
-		errs = append(errs, err)
+	// Both function links are removed unconditionally of the current
+	// SerialConsole setting: a gadget left behind by a run that HAD the console
+	// enabled must still be fully cleanable by a run that doesn't.
+	for _, link := range []string{"mass_storage.0", "acm.0"} {
+		if err := os.Remove(filepath.Join(d, "configs", "c.1", link)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			errs = append(errs, err)
+		}
 	}
 	for _, sub := range []string{
 		filepath.Join("configs", "c.1", "strings", "0x409"),
 		filepath.Join("configs", "c.1"),
 		filepath.Join("functions", "mass_storage.0"),
+		filepath.Join("functions", "acm.0"),
 		filepath.Join("strings", "0x409"),
 		"",
 	} {

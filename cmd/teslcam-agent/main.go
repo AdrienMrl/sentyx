@@ -45,10 +45,21 @@ import (
 // time with -ldflags "-X main.version=...".
 var version = "dev"
 
+// gadgetConsoleMarkerPath arms the USB serial console when it exists, as an
+// alternative to -gadget-console. It deliberately lives on the FAT boot
+// partition: that is the only filesystem on the card a macOS or Windows machine
+// can write, so a unit with no network can be made reachable without a Linux
+// host or an existing shell. DEBUG aid — see gadget.Config.SerialConsole for the
+// caveats (passwordless root over USB, composite device the car has not been
+// validated against).
+const gadgetConsoleMarkerPath = "/boot/firmware/teslcam-gadget-console"
+
 func main() {
 	imagePath := flag.String("image", "", "path to the raw exFAT backing image exposed to the car")
 	udc := flag.String("udc", "", "UDC to bind, e.g. fe980000.usb or dummy_udc.0; 'auto' picks the only one in -udc-class")
 	udcClass := flag.String("udc-class", "/sys/class/udc", "UDC class directory scanned by -udc auto")
+	gadgetConsole := flag.Bool("gadget-console", false,
+		"DEBUG: also expose a USB serial console (CDC-ACM) on the gadget port, for shell access to a unit with no network. Makes the device composite; do not use in a vehicle")
 	configfs := flag.String("configfs", "/sys/kernel/config/usb_gadget", "usb_gadget configfs root")
 	gadgetName := flag.String("gadget-name", "teslcam", "gadget directory name inside configfs")
 	interval := flag.Duration("interval", 0, "poll interval, e.g. 2s")
@@ -259,19 +270,34 @@ func main() {
 		}
 	}
 
+	// The serial console can also be armed by a marker file on the FAT boot
+	// partition. This exists because a unit whose only fault is "no network" is
+	// otherwise undebuggable: editing the systemd unit means writing to the ext4
+	// rootfs, which needs a Linux host, while the FAT partition is writable from
+	// any machine that can hold the SD card. Creating the file arms the console,
+	// deleting it disarms it — no unit edit, no shell required.
+	serialConsole := *gadgetConsole
+	if !serialConsole {
+		if _, err := os.Stat(gadgetConsoleMarkerPath); err == nil {
+			log.Printf("gadget: %s present; enabling USB serial console", gadgetConsoleMarkerPath)
+			serialConsole = true
+		}
+	}
+
 	var g *gadget.Gadget
 	if !degraded {
 		var err error
 		g, err = gadget.New(gadget.Config{
-			ConfigFSDir:  *configfs,
-			Name:         *gadgetName,
-			BackingImage: *imagePath,
-			UDC:          udcName,
-			VendorID:     "0x1d6b", // Linux Foundation
-			ProductID:    "0x0104", // Multifunction Composite Gadget
-			Manufacturer: "teslcam",
-			Product:      "TeslaCam Drive",
-			SerialNumber: "teslcam-0001",
+			ConfigFSDir:   *configfs,
+			Name:          *gadgetName,
+			BackingImage:  *imagePath,
+			UDC:           udcName,
+			VendorID:      "0x1d6b", // Linux Foundation
+			ProductID:     "0x0104", // Multifunction Composite Gadget
+			Manufacturer:  "teslcam",
+			Product:       "TeslaCam Drive",
+			SerialNumber:  "teslcam-0001",
+			SerialConsole: serialConsole,
 		})
 		if err != nil {
 			degraded = degrade("invalid configuration: %v", err)
