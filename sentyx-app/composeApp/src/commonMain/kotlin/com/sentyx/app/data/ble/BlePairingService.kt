@@ -77,6 +77,8 @@ class BlePairingService(
     /** Advertisements seen during the most recent scan, keyed by DiscoveredDevice.id. */
     private val discovered = mutableMapOf<String, PlatformAdvertisement>()
 
+    private val bondedDevices = BondedDevices()
+
     private var session: PiBleSession? = null
 
     // ---- Scan ---------------------------------------------------------------
@@ -85,16 +87,37 @@ class BlePairingService(
         send(ScanState.Scanning)
         discovered.clear()
         val found = LinkedHashMap<String, DiscoveredDevice>()
+
+        // Seed from the bond table first, so a previously bonded Pi is offered
+        // even when the scan below fails to match its advertisement (see
+        // [BondedDevices] for why that happens). Without this the user saw an
+        // empty list whose only escape was forgetting the device in system
+        // Bluetooth settings.
+        val bondedIds = mutableSetOf<String>()
+        for (peripheral in bondedDevices.sentyxPeripherals()) {
+            bondedIds += peripheral.identifier
+            found[peripheral.identifier] = DiscoveredDevice(
+                id = peripheral.identifier,
+                name = peripheral.name,
+                subtitle = "Sentyx Pi · already paired with this phone",
+                paired = true,
+            )
+        }
+        if (found.isNotEmpty()) send(ScanState.Found(found.values.toList()))
+
         try {
             withTimeoutOrNull(SCAN_MS) {
                 scanner.advertisements.collect { adv ->
                     val id = adv.identifier.toString()
                     discovered[id] = adv
                     val name = adv.name ?: adv.peripheralName ?: "Sentyx Pi"
+                    // A bonded device that IS advertising replaces its seeded
+                    // entry, keeping the live signal reading and the badge.
                     found[id] = DiscoveredDevice(
                         id = id,
                         name = name,
                         subtitle = "Sentyx Pi · signal ${adv.rssi} dBm",
+                        paired = id in bondedIds,
                     )
                     send(ScanState.Found(found.values.toList()))
                 }
@@ -113,11 +136,40 @@ class BlePairingService(
     override suspend fun beginPairing(device: DiscoveredDevice) {
         cleanup()
         val advertisement = discovered[device.id]
-            ?: fail("That device is no longer nearby. Scan again.")
+        if (advertisement == null && !device.paired) {
+            fail("That device is no longer nearby. Scan again.")
+        }
+
+        // Prefer the live advertisement; a bonded device that has stopped
+        // advertising is connected straight from the bond table instead. A fresh
+        // peripheral is built per call, because the rebond retry below
+        // reconnects after the first one has been closed.
+        suspend fun openSession(): PiBleSession = if (advertisement != null) {
+            PiBleSession.connect(scope, advertisement, device.name)
+        } else {
+            try {
+                PiBleSession.connect(
+                    scope,
+                    bondedDevices.peripheralFor(device.id),
+                    device.id,
+                    device.name,
+                )
+            } catch (e: KCancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                // Unlike an advertisement, a bond says nothing about whether the
+                // Pi is switched on — it outlives the device being unplugged. So
+                // a failure here is nearly always "not powered / out of range",
+                // which the underlying BLE text ("Disconnect detected") does not
+                // convey to anyone.
+                log("bonded connect failed: ${e.message}")
+                fail(unreachableBonded(device.name), e)
+            }
+        }
 
         // Bound the whole connect → (re)bond → authenticate dance.
         val status = withTimeoutOrNull(PAIR_MS) {
-            var s = PiBleSession.connect(scope, advertisement, device.name)
+            var s = openSession()
             session = s
 
             // The first write to an encrypt-write characteristic triggers Just
@@ -134,7 +186,7 @@ class BlePairingService(
             } catch (e: Throwable) {
                 log("begin_pair: first attempt failed (${e.message}); reconnecting after bond")
                 cleanup()
-                s = PiBleSession.connect(scope, advertisement, device.name)
+                s = openSession()
                 session = s
                 s.awaitStatus(OP_MS, ControlOp.beginPair()) {
                     it.state == "authenticated" || it.ok == false
@@ -144,6 +196,12 @@ class BlePairingService(
         if (status == null) {
             log("beginPairing: overall ${PAIR_MS}ms budget exceeded")
             cleanup()
+            // Same reasoning as the bonded connect failure above: for a bonded
+            // device, point at power/range and offer the stale-bond escape
+            // hatch rather than an unqualified "retry".
+            if (advertisement == null) {
+                fail(unreachableBonded(device.name))
+            }
             fail("Pairing took too long. Move closer to the device and retry.")
         }
         if (status.state != "authenticated") {
@@ -310,6 +368,11 @@ class BlePairingService(
 
     private fun fail(message: String, cause: Throwable? = null): Nothing =
         throw PairingException(message, cause)
+
+    /** Copy for a bonded device that didn't answer — see [beginPairing]. */
+    private fun unreachableBonded(name: String): String =
+        "Couldn't reach $name. Check it's powered and in range. If it still " +
+            "fails, forget the device in Bluetooth settings and pair again."
 
     private fun testStepTitle(step: String?): String = when (step) {
         "healthz" -> "Server reachable"

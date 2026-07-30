@@ -120,6 +120,26 @@ private fun FoundState(
     }
 }
 
+/**
+ * Marks a device listed from the OS bond table rather than a live
+ * advertisement, so "it's already paired" reads as a normal state instead of
+ * looking like a duplicate entry.
+ */
+@Composable
+private fun PairedBadge() {
+    val shape = RoundedCornerShape(5.dp)
+    Text(
+        "PAIRED",
+        color = SxColors.Muted,
+        fontSize = 9.sp,
+        fontWeight = FontWeight.Bold,
+        modifier = Modifier
+            .clip(shape)
+            .border(1.dp, SxColors.Border, shape)
+            .padding(horizontal = 5.dp, vertical = 2.dp),
+    )
+}
+
 @Composable
 private fun DeviceRow(device: DiscoveredDevice, onClick: () -> Unit) {
     val shape = RoundedCornerShape(SxDimens.CardRadiusSmall)
@@ -136,7 +156,10 @@ private fun DeviceRow(device: DiscoveredDevice, onClick: () -> Unit) {
     ) {
         SentyxLogo(size = 38.dp)
         Column(Modifier.weight(1f)) {
-            Text(device.name, color = SxColors.Ink, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(device.name, color = SxColors.Ink, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                if (device.paired) PairedBadge()
+            }
             Text(device.subtitle, color = SxColors.Muted, fontSize = 12.sp, modifier = Modifier.padding(top = 2.dp))
         }
         Text("›", color = SxColors.Chevron, fontSize = 18.sp)

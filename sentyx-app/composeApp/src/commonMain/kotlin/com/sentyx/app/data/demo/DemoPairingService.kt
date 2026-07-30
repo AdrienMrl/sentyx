@@ -44,6 +44,7 @@ class DemoPairingService(
                         id = "garage-pi",
                         name = "Garage Pi",
                         subtitle = "Sentyx Pi · signal strong",
+                        paired = false,
                     ),
                 ),
             ),

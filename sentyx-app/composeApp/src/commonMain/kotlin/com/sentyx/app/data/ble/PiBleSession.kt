@@ -272,10 +272,26 @@ internal class PiBleSession private constructor(
             parentScope: CoroutineScope,
             advertisement: PlatformAdvertisement,
             label: String,
+        ): PiBleSession = connect(
+            parentScope = parentScope,
+            peripheral = Peripheral(advertisement),
+            identifier = advertisement.identifier.toString(),
+            label = label,
+        )
+
+        /**
+         * Same as the advertisement overload, for an already-built [peripheral]
+         * — the path used for a device that is bonded but no longer advertising
+         * (see [BondedDevices]). [identifier] is only used for logging.
+         */
+        suspend fun connect(
+            parentScope: CoroutineScope,
+            peripheral: Peripheral,
+            identifier: String,
+            label: String,
         ): PiBleSession {
             val serviceUuid = Uuid.parse(SentyxGatt.SERVICE_UUID)
-            val peripheral = Peripheral(advertisement)
-            log("connect: $label (${advertisement.identifier})")
+            log("connect: $label ($identifier)")
             try {
                 withTimeout(CONNECT_MS) { peripheral.connect() }
                 log("connect: ok")

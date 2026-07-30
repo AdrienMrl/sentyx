@@ -1,7 +1,18 @@
 package com.sentyx.app.domain.model
 
-/** A Sentyx Pi found during BLE scan. */
-data class DiscoveredDevice(val id: String, val name: String, val subtitle: String)
+/**
+ * A Sentyx Pi offered as a pairing target.
+ *
+ * [paired] marks a device that is already bonded to this phone. Those are
+ * surfaced even when they no longer advertise, and are connected directly by
+ * identifier rather than from a live advertisement.
+ */
+data class DiscoveredDevice(
+    val id: String,
+    val name: String,
+    val subtitle: String,
+    val paired: Boolean,
+)
 
 sealed interface ScanState {
     data object Scanning : ScanState
