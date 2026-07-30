@@ -17,23 +17,35 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
-/** Dark ink pill, the app's primary call to action. Full-width by default. */
+/**
+ * Dark ink pill, the app's primary call to action. Full-width by default.
+ * When [enabled] is false the pill dims and ignores taps — callers whose
+ * action has a precondition (a selection, a filled field) gate here instead of
+ * crashing in the handler.
+ */
 @Composable
 fun SxPrimaryButton(
     text: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    enabled: Boolean = true,
 ) {
     Box(
         modifier = modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(SxDimens.ButtonRadius))
-            .background(SxColors.Ink)
-            .clickable(onClick = onClick)
+            .background(if (enabled) SxColors.Ink else SxColors.Border)
+            .clickable(enabled = enabled, onClick = onClick)
             .padding(vertical = SxDimens.PrimaryButtonVPadding),
         contentAlignment = Alignment.Center,
     ) {
-        Text(text, color = SxColors.OnInk, fontSize = 15.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
+        Text(
+            text,
+            color = if (enabled) SxColors.OnInk else SxColors.Muted,
+            fontSize = 15.sp,
+            fontWeight = FontWeight.Bold,
+            textAlign = TextAlign.Center,
+        )
     }
 }
 

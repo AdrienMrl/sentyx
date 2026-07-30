@@ -205,10 +205,17 @@ class PairingViewModel(
 
     fun connectWifi() {
         val s = _state.value
+        // The Connect button is disabled until a network is selected, so a null
+        // here is a UI wiring bug — keep it loud.
         val ssid = s.selectedSsid ?: error("connectWifi called with no selected network")
-        val net = s.wifiNetworks.first { it.ssid == ssid }
+        // The selected network CAN legitimately vanish from the list (a rescan
+        // between selection and tap); wifi ops are fire-and-forget by design, so
+        // fall back to sending the password we have rather than crashing — the
+        // connection test surfaces any real failure.
+        val net = s.wifiNetworks.firstOrNull { it.ssid == ssid }
+        val password = if (net == null || net.requiresPassword) s.wifiPassword else null
         viewModelScope.launch {
-            pairing.connectWifi(ssid, if (net.requiresPassword) s.wifiPassword else null)
+            pairing.connectWifi(ssid, password?.ifBlank { null })
         }
     }
 

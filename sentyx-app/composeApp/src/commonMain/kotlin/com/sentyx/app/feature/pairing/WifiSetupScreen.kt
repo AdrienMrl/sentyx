@@ -68,10 +68,16 @@ fun WifiSetupScreen(
         }
         Spacer(Modifier.weight(1f))
         Column(verticalArrangement = Arrangement.spacedBy(10.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            SxPrimaryButton("Connect", onClick = {
-                vm.connectWifi()
-                onContinue()
-            })
+            // Disabled until a network is picked: connectWifi() treats a missing
+            // selection as an invariant violation (it throws), so the gate is here.
+            SxPrimaryButton(
+                "Connect",
+                enabled = state.selectedSsid != null,
+                onClick = {
+                    vm.connectWifi()
+                    onContinue()
+                },
+            )
             Text(
                 "Skip — use Bluetooth only",
                 color = SxColors.Muted,
