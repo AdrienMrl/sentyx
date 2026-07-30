@@ -54,6 +54,7 @@ class PairingViewModel(
 
     private var scanJob: Job? = null
     private var testJob: Job? = null
+    private var wifiLoadJob: Job? = null
 
     // ---- Permissions --------------------------------------------------------
 
@@ -168,9 +169,15 @@ class PairingViewModel(
 
     // ---- Wi-Fi --------------------------------------------------------------
 
-    /** Load visible networks and auto-select the first one (matching the design). */
+    /**
+     * Load visible networks and auto-select the first one (matching the design).
+     * Single-flight: the device processes one Wi-Fi command at a time and rejects
+     * an overlapping one (seen in the field as GATT error 128 when a recomposition
+     * re-fired the load 60 ms after the first), so a load already in progress wins.
+     */
     fun loadNetworks() {
-        viewModelScope.launch {
+        if (wifiLoadJob?.isActive == true) return
+        wifiLoadJob = viewModelScope.launch {
             val nets = pairing.availableNetworks()
             _state.update { s ->
                 val first = nets.firstOrNull()

@@ -81,6 +81,10 @@ class BlePairingService(
 
     private var session: PiBleSession? = null
 
+    /** Set by [configure], committed to [store] by [completePairing] — see configure. */
+    private var pendingDeviceId: String? = null
+    private var pendingDeviceName: String? = null
+
     // ---- Scan ---------------------------------------------------------------
 
     override fun scan(): Flow<ScanState> = channelFlow {
@@ -254,10 +258,16 @@ class BlePairingService(
             fail(status.detail ?: "The device rejected the configuration.")
         }
 
-        // Remember which device was onboarded so the home screen can poll its
-        // real status after pairing (RealDeviceRepository reads these keys).
-        store.putString(StorageKeys.DEVICE_ID, s.deviceId)
-        store.putString(StorageKeys.DEVICE_NAME, deviceName)
+        // Deliberately NOT stored here: config_saved is in-memory on the device —
+        // it only persists after the connection test passes, and the device only
+        // becomes provisioned at `complete`. Recording DEVICE_ID this early made
+        // an onboarding that died between here and completePairing (seen in the
+        // field: the app crashed on the Wi-Fi screen) leave the app in manage
+        // mode against a device that never provisioned, where every begin_manage
+        // is correctly rejected ("requires a provisioned device"). The keys are
+        // stored in completePairing instead.
+        pendingDeviceId = s.deviceId
+        pendingDeviceName = deviceName
     }
 
     // Wi-Fi setup rides the already-authenticated pairing session (begin_pair
@@ -353,6 +363,11 @@ class BlePairingService(
         } finally {
             cleanup()
         }
+        // Only now is the device provisioned (config persisted by the passed
+        // connection test, agent restarting into provisioned mode), so only now
+        // does the app record it as onboarded (RealDeviceRepository reads these).
+        pendingDeviceId?.let { store.putString(StorageKeys.DEVICE_ID, it) }
+        pendingDeviceName?.let { store.putString(StorageKeys.DEVICE_NAME, it) }
     }
 
     // ---- Internals ----------------------------------------------------------
