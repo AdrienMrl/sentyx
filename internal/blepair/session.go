@@ -272,7 +272,13 @@ func (s *session) handleWifiCommand(payload []byte) error {
 
 	s.mu.Lock()
 	switch {
-	case s.state != stateAuthenticated:
+	// config_saved must be accepted alongside authenticated: the onboarding
+	// UI runs Wi-Fi setup AFTER the config write, so during onboarding the
+	// session is always in config_saved by the time the first scan arrives.
+	// Requiring authenticated alone made every onboarding Wi-Fi scan fail
+	// "not authenticated" (management sessions were unaffected — begin_manage
+	// parks in authenticated, which is why only onboarding broke).
+	case s.state != stateAuthenticated && s.state != stateConfigSaved:
 		s.mu.Unlock()
 		s.notifyWifi(cmd.Op, s.wifiFail(cmd.Op, "not authenticated"))
 		return fmt.Errorf("blepair: wifi: not authenticated")

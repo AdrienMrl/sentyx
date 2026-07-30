@@ -343,6 +343,28 @@ func TestWifiStatusRoundTrip(t *testing.T) {
 	}
 }
 
+// The onboarding UI runs Wi-Fi setup after the config write, so the session is
+// in config_saved by the time the first scan arrives — it must be accepted
+// there, not only in authenticated (regression: every onboarding Wi-Fi scan
+// failed "not authenticated" while management sessions worked).
+func TestWifiAllowedAfterConfigSaved(t *testing.T) {
+	h := newHarness(t)
+	h.control(t, `{"op":"begin_pair"}`)
+	if err := h.writeConfig(t, validConfigJSON()); err != nil {
+		t.Fatal(err)
+	}
+	if got := h.lastState(t); got != stateConfigSaved {
+		t.Fatalf("state before wifi = %s, want config_saved", got)
+	}
+	if err := h.writeWifi(t, `{"v":1,"op":"status"}`); err != nil {
+		t.Fatalf("wifi command in config_saved rejected: %v", err)
+	}
+	resp := h.nextWifiResponse(t)
+	if resp["ok"] != true {
+		t.Fatalf("wifi response in config_saved = %v", resp)
+	}
+}
+
 func TestWifiRequiresAuthentication(t *testing.T) {
 	h := newHarness(t)
 	// No begin_pair/begin_manage: the session is idle.
