@@ -41,7 +41,29 @@ type Config struct {
 	// the car has been validated against. Leave it off for anything plugged into
 	// a vehicle.
 	SerialConsole bool
+
+	// USBEthernet adds a CDC-ECM function, so the same USB cable that carries
+	// the drive also carries an IP link to whatever host it is plugged into.
+	// This is the development loop: a fix to this agent becomes a build and an
+	// scp to a unit that has never been onboarded and has no Wi-Fi, instead of a
+	// twenty-minute image rebuild and a card swap. Both ends self-assign
+	// (IPv4LL + IPv6 link-local) and the Pi answers to <hostname>.local over
+	// mDNS, so nothing has to be configured on the host.
+	//
+	// Opt-in and DEBUG-ONLY for the same reason as SerialConsole — it makes the
+	// device composite — plus one of its own: an unauthenticated Ethernet link
+	// to anything the unit is plugged into. Never in a vehicle.
+	USBEthernet bool
 }
+
+// Stable locally-administered MACs for the CDC-ECM link. Fixed rather than
+// random because macOS keys a network service (and its stored settings) to the
+// interface's MAC: a new one on every boot would litter the host with dead
+// "USB 10/100 LAN" services and force it to re-learn the link each time.
+const (
+	ecmDevAddr  = "02:5e:5c:00:00:01" // the Pi's end (usb0)
+	ecmHostAddr = "02:5e:5c:00:00:02" // the host's end
+)
 
 // Gadget manages one configfs mass-storage gadget.
 type Gadget struct {
@@ -152,6 +174,25 @@ func (g *Gadget) build() error {
 			return fmt.Errorf("gadget: linking serial console: %w", err)
 		}
 	}
+	if g.cfg.USBEthernet {
+		ecm := filepath.Join(d, "functions", "ecm.0")
+		if err := os.MkdirAll(ecm, 0o755); err != nil {
+			return fmt.Errorf("gadget: usb ethernet function: %w", err)
+		}
+		// Written before the link: configfs rejects attribute writes to a
+		// function that is already bound into a live configuration.
+		for _, a := range []struct{ file, value string }{
+			{filepath.Join(ecm, "dev_addr"), ecmDevAddr},
+			{filepath.Join(ecm, "host_addr"), ecmHostAddr},
+		} {
+			if err := writeAttr(a.file, a.value); err != nil {
+				return fmt.Errorf("gadget: usb ethernet address: %w", err)
+			}
+		}
+		if err := os.Symlink(ecm, filepath.Join(cf, "ecm.0")); err != nil {
+			return fmt.Errorf("gadget: linking usb ethernet: %w", err)
+		}
+	}
 	// Binding the UDC is what makes the gadget go live on the bus.
 	if err := writeAttr(filepath.Join(d, "UDC"), g.cfg.UDC); err != nil {
 		return fmt.Errorf("gadget: binding UDC %q: %w", g.cfg.UDC, err)
@@ -175,10 +216,10 @@ func (g *Gadget) Teardown() error {
 			errs = append(errs, err)
 		}
 	}
-	// Both function links are removed unconditionally of the current
-	// SerialConsole setting: a gadget left behind by a run that HAD the console
-	// enabled must still be fully cleanable by a run that doesn't.
-	for _, link := range []string{"mass_storage.0", "acm.0"} {
+	// Every function link is removed regardless of the current SerialConsole /
+	// USBEthernet settings: a gadget left behind by a run that HAD them enabled
+	// must still be fully cleanable by a run that doesn't.
+	for _, link := range []string{"mass_storage.0", "acm.0", "ecm.0"} {
 		if err := os.Remove(filepath.Join(d, "configs", "c.1", link)); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			errs = append(errs, err)
 		}
@@ -188,6 +229,7 @@ func (g *Gadget) Teardown() error {
 		filepath.Join("configs", "c.1"),
 		filepath.Join("functions", "mass_storage.0"),
 		filepath.Join("functions", "acm.0"),
+		filepath.Join("functions", "ecm.0"),
 		filepath.Join("strings", "0x409"),
 		"",
 	} {

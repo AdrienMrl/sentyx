@@ -44,8 +44,9 @@ type sessionDeps struct {
 	Tester     connTester
 	Restart    func() // invoked after the final done notify
 	Notify     func(Status)
-	NotifyWifi func([]byte) // pushes one framed Wi-Fi result chunk
-	Wifi       wifi.Manager // nil when Wi-Fi management is unavailable
+	NotifyWifi func([]byte)  // pushes one framed Wi-Fi result chunk
+	Wifi       wifi.Manager  // nil when Wi-Fi management is unavailable
+	Health     func() Health // nil omits the inline health summary
 	Logf       func(format string, args ...any)
 	Identity   deviceInfo
 }
@@ -78,6 +79,10 @@ func (s *session) DeviceInfo() []byte {
 	info := s.deps.Identity
 	info.V = protocolVersion
 	info.State = s.state
+	if s.deps.Health != nil {
+		h := s.deps.Health()
+		info.Health = &h
+	}
 	b, _ := json.Marshal(info)
 	return b
 }

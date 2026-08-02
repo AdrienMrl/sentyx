@@ -186,8 +186,12 @@ apt-get update -qq
 # UART-connected Bluetooth module and brings up hci0; without it there is no
 # hci0, so BLE onboarding fails silently and a fresh unit is unreachable.
 # Found the hard way on the first field flash (2026-07).
+# avahi-daemon is what makes the USB dev link usable with zero host setup: the
+# unit answers to <hostname>.local over mDNS on usb0, so ssh/scp work without
+# DHCP, without a static address on the host, and without knowing an IP.
 apt-get install -y --no-install-recommends \
   ffmpeg exfatprogs bluez pi-bluetooth network-manager wireguard-tools \
+  avahi-daemon \
   cmake g++ make libopencv-dev
 
 # Camera scorer, built against this image's own OpenCV so .so versions match.
@@ -235,6 +239,67 @@ rm -f /etc/ssh/sshd_config.d/rename_user.conf
 cat > /etc/udev/rules.d/90-teslcam-rfkill-unblock.rules <<'RFKILL'
 ACTION=="add", SUBSYSTEM=="rfkill", RUN+="/usr/sbin/rfkill unblock all"
 RFKILL
+
+# Unblocking rfkill is necessary but NOT sufficient, which cost a full day of
+# debugging on the first field unit: NetworkManager keeps its OWN software
+# switch, and when it starts while Wi-Fi is still rfkill-blocked it records
+# WirelessEnabled=false in /var/lib/NetworkManager/NetworkManager.state and
+# never revisits that decision. The udev rule above then lifts the block, and
+# the symptom is a unit whose radio is perfectly healthy (`rfkill list` clean,
+# phy0 present) while `nmcli dev wifi list` returns an EMPTY LIST WITHOUT AN
+# ERROR — so the app shows no networks to join and onboarding is impossible.
+#
+# Turning the switch back on every boot is idempotent and self-healing: it also
+# repairs a unit that already persisted false, which pre-seeding the state file
+# alone would not.
+cat > /etc/systemd/system/teslcam-wifi-enable.service <<'WIFIENABLE'
+[Unit]
+Description=teslcam: ensure NetworkManager's Wi-Fi radio switch is on
+After=NetworkManager.service
+Wants=NetworkManager.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/nmcli radio wifi on
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+WIFIENABLE
+systemctl enable teslcam-wifi-enable.service
+
+# NetworkManager's own 85-nm-unmanaged.rules marks every DEVTYPE=gadget
+# interface unmanaged ("whatever created it presumably manages it"), which
+# includes the usb0 of our CDC-ECM dev link. Two things are needed, and the
+# second is not obvious: NM will not activate a profile on a device with no
+# carrier, and an ECM gadget has no carrier until its interface is brought up —
+# so without the RUN+= the device sits "unavailable" forever and the link never
+# forms. 86- so it is parsed after NetworkManager's own rule.
+cat > /etc/udev/rules.d/86-teslcam-usb0-managed.rules <<'USB0'
+ACTION=="add|change", SUBSYSTEM=="net", KERNEL=="usb0", ENV{NM_UNMANAGED}="0", RUN+="/usr/sbin/ip link set usb0 up"
+USB0
+
+# The USB serial console (agent -gadget-console, or the
+# /boot/firmware/teslcam-gadget-console marker) exposes a CDC-ACM port, but a
+# port with nothing listening on it is a dead terminal: something has to put a
+# getty on /dev/ttyGS0. It cannot be enabled the usual way — ttyGS0 does not
+# exist at boot, it appears only when the agent arms the composite gadget — so
+# the getty is started by udev the moment the device shows up.
+#
+# Autologin, because this is the escape hatch for a unit with no network and
+# the admin account is deliberately SSH-key-only with a locked password: a
+# login prompt here would be unanswerable. That makes the console passwordless
+# root over USB, which is why it stays opt-in and DEBUG-ONLY (see
+# gadget.Config.SerialConsole) and must never be armed in a vehicle.
+cat > /etc/udev/rules.d/90-teslcam-gadget-console.rules <<'GETTY'
+ACTION=="add", SUBSYSTEM=="tty", KERNEL=="ttyGS0", TAG+="systemd", ENV{SYSTEMD_WANTS}+="serial-getty@ttyGS0.service"
+GETTY
+mkdir -p /etc/systemd/system/serial-getty@ttyGS0.service.d
+cat > /etc/systemd/system/serial-getty@ttyGS0.service.d/10-teslcam-autologin.conf <<'AUTOLOGIN'
+[Service]
+ExecStart=
+ExecStart=-/sbin/agetty --autologin root --noclear --keep-baud %I 115200,38400,9600 $TERM
+AUTOLOGIN
 
 # NOTE the 99- prefix: Pi OS ships
 # /usr/lib/systemd/journald.conf.d/40-rpi-volatile-storage.conf with
@@ -485,6 +550,34 @@ routing-rule1=priority 30100 from 192.168.8.0/24 table 101
 method=disabled
 NMCONN
 chmod 600 /etc/NetworkManager/system-connections/lte-dongle.nmconnection
+# The USB dev link (agent -gadget-net, or the /boot/firmware/teslcam-gadget-net
+# marker). usb0 appears only when the agent arms the CDC-ECM function, so this
+# profile just waits for it.
+#
+# Link-local on both families and never-default: the host on the other end of
+# that cable is a laptop, and a DHCP-style profile could put a default route or
+# a DNS server from an untrusted machine onto a unit that is also holding an
+# LTE SIM. IPv4LL + mDNS is all ssh needs, and it costs the host nothing.
+cat > /etc/NetworkManager/system-connections/usb-gadget.nmconnection <<'USBNM'
+[connection]
+id=usb-gadget
+uuid=3f9a1c74-6e2b-4d55-9a10-7c4e2b8f0d31
+type=ethernet
+interface-name=usb0
+autoconnect-priority=20
+
+[ipv4]
+method=link-local
+never-default=true
+ignore-auto-dns=true
+
+[ipv6]
+method=link-local
+never-default=true
+ignore-auto-dns=true
+USBNM
+chmod 600 /etc/NetworkManager/system-connections/usb-gadget.nmconnection
+
 cat > /etc/NetworkManager/conf.d/teslcam-lte.conf <<'NMCONF'
 [main]
 # Never auto-generate a "Wired connection" profile for the LTE dongle: that

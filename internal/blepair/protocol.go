@@ -28,19 +28,65 @@ const (
 	UUIDConfig     = "7a65f004-53e1-4b2e-9f5a-1c29b3e60001" // Write (encrypted, framed)
 	UUIDWifiCmd    = "7a65f005-53e1-4b2e-9f5a-1c29b3e60001" // Write (encrypted, framed)
 	UUIDWifiResult = "7a65f006-53e1-4b2e-9f5a-1c29b3e60001" // Read+Notify (encrypted, framed)
+	UUIDHealth     = "7a65f007-53e1-4b2e-9f5a-1c29b3e60001" // Read (plain)
 )
+
+// Health is the plain-readable self-test characteristic: what a unit can say
+// about itself without any pairing.
+//
+// It exists because every other diagnostic path costs a bond. The onboarding
+// characteristics are encrypted, so reading them makes the host store a key —
+// and an unprovisioned unit wipes its own bond store on every agent start
+// (see blepair.go), so that key is stale by the next run. A health check built
+// on the encrypted path therefore either fails or leaves a trail of dead
+// pairings on every machine that ever probed a unit. This one is readable on a
+// bare connection: connect, read, disconnect, nothing stored anywhere.
+//
+// Deliberately no SSIDs, no tokens, no addresses — counts and booleans only.
+// It is readable by any device in radio range, so it must stay a health
+// summary and never become an information source.
+type Health struct {
+	V           int    `json:"v"`
+	Agent       string `json:"agent"`
+	Provisioned bool   `json:"provisioned"`
+	UptimeSec   int64  `json:"uptimeSec"`
+
+	// WifiRadio is NetworkManager's software switch, the exact thing that
+	// silently disabled onboarding on the first field unit: rfkill clean, radio
+	// healthy, and every scan returning an empty list with no error.
+	WifiRadio bool   `json:"wifiRadio"`
+	WifiSSIDs int    `json:"wifiSsids"` // networks seen in the last scan
+	WifiState string `json:"wifiState"` // free-form, e.g. "connected", "disconnected"
+	// WifiAgeSec is how old the Wi-Fi observation is. The unit refreshes it in
+	// the background rather than scanning on demand, so a reader can tell a
+	// current answer from a stale one instead of assuming freshness.
+	WifiAgeSec int64 `json:"wifiAgeSec"`
+
+	// GadgetBound is the UDC the mass-storage gadget is bound to ("" = not
+	// bound, i.e. the car would see no drive at all).
+	GadgetBound string `json:"gadgetBound"`
+	BackingMB   int64  `json:"backingMb"`
+}
 
 const protocolVersion = 1
 
 // deviceInfo is the plain-readable identity characteristic, small enough to
 // fit a single unfragmented read at any MTU.
+// It also carries the Health summary inline. That duplication is deliberate:
+// hosts cache a peripheral's characteristic list against its address, and a
+// unit's address survives reflashing, so a host that met an older install
+// keeps serving that old list and never sees a characteristic added later —
+// with no supported way to invalidate the cache on macOS. DeviceInfo is in
+// every cache already, so health carried here reaches hosts that would never
+// discover UUIDHealth.
 type deviceInfo struct {
-	V           int    `json:"v"`
-	DeviceID    string `json:"deviceId"`
-	HW          string `json:"hw"`
-	Agent       string `json:"agent"`
-	Provisioned bool   `json:"provisioned"`
-	State       string `json:"state"`
+	V           int     `json:"v"`
+	DeviceID    string  `json:"deviceId"`
+	HW          string  `json:"hw"`
+	Agent       string  `json:"agent"`
+	Provisioned bool    `json:"provisioned"`
+	State       string  `json:"state"`
+	Health      *Health `json:"health,omitempty"`
 }
 
 // controlMsg is one command written to the Control characteristic.

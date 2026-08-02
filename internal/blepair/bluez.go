@@ -50,6 +50,18 @@ func (c *characteristic) ReadValue(options map[string]dbus.Variant) ([]byte, *db
 		return nil, dbus.NewError("org.bluez.Error.NotPermitted", nil)
 	}
 	v := c.read()
+	// Long reads: anything larger than the negotiated MTU minus one arrives as
+	// a Read Request followed by Read Blob Requests, and BlueZ passes the byte
+	// offset of each. Ignoring it returns the value from the start every time,
+	// so a client assembling the blobs gets the head of the value repeated
+	// instead of its tail — silent corruption that only appears once a value
+	// grows past the MTU, which is exactly what happens as fields are added.
+	if off, ok := options["offset"].Value().(uint16); ok && off > 0 {
+		if int(off) >= len(v) {
+			return []byte{}, nil
+		}
+		v = v[off:]
+	}
 	c.server.logf("blepair: gatt: read %s -> %d bytes", c.uuid, len(v))
 	return v, nil
 }

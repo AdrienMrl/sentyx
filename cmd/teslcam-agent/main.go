@@ -25,6 +25,8 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -54,12 +56,21 @@ var version = "dev"
 // validated against).
 const gadgetConsoleMarkerPath = "/boot/firmware/teslcam-gadget-console"
 
+// gadgetNetMarkerPath arms the USB ethernet link (CDC-ECM), the same way and
+// for the same reason as gadgetConsoleMarkerPath: creating one file on the FAT
+// boot partition, from any machine that can hold the card, turns a unit that
+// has never been onboarded into one reachable by ssh/scp over its USB cable.
+// DEBUG aid — see gadget.Config.USBEthernet.
+const gadgetNetMarkerPath = "/boot/firmware/teslcam-gadget-net"
+
 func main() {
 	imagePath := flag.String("image", "", "path to the raw exFAT backing image exposed to the car")
 	udc := flag.String("udc", "", "UDC to bind, e.g. fe980000.usb or dummy_udc.0; 'auto' picks the only one in -udc-class")
 	udcClass := flag.String("udc-class", "/sys/class/udc", "UDC class directory scanned by -udc auto")
 	gadgetConsole := flag.Bool("gadget-console", false,
 		"DEBUG: also expose a USB serial console (CDC-ACM) on the gadget port, for shell access to a unit with no network. Makes the device composite; do not use in a vehicle")
+	gadgetNet := flag.Bool("gadget-net", false,
+		"DEBUG: also expose a USB ethernet link (CDC-ECM) on the gadget port, so the unit is reachable by ssh/scp over the USB cable with no Wi-Fi. Makes the device composite; do not use in a vehicle")
 	configfs := flag.String("configfs", "/sys/kernel/config/usb_gadget", "usb_gadget configfs root")
 	gadgetName := flag.String("gadget-name", "teslcam", "gadget directory name inside configfs")
 	interval := flag.Duration("interval", 0, "poll interval, e.g. 2s")
@@ -216,6 +227,8 @@ func main() {
 	// nmcli manager is constructed here (harmless on any OS); it only does I/O
 	// on the Pi, where NetworkManager runs.
 	if *bleOnboard {
+		wifiHealth := &wifiHealthCache{}
+		go wifiHealth.run(ctx, time.Minute)
 		go func() {
 			err := blepair.Run(ctx, blepair.Config{
 				Adapter:      *bleAdapter,
@@ -225,6 +238,7 @@ func main() {
 				AgentVersion: version,
 				ConfigDir:    *bleConfigDir,
 				Wifi:         wifi.NewNMCLI(),
+				HealthFunc:   func() blepair.Health { return agentHealth(wifiHealth, *imagePath, *configfs, *gadgetName) },
 				Restart: func() {
 					if err := exec.Command("systemctl", "restart", "teslcam-agent").Run(); err != nil {
 						log.Printf("blepair: restart teslcam-agent: %v", err)
@@ -283,6 +297,13 @@ func main() {
 			serialConsole = true
 		}
 	}
+	usbEthernet := *gadgetNet
+	if !usbEthernet {
+		if _, err := os.Stat(gadgetNetMarkerPath); err == nil {
+			log.Printf("gadget: %s present; enabling USB ethernet link", gadgetNetMarkerPath)
+			usbEthernet = true
+		}
+	}
 
 	var g *gadget.Gadget
 	if !degraded {
@@ -298,6 +319,7 @@ func main() {
 			Product:       "TeslaCam Drive",
 			SerialNumber:  "teslcam-0001",
 			SerialConsole: serialConsole,
+			USBEthernet:   usbEthernet,
 		})
 		if err != nil {
 			degraded = degrade("invalid configuration: %v", err)
@@ -481,4 +503,99 @@ func main() {
 	if runErr != nil {
 		log.Fatal(runErr)
 	}
+}
+
+// wifiHealthCache holds the most recent Wi-Fi observation for the BLE health
+// characteristic. The characteristic is readable by anyone in radio range and
+// is polled by every health check, so the read itself must be free: scanning on
+// demand would take seconds and, worse, force the radio off-channel — briefly
+// disturbing the very Wi-Fi link the unit depends on to upload. A background
+// refresh keeps the answer recent instead.
+type wifiHealthCache struct {
+	mu      sync.Mutex
+	radio   bool
+	ssids   int
+	state   string
+	stamped time.Time
+}
+
+func (c *wifiHealthCache) snapshot() (radio bool, ssids int, state string, age time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.stamped.IsZero() {
+		return false, 0, "unknown", 0
+	}
+	return c.radio, c.ssids, c.state, time.Since(c.stamped)
+}
+
+func (c *wifiHealthCache) refresh(ctx context.Context) {
+	mgr := wifi.NewNMCLI()
+	radio := false
+	if out, err := exec.CommandContext(ctx, "nmcli", "radio", "wifi").Output(); err == nil {
+		radio = strings.TrimSpace(string(out)) == "enabled"
+	}
+	state := "unknown"
+	if st, err := mgr.Status(ctx); err == nil {
+		state = "disconnected"
+		if st.Current != nil {
+			state = "connected"
+		}
+	}
+	ssids := 0
+	if nets, err := mgr.Scan(ctx); err == nil {
+		ssids = len(nets)
+	}
+	c.mu.Lock()
+	c.radio, c.ssids, c.state, c.stamped = radio, ssids, state, time.Now()
+	c.mu.Unlock()
+}
+
+// run refreshes the cache until ctx ends. The first pass is immediate so a unit
+// that has just booted can answer a health check straight away.
+func (c *wifiHealthCache) run(ctx context.Context, every time.Duration) {
+	for {
+		func() {
+			opCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
+			defer cancel()
+			c.refresh(opCtx)
+		}()
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(every):
+		}
+	}
+}
+
+// agentHealth renders the plain-readable self-test served over BLE
+// (blepair.Health) from the cached Wi-Fi observation plus two cheap local
+// facts. It is called from the GATT thread by a caller that has not paired
+// with us, so it does no I/O beyond two stat-like reads.
+//
+// The Wi-Fi fields are the point of the whole characteristic. A unit whose
+// NetworkManager radio switch is off looks perfectly healthy from the outside —
+// rfkill clean, hci0 up, agent running — while every scan returns an empty list
+// with no error, so onboarding can never offer a network to join. Publishing
+// the switch and the last scan count makes that state visible without pairing.
+func agentHealth(cache *wifiHealthCache, imagePath, configfsDir, gadgetName string) blepair.Health {
+	h := blepair.Health{}
+	radio, ssids, state, age := cache.snapshot()
+	h.WifiRadio, h.WifiSSIDs, h.WifiState = radio, ssids, state
+	if age > 0 {
+		h.WifiAgeSec = int64(age.Seconds())
+	}
+
+	if g, err := gadget.New(gadget.Config{
+		ConfigFSDir: configfsDir, Name: gadgetName, BackingImage: imagePath,
+		UDC: "unused", VendorID: "0x1d6b", ProductID: "0x0104",
+		Manufacturer: "teslcam", Product: "TeslaCam Drive", SerialNumber: "teslcam-0001",
+	}); err == nil {
+		if bound, err := g.BoundUDC(); err == nil {
+			h.GadgetBound = bound
+		}
+	}
+	if fi, err := os.Stat(imagePath); err == nil {
+		h.BackingMB = fi.Size() / (1024 * 1024)
+	}
+	return h
 }

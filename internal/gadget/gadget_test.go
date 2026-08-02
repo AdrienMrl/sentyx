@@ -115,6 +115,52 @@ func TestSetupWritesConfigFSTree(t *testing.T) {
 	}
 }
 
+// The debug functions are what make a unit with no network reachable at all,
+// so their wiring is worth pinning: both are linked into the live config, the
+// ECM MACs are fixed (the host keys a network service to them), and a teardown
+// by a run that does NOT have them enabled still removes everything.
+func TestSetupWiresCompositeDebugFunctions(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.SerialConsole = true
+	cfg.USBEthernet = true
+	g := mustNew(t, cfg)
+	if err := g.Setup(); err != nil {
+		t.Fatal(err)
+	}
+	d := filepath.Join(cfg.ConfigFSDir, cfg.Name)
+
+	for _, fn := range []string{"acm.0", "ecm.0"} {
+		link := filepath.Join(d, "configs", "c.1", fn)
+		target, err := os.Readlink(link)
+		if err != nil {
+			t.Fatalf("%s not linked into the config: %v", fn, err)
+		}
+		if want := filepath.Join(d, "functions", fn); target != want {
+			t.Errorf("%s -> %q, want %q", fn, target, want)
+		}
+	}
+	for path, want := range map[string]string{
+		"functions/ecm.0/dev_addr":  ecmDevAddr,
+		"functions/ecm.0/host_addr": ecmHostAddr,
+	} {
+		if got := readAttr(t, filepath.Join(d, path)); got != want {
+			t.Errorf("%s = %q, want %q", path, got, want)
+		}
+	}
+
+	// Same gadget, same configfs root — only the debug flags differ.
+	plainCfg := cfg
+	plainCfg.SerialConsole = false
+	plainCfg.USBEthernet = false
+	plain := mustNew(t, plainCfg)
+	if err := plain.Teardown(); err != nil {
+		t.Fatalf("teardown by a run without the debug functions: %v", err)
+	}
+	if _, err := os.Stat(d); !os.IsNotExist(err) {
+		t.Errorf("gadget dir still present after teardown: %v", err)
+	}
+}
+
 func TestSetupFailsIfBackingImageMissing(t *testing.T) {
 	cfg := testConfig(t)
 	cfg.BackingImage = filepath.Join(t.TempDir(), "nope.img")

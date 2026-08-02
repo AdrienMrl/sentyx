@@ -5,11 +5,35 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/godbus/dbus/v5"
 
 	"github.com/AdrienMrl/teslcam/internal/wifi"
 )
+
+// healthValue renders the plain Health characteristic. Whatever the supplied
+// HealthFunc does not know, this fills in from what the BLE service itself is
+// certain of, so the characteristic never answers an empty object.
+func healthValue(cfg Config, provisioned bool, started time.Time) []byte {
+	h := healthOf(cfg, provisioned, started)
+	b, _ := json.Marshal(h)
+	return b
+}
+
+// healthOf builds the self-test summary served both as its own characteristic
+// and inline in DeviceInfo.
+func healthOf(cfg Config, provisioned bool, started time.Time) Health {
+	var h Health
+	if cfg.HealthFunc != nil {
+		h = cfg.HealthFunc()
+	}
+	h.V = protocolVersion
+	h.Agent = cfg.AgentVersion
+	h.Provisioned = provisioned
+	h.UptimeSec = int64(time.Since(started).Seconds())
+	return h
+}
 
 // Config configures the BLE service. All fields are required except Wifi.
 type Config struct {
@@ -28,6 +52,12 @@ type Config struct {
 	// Restart applies persisted config, typically exec'ing
 	// "systemctl restart teslcam-agent". Required.
 	Restart func()
+
+	// HealthFunc supplies the plain-readable self-test (see Health). Nil
+	// serves only what this package already knows, which still answers the
+	// question a health check most needs: is the radio there and is the agent
+	// the version I flashed.
+	HealthFunc func() Health
 
 	Logf func(format string, args ...any)
 }
@@ -60,6 +90,7 @@ func Run(ctx context.Context, cfg Config) error {
 		return err
 	}
 	store := &fileConfigStore{dir: cfg.ConfigDir, deviceID: cfg.DeviceID}
+	started := time.Now()
 	provisioned := false
 	if _, err := os.Stat(store.TokenPath()); err == nil {
 		provisioned = true
@@ -81,6 +112,7 @@ func Run(ctx context.Context, cfg Config) error {
 		Tester:  newHTTPConnTester(),
 		Wifi:    cfg.Wifi,
 		Restart: cfg.Restart,
+		Health:  func() Health { return healthOf(cfg, provisioned, started) },
 		Logf:    cfg.Logf,
 		Notify: func(st Status) {
 			b, _ := json.Marshal(st)
@@ -110,6 +142,10 @@ func Run(ctx context.Context, cfg Config) error {
 			write: sess.HandleWifiFrame, server: g},
 		{path: servicePath + "/char5", uuid: UUIDWifiResult, flags: []string{"encrypt-read", "notify"},
 			read: sess.WifiResultValue, server: g},
+		// Plain read, like DeviceInfo: a health check must be able to ask a unit
+		// how it is without pairing with it (see Health).
+		{path: servicePath + "/char6", uuid: UUIDHealth, flags: []string{"read"},
+			read: func() []byte { return healthValue(cfg, provisioned, started) }, server: g},
 	}
 
 	adv := &advertisement{name: cfg.Name, logf: cfg.Logf}
