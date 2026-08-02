@@ -498,34 +498,6 @@ func (g *gattServer) watchLegacyAdv(ctx context.Context) {
 	}()
 }
 
-// initiatePairing asks BlueZ to bond with a freshly connected central, from
-// the peripheral side.
-//
-// A central pairing with this unit for the first time gets no further than the
-// Pairing Response: it sends its request, the controller answers, and the
-// exchange then sits there until the client gives up — no SMP failure, no agent
-// callback, nothing in any log. A central that already holds a bond re-pairs
-// through the same code path without trouble, which is what made this look like
-// a stale-key problem for so long.
-//
-// Driving the bond from here turns that dead wait into a normal, mutually
-// initiated pairing. It is best-effort and asynchronous: Pair() blocks for the
-// duration of the exchange, "already exists" is the ordinary answer for a peer
-// we know, and a failure must never take down the GATT service.
-func (g *gattServer) initiatePairing(path dbus.ObjectPath) {
-	go func() {
-		call := g.conn.Object("org.bluez", path).Call("org.bluez.Device1.Pair", 0)
-		if call.Err != nil {
-			// AlreadyExists simply means the peer is already bonded.
-			if !strings.Contains(call.Err.Error(), "AlreadyExists") {
-				g.logf("blepair: pairing %s: %v", path, call.Err)
-			}
-			return
-		}
-		g.logf("blepair: paired with %s", path)
-	}()
-}
-
 // anyCentralConnected asks BlueZ whether any device is connected right now,
 // rather than trusting state we accumulated from signals we might have missed.
 func (g *gattServer) anyCentralConnected() bool {
@@ -611,7 +583,6 @@ func (g *gattServer) watchDisconnects(onDisconnect func()) error {
 						g.connected.Store(true)
 						path, _ := sig.Body[0].(dbus.ObjectPath)
 						g.logf("blepair: central %s connected (new device)", path)
-						g.initiatePairing(path)
 					}
 				}
 				continue

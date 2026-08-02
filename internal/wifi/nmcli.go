@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"os/exec"
 	"sort"
 	"strconv"
@@ -149,6 +150,11 @@ func (n *nmcli) Connect(ctx context.Context, ssid, psk string) error {
 	// Remember whether this SSID was already saved: only a profile this
 	// attempt creates should be cleaned up on failure.
 	existed := n.savedWifiExists(ctx, ssid)
+
+	// Length only, never the secret: a join that fails on a password the user
+	// is certain of is otherwise indistinguishable from one mangled in transit,
+	// and the framing between app and agent is the obvious suspect.
+	log.Printf("wifi: connect %q (psk %d chars)", ssid, len(psk))
 
 	args := []string{"dev", "wifi", "connect", ssid}
 	if psk != "" {

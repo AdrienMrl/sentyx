@@ -109,7 +109,7 @@ func Run(ctx context.Context, cfg Config) error {
 	g := newGattServer(conn, cfg.Adapter, cfg.Name, cfg.Logf)
 	sess := newSession(sessionDeps{
 		Sink:    store,
-		Tester:  newHTTPConnTester(),
+		Tester:  newHTTPConnTester(cfg.DeviceID),
 		Wifi:    cfg.Wifi,
 		Restart: cfg.Restart,
 		Health:  func() Health { return healthOf(cfg, provisioned, started) },

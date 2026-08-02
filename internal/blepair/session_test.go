@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -241,8 +242,15 @@ func TestFailedTestBlocksCompleteAndAllowsRetry(t *testing.T) {
 	h.tester.err = errors.New("server unreachable")
 	h.control(t, `{"op":"begin_pair"}`)
 	h.writeConfig(t, validConfigJSON())
-	if err := h.control(t, `{"op":"test"}`); err == nil {
-		t.Fatal("failing test should error")
+	// The write itself succeeds — the device ran the command and has an answer.
+	// The failure travels on Status, which is where the central reads it; a
+	// rejected write would only surface the phone's own GATT error instead.
+	if err := h.control(t, `{"op":"test"}`); err != nil {
+		t.Fatalf("a failing test must still accept the write: %v", err)
+	}
+	last := (*h.statuses)[len(*h.statuses)-1]
+	if last.State != stateConfigSaved || last.OK || !strings.Contains(last.Detail, "server unreachable") {
+		t.Fatalf("failed test status = %+v", last)
 	}
 	if len(h.sink.saved) != 0 {
 		t.Fatal("failed test must not persist config")

@@ -108,6 +108,15 @@ func (s *session) failLocked(detail string) error {
 	return fmt.Errorf("blepair: %s", detail)
 }
 
+// reportFailureLocked notifies a failed outcome without failing the write that
+// triggered it — for operations whose negative result is itself the answer the
+// central asked for (see test). The central reads it off Status.
+func (s *session) reportFailureLocked(detail string) error {
+	s.deps.Logf("blepair: %s", detail)
+	s.notifyLocked(Status{State: s.state, OK: false, Detail: detail})
+	return nil
+}
+
 // HandleControl processes one Control characteristic write.
 func (s *session) HandleControl(payload []byte) error {
 	var msg controlMsg
@@ -214,11 +223,18 @@ func (s *session) test() error {
 		return nil
 	}
 	s.state = stateConfigSaved
+	// A failed test is an OUTCOME, not a malformed request: the device accepted
+	// the command and ran it. Report it on Status (state=config_saved, ok=false,
+	// with the reason) and let the ATT write succeed — rejecting the write
+	// instead made the phone surface its stack's write error
+	// ("GATT_NO_RESOURCES(128)") and throw away the diagnosis the device had
+	// just produced. Only protocol errors — bad JSON, wrong state — still
+	// reject the write.
 	if err != nil {
-		return s.failLocked("connection test failed: " + err.Error())
+		return s.reportFailureLocked("connection test failed: " + err.Error())
 	}
 	if err := s.deps.Sink.Persist(cfg); err != nil {
-		return s.failLocked("persisting config: " + err.Error())
+		return s.reportFailureLocked("persisting config: " + err.Error())
 	}
 	s.persisted = true
 	s.deps.Logf("blepair: connection test passed, config persisted")

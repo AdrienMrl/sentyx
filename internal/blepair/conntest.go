@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -12,11 +13,15 @@ import (
 // open /healthz, then an authenticated endpoint with the new device token.
 // Only a passing auth step lets the config persist.
 type httpConnTester struct {
-	client *http.Client
+	client   *http.Client
+	deviceID string
 }
 
-func newHTTPConnTester() *httpConnTester {
-	return &httpConnTester{client: &http.Client{Timeout: 15 * time.Second}}
+func newHTTPConnTester(deviceID string) *httpConnTester {
+	return &httpConnTester{
+		client:   &http.Client{Timeout: 15 * time.Second},
+		deviceID: deviceID,
+	}
 }
 
 func (t *httpConnTester) Run(cfg DeviceConfig, report func(step string, ok bool, detail string)) error {
@@ -28,7 +33,13 @@ func (t *httpConnTester) Run(cfg DeviceConfig, report func(step string, ok bool,
 	}
 	report("healthz", true, "")
 
-	if err := t.get(base+"/usage", cfg.Token); err != nil {
+	// The device's own status endpoint, NOT /usage: a per-device token is
+	// authorized for the device it was minted for and nothing else, while
+	// /usage is operator-only (it aggregates every user's analysis spend). The
+	// probe therefore proves exactly what onboarding needs — the token
+	// authenticates and is bound to this device, which is registered — instead
+	// of failing 403 on a token that is perfectly valid.
+	if err := t.get(base+"/v1/devices/"+url.PathEscape(t.deviceID), cfg.Token); err != nil {
 		report("auth", false, err.Error())
 		return fmt.Errorf("auth: %w", err)
 	}
