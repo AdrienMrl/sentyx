@@ -435,6 +435,11 @@ class BlePairingService(
             "fails, forget the device in Bluetooth settings and pair again."
 
     private fun testStepTitle(step: String?): String = when (step) {
+        // The device has no battery-backed clock, so it starts life weeks in
+        // the past and every certificate looks "not yet valid" until NTP lands.
+        // It waits for that before probing; naming the step keeps the pause on
+        // the progress screen explicable rather than looking like a stall.
+        "clock" -> "Clock synchronized"
         "healthz" -> "Server reachable"
         "auth" -> "Backend authenticated"
         null -> "Connection check"
@@ -444,7 +449,14 @@ class BlePairingService(
     private companion object {
         const val SCAN_MS = 8_000L
         const val OP_MS = 15_000L
-        const val TEST_MS = 60_000L
+        /**
+         * Budget for the whole connection test. It covers more than two HTTP
+         * probes: a unit that has never been online waits for its clock to be
+         * set first, because without that every certificate looks invalid. The
+         * device streams a step per stage, so a slow test shows progress rather
+         * than an idle screen.
+         */
+        const val TEST_MS = 90_000L
 
         /** Status/scan/forget Wi-Fi op budget. */
         const val WIFI_OP_MS = 15_000L

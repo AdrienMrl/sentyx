@@ -196,17 +196,31 @@ func (s *session) HandleConfigFrame(frame []byte) error {
 	return nil
 }
 
+// test accepts the command and hands the work to a goroutine.
+//
+// It must return promptly: BlueZ answers the ATT write only once this call
+// returns, and a central gives up long before a test that waits for the clock
+// and then makes two HTTP requests can finish — Android failed the write with
+// GATT_ERR_UNLIKELY after a minute of silence. Everything the central needs
+// arrives on Status, which is what it awaits anyway. Moving to stateTesting
+// happens here, synchronously, so a second `test` arriving behind this one is
+// rejected rather than racing the first.
 func (s *session) test() error {
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.state != stateConfigSaved || s.config == nil {
-		defer s.mu.Unlock()
 		return s.failLocked("test requires a received config")
 	}
 	cfg := *s.config
 	s.state = stateTesting
 	s.notifyLocked(Status{State: s.state, OK: true})
-	s.mu.Unlock()
+	go s.runTest(cfg)
+	return nil
+}
 
+// runTest is the body of the connection test, off the write's goroutine. Its
+// return value is only for the tests; nothing consumes it in production.
+func (s *session) runTest(cfg DeviceConfig) error {
 	// The connection test does network I/O; run it without the lock so
 	// DeviceInfo reads and disconnect handling stay responsive.
 	report := func(step string, ok bool, detail string) {
@@ -224,12 +238,12 @@ func (s *session) test() error {
 	}
 	s.state = stateConfigSaved
 	// A failed test is an OUTCOME, not a malformed request: the device accepted
-	// the command and ran it. Report it on Status (state=config_saved, ok=false,
-	// with the reason) and let the ATT write succeed — rejecting the write
-	// instead made the phone surface its stack's write error
-	// ("GATT_NO_RESOURCES(128)") and throw away the diagnosis the device had
-	// just produced. Only protocol errors — bad JSON, wrong state — still
-	// reject the write.
+	// the command and ran it. It is reported on Status (state=config_saved,
+	// ok=false, with the reason), which is where the central reads verdicts.
+	// Failing the write instead — as this did originally, and as it still does
+	// for protocol errors like bad JSON or a wrong state — made the phone show
+	// its own stack's error ("GATT_NO_RESOURCES(128)") and discard the
+	// diagnosis the device had just produced.
 	if err != nil {
 		return s.reportFailureLocked("connection test failed: " + err.Error())
 	}

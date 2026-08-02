@@ -581,6 +581,41 @@ final class Probe: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
         } else {
             Out.bad("no backing image — first-boot provisioning did not finish")
         }
+
+        reportClock(obj, wifiState: state)
+    }
+
+    /// The unit's idea of the time, and whether anything has confirmed it.
+    ///
+    /// This board has no battery-backed clock: a freshly flashed unit boots
+    /// believing the day its image was built, and every HTTPS request it makes
+    /// before the first NTP sample fails certificate validation ("not yet
+    /// valid"). That surfaced only at the last step of onboarding, worded as a
+    /// server problem, and this network-free check never saw it — it does no
+    /// TLS of its own. Reading the unit's clock over BLE closes that gap.
+    ///
+    /// Unsynchronized is NOT a failure while the unit is still offline: it has
+    /// had no chance to sync, and the agent waits for the clock before probing.
+    /// It is a failure once the unit is on Wi-Fi, where NTP should have landed.
+    private func reportClock(_ obj: [String: Any], wifiState: String) {
+        guard let synced = obj["clockSynced"] as? Bool else {
+            Out.warn("this agent predates the clock check — TLS failures from a wrong clock would look like server errors")
+            return
+        }
+        let unitTime = obj["timeUnixSec"] as? Int ?? 0
+        let skew = unitTime > 0 ? Int(Date().timeIntervalSince1970) - unitTime : 0
+        let skewDays = abs(skew) / 86_400
+
+        if synced {
+            Out.ok("clock synchronized (within \(abs(skew))s of this Mac)")
+            return
+        }
+        let drift = skewDays > 0 ? " — it reads \(skewDays) day(s) off this Mac" : ""
+        if wifiState == "connected" {
+            Out.bad("the unit is on Wi-Fi but its clock is unsynchronized\(drift) — HTTPS to the backend will fail certificate checks")
+        } else {
+            Out.warn("clock not yet synchronized\(drift) — expected while offline; it must sync once the unit joins Wi-Fi")
+        }
     }
 
     // ───────────────────────────────────────── step: pair (encrypted link)

@@ -32,6 +32,8 @@ func healthOf(cfg Config, provisioned bool, started time.Time) Health {
 	h.Agent = cfg.AgentVersion
 	h.Provisioned = provisioned
 	h.UptimeSec = int64(time.Since(started).Seconds())
+	h.ClockSynced = clockSynced()
+	h.TimeUnixSec = time.Now().Unix()
 	return h
 }
 

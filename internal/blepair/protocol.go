@@ -66,6 +66,17 @@ type Health struct {
 	// bound, i.e. the car would see no drive at all).
 	GadgetBound string `json:"gadgetBound"`
 	BackingMB   int64  `json:"backingMb"`
+
+	// ClockSynced and TimeUnixSec expose what the unit believes the time is,
+	// and whether a time server has confirmed it. Without an RTC a fresh unit
+	// boots weeks in the past, and every HTTPS request it makes before the
+	// first NTP sample fails certificate validation — a failure that surfaces
+	// only at the very end of onboarding and reads as a server problem. A
+	// health reader that has no network of its own (see scripts/healthcheck-
+	// unit.sh) can now see the cause directly. A timestamp is not a secret:
+	// it is broadcast in the clear by every device around it.
+	ClockSynced bool  `json:"clockSynced"`
+	TimeUnixSec int64 `json:"timeUnixSec"`
 }
 
 const protocolVersion = 1

@@ -72,6 +72,7 @@ type harness struct {
 	tester     *fakeTester
 	wifi       *fakeWifi
 	statuses   *[]Status
+	statusMu   *sync.Mutex // statuses are appended from the test's goroutine too
 	wifiFrames chan []byte // one entry per NotifyWifi frame; responses arrive async
 	restarts   *int
 }
@@ -84,8 +85,12 @@ func newHarness(t *testing.T) *harness {
 	statuses := &[]Status{}
 	wifiFrames := make(chan []byte, 64)
 	restarts := 0
-	h := &harness{sink: sink, tester: tester, wifi: wf, statuses: statuses, wifiFrames: wifiFrames, restarts: &restarts}
 	var mu sync.Mutex
+	h := &harness{
+		sink: sink, tester: tester, wifi: wf,
+		statuses: statuses, statusMu: &mu,
+		wifiFrames: wifiFrames, restarts: &restarts,
+	}
 	h.sess = newSession(sessionDeps{
 		Sink:    sink,
 		Tester:  tester,
@@ -150,6 +155,31 @@ func (h *harness) control(t *testing.T, msg string) error {
 	return h.sess.HandleControl([]byte(msg))
 }
 
+// awaitTest waits for the connection test to settle. The test runs off the
+// write's goroutine (the ATT write must return promptly), so its verdict lands
+// on Status some time after `{"op":"test"}` returns.
+func (h *harness) awaitTest(t *testing.T) Status {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if last, ok := h.lastStatus(); ok && last.State == stateConfigSaved {
+			return last
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("connection test never reported a terminal status")
+	return Status{}
+}
+
+func (h *harness) lastStatus() (Status, bool) {
+	h.statusMu.Lock()
+	defer h.statusMu.Unlock()
+	if len(*h.statuses) == 0 {
+		return Status{}, false
+	}
+	return (*h.statuses)[len(*h.statuses)-1], true
+}
+
 func (h *harness) lastState(t *testing.T) string {
 	t.Helper()
 	var info deviceInfo
@@ -202,6 +232,7 @@ func TestHappyPath(t *testing.T) {
 	if err := h.control(t, `{"op":"test"}`); err != nil {
 		t.Fatal(err)
 	}
+	h.awaitTest(t)
 	if len(h.sink.saved) != 1 || h.sink.saved[0].Token != "tok123" {
 		t.Fatalf("persisted configs = %+v", h.sink.saved)
 	}
@@ -242,13 +273,13 @@ func TestFailedTestBlocksCompleteAndAllowsRetry(t *testing.T) {
 	h.tester.err = errors.New("server unreachable")
 	h.control(t, `{"op":"begin_pair"}`)
 	h.writeConfig(t, validConfigJSON())
-	// The write itself succeeds — the device ran the command and has an answer.
-	// The failure travels on Status, which is where the central reads it; a
-	// rejected write would only surface the phone's own GATT error instead.
+	// The write itself succeeds — the device accepted the command and has an
+	// answer. The failure travels on Status, which is where the central reads
+	// it; a rejected write would only surface the phone's own GATT error.
 	if err := h.control(t, `{"op":"test"}`); err != nil {
 		t.Fatalf("a failing test must still accept the write: %v", err)
 	}
-	last := (*h.statuses)[len(*h.statuses)-1]
+	last := h.awaitTest(t)
 	if last.State != stateConfigSaved || last.OK || !strings.Contains(last.Detail, "server unreachable") {
 		t.Fatalf("failed test status = %+v", last)
 	}
@@ -262,6 +293,9 @@ func TestFailedTestBlocksCompleteAndAllowsRetry(t *testing.T) {
 	h.tester.err = nil
 	if err := h.control(t, `{"op":"test"}`); err != nil {
 		t.Fatal(err)
+	}
+	if got := h.awaitTest(t); !got.OK {
+		t.Fatalf("retried test = %+v", got)
 	}
 	if err := h.control(t, `{"op":"complete"}`); err != nil {
 		t.Fatal(err)
