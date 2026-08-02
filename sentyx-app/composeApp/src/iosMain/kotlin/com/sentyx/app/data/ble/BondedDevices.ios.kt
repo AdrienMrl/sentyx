@@ -20,4 +20,11 @@ actual class BondedDevices actual constructor() {
 
     actual fun peripheralFor(identifier: String): Peripheral =
         error("iOS exposes no bond table; no bonded peripheral for $identifier")
+
+    /**
+     * iOS keeps pairing state entirely inside the system: there is no API to
+     * drop it, so this always reports failure and callers fall back to telling
+     * the user to forget the device in Settings — which on iOS does list it.
+     */
+    actual fun removeBond(identifier: String): Boolean = false
 }

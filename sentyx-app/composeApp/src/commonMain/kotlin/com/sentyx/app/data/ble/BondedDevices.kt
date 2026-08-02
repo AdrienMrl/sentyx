@@ -38,4 +38,16 @@ expect class BondedDevices() {
      * [sentyxPeripherals]. Throws if the bond has since been removed.
      */
     fun peripheralFor(identifier: String): Peripheral
+
+    /**
+     * Drop this phone's bond for [identifier]; true when it is gone afterwards.
+     *
+     * A unit that has been reflashed no longer holds the keys this phone kept,
+     * so every encrypted operation fails and onboarding cannot start. The bond
+     * was created by this app, is invisible in Android's Bluetooth settings, and
+     * the user has no way to reach it — telling them to go and remove it was
+     * asking for something that could not be done. Clearing it here is the only
+     * path that leaves them somewhere other than stuck.
+     */
+    fun removeBond(identifier: String): Boolean
 }

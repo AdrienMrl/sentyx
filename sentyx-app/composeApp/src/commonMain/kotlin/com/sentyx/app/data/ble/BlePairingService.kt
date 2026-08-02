@@ -103,7 +103,7 @@ class BlePairingService(
             found[peripheral.identifier] = DiscoveredDevice(
                 id = peripheral.identifier,
                 name = peripheral.name,
-                subtitle = "Sentyx Pi · already paired with this phone",
+                subtitle = "${shortId(peripheral.identifier)} · already paired with this phone",
                 paired = true,
             )
         }
@@ -120,7 +120,13 @@ class BlePairingService(
                     found[id] = DiscoveredDevice(
                         id = id,
                         name = name,
-                        subtitle = "Sentyx Pi · signal ${adv.rssi} dBm",
+                        // The identifier is in the subtitle because every unit
+                        // advertises the same LocalName: with two of them in
+                        // range — a spare on the bench, a neighbour's — the list
+                        // shows two identical rows whose order is not stable
+                        // between scans, and picking one is a coin toss. Signal
+                        // strength alone does not settle it either.
+                        subtitle = "${shortId(id)} · signal ${adv.rssi} dBm",
                         paired = id in bondedIds,
                     )
                     send(ScanState.Found(found.values.toList()))
@@ -134,6 +140,13 @@ class BlePairingService(
         }
         if (found.isEmpty()) send(ScanState.NoneFound)
     }
+
+    /**
+     * Last block of a BLE identifier — enough to tell two units apart in a list
+     * without turning a device row into a MAC address.
+     */
+    private fun shortId(identifier: String): String =
+        identifier.takeLast(5).let { if (it.contains(':')) it else identifier.takeLast(4) }
 
     // ---- Pairing ------------------------------------------------------------
 
@@ -192,8 +205,26 @@ class BlePairingService(
                 cleanup()
                 s = openSession()
                 session = s
-                s.awaitStatus(OP_MS, ControlOp.beginPair()) {
-                    it.state == "authenticated" || it.ok == false
+                try {
+                    s.awaitStatus(OP_MS, ControlOp.beginPair()) {
+                        it.state == "authenticated" || it.ok == false
+                    }
+                } catch (second: KCancellationException) {
+                    throw second
+                } catch (second: Throwable) {
+                    // Failing twice is the signature of a bond this phone kept
+                    // and the unit no longer has — reflashing wipes the unit's
+                    // side, and nothing tells Android. The bond was created by
+                    // this app and is not listed in system Bluetooth settings,
+                    // so the user cannot clear it: drop it here and pair again.
+                    log("begin_pair: retry failed (${second.message}); clearing the bond and pairing again")
+                    cleanup()
+                    if (!bondedDevices.removeBond(device.id)) throw second
+                    s = openSession()
+                    session = s
+                    s.awaitStatus(OP_MS, ControlOp.beginPair()) {
+                        it.state == "authenticated" || it.ok == false
+                    }
                 }
             }
         }

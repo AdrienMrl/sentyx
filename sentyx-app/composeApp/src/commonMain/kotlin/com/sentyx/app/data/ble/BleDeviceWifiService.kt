@@ -90,8 +90,20 @@ class BleDeviceWifiService(
                         // drop its own bond (removeBond is not public API), so
                         // the only way out is the system Bluetooth settings.
                         // Say that, instead of relaying "write failed".
-                        log("begin_manage: retry failed (${retry.message}) — treating as stale bond")
-                        fail(STALE_BOND_MESSAGE, retry)
+                        // The bond this phone holds no longer matches the
+                        // unit's. Drop it and pair again rather than sending the
+                        // user to a settings screen that does not list it.
+                        log("begin_manage: retry failed (${retry.message}) — clearing the stale bond")
+                        releaseSession()
+                        if (!BondedDevices().removeBond(advertisement.identifier.toString())) {
+                            fail(STALE_BOND_MESSAGE, retry)
+                        }
+                        log("begin_manage: bond cleared; pairing again")
+                        val fresh = PiBleSession.connect(scope, advertisement, DEVICE_LABEL)
+                        session = fresh
+                        fresh.awaitStatus(OP_MS, ControlOp.beginManage()) {
+                            it.state == "authenticated" || it.ok == false
+                        }
                     }
                 }
             }

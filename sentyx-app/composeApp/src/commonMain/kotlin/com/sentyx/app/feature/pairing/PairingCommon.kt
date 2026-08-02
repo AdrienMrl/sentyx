@@ -22,6 +22,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
@@ -146,6 +148,18 @@ internal fun PairEditField(
                 letterSpacing = if (masked) 3.sp else 0.sp,
             ),
             cursorBrush = SolidColor(SxColors.Bronze),
+            // A masked field is a secret, and must be typed as one. Without
+            // these options the platform treats it as prose: suggestions,
+            // auto-capitalisation, and — the one that actually broke
+            // onboarding — Samsung's habit of appending a space after
+            // punctuation. A Wi-Fi password typed as "welcome!" arrived as
+            // nine characters, and the Pi rejected it as wrong every time,
+            // for both a human typing it and a scripted run.
+            keyboardOptions = if (masked) {
+                KeyboardOptions(keyboardType = KeyboardType.Password, autoCorrect = false)
+            } else {
+                KeyboardOptions.Default
+            },
             visualTransformation = if (masked) PasswordVisualTransformation() else VisualTransformation.None,
             modifier = Modifier
                 .fillMaxWidth()

@@ -36,6 +36,30 @@ actual class BondedDevices actual constructor() {
     }
 
     /**
+     * Android exposes no public way to drop a bond, so this calls the hidden
+     * `BluetoothDevice.removeBond()` by reflection. That is a deliberate choice
+     * and not a shortcut: the alternative on offer was to tell users to remove
+     * an entry that Android does not show them, because a bond an app created
+     * does not appear in system Bluetooth settings.
+     *
+     * Every failure mode is treated as "could not remove" rather than an error
+     * to surface: the method may be blocked by the hidden-API policy on newer
+     * releases, and the caller's fallback (explain, ask the user to retry) is
+     * the same either way.
+     */
+    actual fun removeBond(identifier: String): Boolean {
+        val device = bonded().firstOrNull { it.address == identifier } ?: return true
+        return try {
+            val removed = BluetoothDevice::class.java
+                .getMethod("removeBond")
+                .invoke(device) as? Boolean ?: false
+            removed
+        } catch (e: Throwable) {
+            false
+        }
+    }
+
+    /**
      * Bonded devices, or empty when Bluetooth is unavailable/off. Reading the
      * bond table needs BLUETOOTH_CONNECT on API 31+; if the user has not granted
      * it yet the SecurityException is swallowed so pairing falls back to a plain

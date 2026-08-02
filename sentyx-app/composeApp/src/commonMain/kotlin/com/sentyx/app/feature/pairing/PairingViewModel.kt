@@ -195,7 +195,15 @@ class PairingViewModel(
      *  mis-scanned as open should not silently discard what the user entered. */
     fun selectNetwork(ssid: String) = _state.update { it.copy(selectedSsid = ssid, wifiError = null) }
 
-    fun setWifiPassword(password: String) = _state.update { it.copy(wifiPassword = password) }
+    /**
+     * Trailing whitespace is dropped: keyboards append a space after
+     * punctuation, and a Wi-Fi password is one of the few fields where that
+     * invisible extra character is both silent and fatal — the join fails as
+     * "wrong password" with nothing on screen to explain it. Interior spaces
+     * are preserved; they are legal in a PSK and can be deliberate.
+     */
+    fun setWifiPassword(password: String) =
+        _state.update { it.copy(wifiPassword = password.trimEnd()) }
 
     /**
      * Join the selected network, then navigate ([onSuccess]).
