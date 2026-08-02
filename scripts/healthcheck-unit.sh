@@ -39,6 +39,8 @@
 #                                 and probing whichever answers first reports
 #                                 on a device you did not mean
 #   --list-units                  list every unit advertising in range, exit
+#   --quick                       skip the app's onboarding path (plain reads
+#                                 only) — faster, but proves much less
 #   --scan-timeout S              BLE scan budget (default 30s)
 #   --yes                         never prompt
 set -uo pipefail
@@ -69,7 +71,7 @@ die()   { printf '\n%s✗ error:%s %s\n' "$BOLD$RED" "$RST" "$*" >&2; exit 2; }
 WIFI_SSID=""; WIFI_PSK=""; EXPECT_SSID=""
 USB_MB=16; USB_EVENT=0; USB_DISK=""
 SSH_HOST=""; SKIP_BLE=0; SKIP_USB=0; SCAN_TIMEOUT=30; ASSUME_YES=0
-BLE_DEVICE=""; LIST_UNITS=0
+BLE_DEVICE=""; LIST_UNITS=0; QUICK=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -84,6 +86,7 @@ while [ $# -gt 0 ]; do
     --skip-usb)     SKIP_USB=1; shift ;;
     --ble-device)   BLE_DEVICE="${2:-}"; shift 2 ;;
     --list-units)   LIST_UNITS=1; shift ;;
+    --quick)        QUICK=1; shift ;;
     --scan-timeout) SCAN_TIMEOUT="${2:-}"; shift 2 ;;
     --yes|-y)       ASSUME_YES=1; shift ;;
     -h|--help)      sed -n '2,45p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
@@ -143,6 +146,10 @@ do_ble() {
   info "the Pi advertises only while teslcam-agent is running; give it ~30s after power-up"
 
   local args=(--scan-timeout "$SCAN_TIMEOUT")
+  # The app's own path — authenticate, then drive the unit's Wi-Fi — runs by
+  # default. Skipping it is what let this script call a unit green while
+  # onboarding was broken.
+  [ "$QUICK" = 1 ] && args+=(--no-pair)
   [ -n "$BLE_DEVICE" ] && args+=(--device "$BLE_DEVICE")
   [ -n "$EXPECT_SSID" ] && args+=(--expect-ssid "$EXPECT_SSID")
   if [ -n "$WIFI_SSID" ]; then

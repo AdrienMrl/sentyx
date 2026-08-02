@@ -80,14 +80,12 @@ struct Options {
     var expectSSID: String?
     var skipWifi = false
 
-    // Whether to exercise the encrypted onboarding path (pairing, authenticated
-    // session, Wi-Fi over BLE). Off by default, and that default is the whole
-    // design: every encrypted read makes the host store a pairing key, while an
-    // unprovisioned unit discards its own on each agent start. Pairing on every
-    // health check therefore leaves a dead bond behind on every machine that
-    // ever probed a unit, and breaks the next run. The plain Health
-    // characteristic answers the same questions without touching security.
-    var pair = false
+    // Whether to exercise the onboarding path the app uses: authenticate a
+    // session, then drive the unit's Wi-Fi over BLE. ON by default, because a
+    // check that skips it has no business calling a unit green — it was
+    // reporting 27 passes on a unit the app could not onboard at all.
+    // --no-pair drops back to the plain reads for a quick look.
+    var pair = true
 
     // Enumerate every unit in range instead of probing the first one found.
     // Two units advertising the same service are indistinguishable in a
@@ -122,6 +120,7 @@ func parseArgs() -> Options {
         case "--expect-ssid": o.expectSSID = next(a)
         case "--skip-wifi": o.skipWifi = true
         case "--pair": o.pair = true
+        case "--no-pair": o.pair = false
         case "--list": o.list = true
         case "--device": o.device = next(a)
         case "-h", "--help":
@@ -619,6 +618,20 @@ final class Probe: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
             }
         })
         writeControl(op)
+        // The first write to an encrypted characteristic is answered with
+        // "Insufficient Encryption" and only *then* triggers pairing. Nothing
+        // replays it once the link comes up — the stack reports no error and
+        // the request is simply gone — so a lone write leaves both sides
+        // waiting: the unit never sees a command, the client never sees a
+        // status. Re-sending it after pairing settles is what turns a
+        // first-time connection into a completed one.
+        for attempt in 1...3 {
+            queue.asyncAfter(deadline: .now() + Double(attempt) * 3.0) { [weak self] in
+                guard let self, self.statusDone != nil, !self.finished else { return }
+                Out.info("re-sending \(op) after encryption came up (attempt \(attempt + 1))")
+                self.writeControl(op)
+            }
+        }
     }
 
     /// Await a Status matching `pred`, fed by notify AND a 1s poll-read — the

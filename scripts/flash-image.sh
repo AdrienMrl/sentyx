@@ -119,6 +119,14 @@ is_flashable() {
   local d="$1"
   [[ "$(disk_attr "$d" VirtualOrPhysical)" == "Physical" ]] || return 1
   [[ "$(disk_attr "$d" WholeDisk)" == "true" ]] || return 1
+  # A write-protected card reads perfectly and fails only at the write, as a
+  # bare "dd: Permission denied" from a command already running as root — which
+  # reads like a system-permissions problem and sends you looking in entirely
+  # the wrong place. Nearly always the lock switch on a microSD-to-SD adapter.
+  if [[ "$(disk_attr "$d" WritableMedia)" == "false" ]]; then
+    printf '\033[1;33mnote:\033[0m /dev/%s is write-protected — slide the lock switch on the SD adapter\n' "$d" >&2
+    return 1
+  fi
   # Never the disk the running system booted from, whatever its flags say.
   local root_whole; root_whole="$(diskutil info -plist / 2>/dev/null | plutil -extract ParentWholeDisk raw -o - - 2>/dev/null)"
   [[ -n "$root_whole" && "$d" == "$root_whole" ]] && return 1
@@ -406,8 +414,21 @@ if [[ "${TESLCAM_DEV_LINK:-}" == 1 ]]; then
   fi
 fi
 
+# Ejecting is courtesy, not part of the job: the image is already on the card.
+# Spotlight starts indexing the boot partition the moment it mounts and will
+# dissent the eject for a few seconds, which used to fail the whole run — and
+# under `teslcam.sh unit` that reads as "flashing failed" after a perfectly
+# good 6 GB write. Retry briefly, then say so and move on.
 say "ejecting"
-diskutil eject "/dev/$DISK"
+ejected=0
+for _ in 1 2 3 4 5 6; do
+  if diskutil eject "/dev/$DISK" >/dev/null 2>&1; then ejected=1; break; fi
+  sleep 2
+done
+if [[ "$ejected" != 1 ]]; then
+  printf '\033[1;33mnote:\033[0m could not eject /dev/%s (Spotlight is probably indexing it).\n' "$DISK"
+  printf '      The card is written and ready — eject it from Finder before removing it.\n'
+fi
 
 say "done — insert into the Pi and power up."
 echo "First boot expands the filesystem and creates the backing image (allow ~2 min),"
