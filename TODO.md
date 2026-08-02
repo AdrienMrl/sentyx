@@ -1,5 +1,36 @@
 # TODO
 
+## 0a. Re-encrypt the onboarding payloads (security debt, opened 2026-08-01)
+
+BLE onboarding no longer requires an encrypted link. The server token and the
+Wi-Fi PSK therefore travel **in the clear** to anyone listening in radio range
+during the onboarding window.
+
+Why the link encryption was dropped (see commit `1d68d76`): BlueZ answers every
+pairing request with IO capability `NoInputNoOutput` *and* the MITM bit set — a
+combination no association model can satisfy — and both macOS and Android
+respond by going silent. No SMP failure, no agent callback, nothing in the
+unit's log; the app only sees a write that failed. It made first-time
+onboarding impossible for every client, and only peers that already held a bond
+could get through. Removing the requirement was the way out, and the loss is
+narrower than it looks: Just Works has no MITM protection to begin with, so the
+gate that ever mattered is physical presence during the onboarding window.
+
+What is genuinely missing is payload confidentiality, and the fix belongs at the
+application layer, which is ours to control, rather than in an SMP negotiation
+which is not:
+
+- [ ] Encrypt the `config` payload (server URL + token) and the `wifi` connect
+      payload (SSID + PSK) end to end between app and agent — e.g. X25519 key
+      agreement over the plain characteristics, then AEAD on the payloads.
+      Note the device's public key can be published in DeviceInfo, which is
+      already a plain read.
+- [ ] Keep it independent of BLE bonding, so a reflashed unit (whose bond store
+      is empty) never strands a client again.
+- [ ] Decide whether to restore `encrypt-*` flags afterwards as defence in
+      depth — only if a first-time pairing can be shown to complete on this
+      controller.
+
 ## 0. Admin dashboard (next up; user accounts are a prereq)
 
 Original prompt:
