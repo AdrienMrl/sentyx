@@ -272,9 +272,8 @@ class BlePairingService(
 
     // Wi-Fi setup rides the already-authenticated pairing session (begin_pair
     // authenticated it), so these reuse [PiBleSession.wifiRequest] on the same
-    // connection. They stay tolerant of failure — the UI calls them fire-and-
-    // forget and the connection test surfaces any real problem — so a wifi op
-    // error never crashes onboarding.
+    // connection. A failed *scan* is still tolerated (an empty list degrades to
+    // "no networks found"), but a failed *join* now throws — see connectWifi.
     override suspend fun availableNetworks(): List<WifiNetwork> {
         val s = session ?: return emptyList()
         return try {
@@ -292,22 +291,37 @@ class BlePairingService(
         }
     }
 
+    /**
+     * Unlike the scan above, a failed join is NOT swallowed. Reporting it here
+     * is the only way the user learns the password was wrong: the connection
+     * test that follows reports "couldn't reach the server", which is true but
+     * says nothing about the cause. The caller shows this message inline and
+     * stays on the Wi-Fi screen, so a rejection no longer costs a retry of the
+     * whole onboarding.
+     */
     override suspend fun connectWifi(ssid: String, password: String?) {
-        val s = session ?: return
-        try {
-            val json = s.wifiRequest(
+        val s = session ?: fail("Not connected to your Sentyx Pi. Reconnect and try again.")
+        val json = try {
+            s.wifiRequest(
                 SentyxGatt.json.encodeToString(
                     WifiCommandDto.connect(ssid, password?.ifBlank { null }),
                 ).encodeToByteArray(),
                 WIFI_CONNECT_MS,
             )
-            val result = SentyxGatt.json.decodeFromString<WifiResultDto>(json)
-            if (!result.ok) log("connectWifi: device rejected: ${result.detail}")
         } catch (e: KCancellationException) {
             throw e
         } catch (e: Throwable) {
             log("connectWifi: ${e.message}")
+            fail("Lost the Bluetooth link while joining \"$ssid\". Try again.", e)
         }
+        val result = try {
+            SentyxGatt.json.decodeFromString<WifiResultDto>(json)
+        } catch (e: KCancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            fail("The device sent an unreadable reply while joining \"$ssid\".", e)
+        }
+        if (!result.ok) fail(result.detail ?: "Couldn't join \"$ssid\".")
     }
 
     override suspend fun runConnectionTest(): List<ConnectionTestStep> {

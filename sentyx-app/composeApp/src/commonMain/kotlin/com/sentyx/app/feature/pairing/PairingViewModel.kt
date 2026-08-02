@@ -183,49 +183,54 @@ class PairingViewModel(
             // device orders by signal) wins.
             val nets = pairing.availableNetworks().distinctBy { it.ssid }
             _state.update { s ->
-                val first = nets.firstOrNull()
                 s.copy(
                     wifiNetworks = nets,
-                    selectedSsid = s.selectedSsid ?: first?.ssid,
-                    wifiPassword = if (s.wifiPassword.isEmpty() && first?.requiresPassword == true) {
-                        PREFILLED_WIFI_PASSWORD
-                    } else {
-                        s.wifiPassword
-                    },
+                    selectedSsid = s.selectedSsid ?: nets.firstOrNull()?.ssid,
                 )
             }
         }
     }
 
-    fun selectNetwork(ssid: String) {
-        _state.update { s ->
-            val net = s.wifiNetworks.firstOrNull { it.ssid == ssid }
-            s.copy(
-                selectedSsid = ssid,
-                wifiPassword = if (net?.requiresPassword == true && s.wifiPassword.isEmpty()) {
-                    PREFILLED_WIFI_PASSWORD
-                } else {
-                    s.wifiPassword
-                },
-            )
-        }
-    }
+    /** Select a network. The typed password is kept: re-picking a row that was
+     *  mis-scanned as open should not silently discard what the user entered. */
+    fun selectNetwork(ssid: String) = _state.update { it.copy(selectedSsid = ssid, wifiError = null) }
 
     fun setWifiPassword(password: String) = _state.update { it.copy(wifiPassword = password) }
 
-    fun connectWifi() {
+    /**
+     * Join the selected network, then navigate ([onSuccess]).
+     *
+     * Awaiting the device's reply is the point: the Pi takes seconds to
+     * associate and the connection test that follows fails outright if it runs
+     * first — which is exactly what advancing immediately used to do.
+     *
+     * The password sent is whatever the user typed, never a value derived from
+     * the scan's `requiresPassword` flag. That flag comes from nmcli's SECURITY
+     * column and a network it reports as open may well not be; dropping the
+     * password on its say-so made a secured network unjoinable with no way to
+     * override from the UI.
+     */
+    fun connectWifi(onSuccess: () -> Unit) {
+        if (_state.value.wifiConnecting) return
         val s = _state.value
         // The Connect button is disabled until a network is selected, so a null
         // here is a UI wiring bug — keep it loud.
         val ssid = s.selectedSsid ?: error("connectWifi called with no selected network")
-        // The selected network CAN legitimately vanish from the list (a rescan
-        // between selection and tap); wifi ops are fire-and-forget by design, so
-        // fall back to sending the password we have rather than crashing — the
-        // connection test surfaces any real failure.
-        val net = s.wifiNetworks.firstOrNull { it.ssid == ssid }
-        val password = if (net == null || net.requiresPassword) s.wifiPassword else null
+        val password = s.wifiPassword.ifBlank { null }
+        _state.update { it.copy(wifiConnecting = true, wifiError = null) }
         viewModelScope.launch {
-            pairing.connectWifi(ssid, password?.ifBlank { null })
+            try {
+                pairing.connectWifi(ssid, password)
+                onSuccess()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                _state.update {
+                    it.copy(wifiError = e.message ?: "Couldn't join \"$ssid\". Check the password and try again.")
+                }
+            } finally {
+                _state.update { it.copy(wifiConnecting = false) }
+            }
         }
     }
 
@@ -284,9 +289,6 @@ class PairingViewModel(
     }
 
     private companion object {
-        /** Mock, editable placeholder so the password field shows dots by default. */
-        const val PREFILLED_WIFI_PASSWORD = "sentyx-demo-key"
-
         /** Key of the Bluetooth onboarding permission (see DemoPairingService). */
         const val BLUETOOTH_PERMISSION_KEY = "ble"
     }
@@ -318,6 +320,10 @@ data class PairingUiState(
     val wifiNetworks: List<WifiNetwork> = emptyList(),
     val selectedSsid: String? = null,
     val wifiPassword: String = "",
+    /** True while [PairingViewModel.connectWifi] waits for the device to join. */
+    val wifiConnecting: Boolean = false,
+    /** Inline error shown when the device could not join the network. */
+    val wifiError: String? = null,
     val connectionTest: List<ConnectionTestStep> = emptyList(),
     val testRunning: Boolean = false,
     val firmware: FirmwareUpdate? = null,

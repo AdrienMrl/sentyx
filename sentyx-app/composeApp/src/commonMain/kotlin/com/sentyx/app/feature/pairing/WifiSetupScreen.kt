@@ -67,27 +67,37 @@ fun WifiSetupScreen(
                     onClick = { vm.selectNetwork(net.ssid) },
                 )
             }
-            if (selected != null && selected.requiresPassword) {
+            // Shown for every selected network, including ones the scan calls
+            // open. `requiresPassword` derives from nmcli's SECURITY column on
+            // the Pi, and when that column comes back empty a perfectly normal
+            // WPA2 network is classed as open — which used to hide this field
+            // outright and leave no way to enter a key. The flag now only
+            // decides whether the field is labelled optional.
+            if (selected != null) {
                 PairEditField(
                     label = "Password for ${selected.ssid}",
                     value = state.wifiPassword,
                     onValueChange = vm::setWifiPassword,
                     masked = true,
+                    optional = !selected.requiresPassword,
+                    placeholder = if (selected.requiresPassword) "" else "Leave blank if the network is open",
                     modifier = Modifier.padding(top = 5.dp),
                 )
             }
         }
         Spacer(Modifier.padding(top = 8.dp))
         Column(verticalArrangement = Arrangement.spacedBy(10.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            state.wifiError?.let { err ->
+                Text(err, color = SxColors.Red, fontSize = 13.sp)
+            }
             // Disabled until a network is picked: connectWifi() treats a missing
             // selection as an invariant violation (it throws), so the gate is here.
+            // Navigation is deferred to onSuccess — the connection test on the
+            // next screen is meaningless until the device has actually joined.
             SxPrimaryButton(
-                "Connect",
-                enabled = state.selectedSsid != null,
-                onClick = {
-                    vm.connectWifi()
-                    onContinue()
-                },
+                if (state.wifiConnecting) "Connecting…" else "Connect",
+                enabled = state.selectedSsid != null && !state.wifiConnecting,
+                onClick = { vm.connectWifi(onSuccess = onContinue) },
             )
             Text(
                 "Skip — use Bluetooth only",
