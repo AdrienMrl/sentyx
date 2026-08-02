@@ -55,7 +55,7 @@ fun ConnectionTestScreen(
         // unit stayed unprovisioned, with the real reason only in the Pi's log.
         when {
             state.testRunning -> SxPrimaryButton("Testing…", {}, enabled = false)
-            failed -> SxPrimaryButton("Try again") { vm.runConnectionTest() }
+            failed -> SxPrimaryButton("Try again", { vm.runConnectionTest() })
             else -> SxPrimaryButton("Continue", onContinue, enabled = passed)
         }
     }
