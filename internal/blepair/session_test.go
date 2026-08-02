@@ -526,3 +526,38 @@ func TestWifiResultReadReturnsFirstFrame(t *testing.T) {
 		t.Fatal("result read after a command should return the first frame")
 	}
 }
+
+// A central whose notify subscription died polls Status instead. That read must
+// carry the outcome: answering ok:true regardless made a failed connection test
+// look passed, and the app went on to `complete`, which the device refused.
+func TestStatusReadCarriesTheLastOutcome(t *testing.T) {
+	h := newHarness(t)
+	h.tester.err = errors.New("server unreachable")
+	h.control(t, `{"op":"begin_pair"}`)
+	h.writeConfig(t, validConfigJSON())
+	h.control(t, `{"op":"test"}`)
+	h.awaitTest(t)
+
+	var st Status
+	if err := json.Unmarshal(h.sess.StatusValue(), &st); err != nil {
+		t.Fatal(err)
+	}
+	if st.State != stateConfigSaved {
+		t.Fatalf("status read state = %s", st.State)
+	}
+	if st.OK || !strings.Contains(st.Detail, "server unreachable") {
+		t.Fatalf("status read hides the failure: %+v", st)
+	}
+
+	// A passing test must flip it back, or the next poll would report a stale
+	// failure forever.
+	h.tester.err = nil
+	h.control(t, `{"op":"test"}`)
+	h.awaitTest(t)
+	if err := json.Unmarshal(h.sess.StatusValue(), &st); err != nil {
+		t.Fatal(err)
+	}
+	if !st.OK {
+		t.Fatalf("status read after a passing test = %+v", st)
+	}
+}

@@ -34,6 +34,9 @@ fun ConnectionTestScreen(
     val state by vm.state.collectAsStateWithLifecycle()
     LaunchedEffect(Unit) { vm.runConnectionTest() }
 
+    val failed = state.connectionTest.any { !it.passed }
+    val passed = !state.testRunning && !failed && state.connectionTest.isNotEmpty()
+
     OnboardingScreen {
         OnboardingTitle("Testing connection")
         Column(
@@ -41,10 +44,38 @@ fun ConnectionTestScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             state.connectionTest.forEach { step -> TestRow(step) }
+            if (state.testRunning) TestPendingNote()
         }
         Spacer(Modifier.weight(1f))
-        SxPrimaryButton("Continue", onContinue)
+        // Advancing is gated on a PASSED test, because the next step tells the
+        // device to complete onboarding and the device refuses that without one
+        // ("complete requires a passed connection test"). This button used to be
+        // live throughout: tapping it while the test was still running — or
+        // after it had failed — walked the user to a success screen while the
+        // unit stayed unprovisioned, with the real reason only in the Pi's log.
+        when {
+            state.testRunning -> SxPrimaryButton("Testing…", {}, enabled = false)
+            failed -> SxPrimaryButton("Try again") { vm.runConnectionTest() }
+            else -> SxPrimaryButton("Continue", onContinue, enabled = passed)
+        }
     }
+}
+
+/**
+ * Shown while the test is in flight. The first check can take a while on a unit
+ * that has just been switched on — it waits for the clock to be set before
+ * anything can be verified over HTTPS — and an unexplained pause reads as a
+ * freeze.
+ */
+@Composable
+private fun TestPendingNote() {
+    Text(
+        "Checking the device's connection to Sentyx. This can take up to a minute " +
+            "on a device that has just been powered on.",
+        color = SxColors.Muted,
+        fontSize = 13.sp,
+        modifier = Modifier.padding(top = 4.dp),
+    )
 }
 
 @Composable

@@ -63,13 +63,20 @@ type session struct {
 	wifiFrames reassembler
 	wifiBusy   bool     // one Wi-Fi command in flight at a time
 	wifiLast   [][]byte // last result, chunked, for a plain Read
+
+	// Outcome of the last state-changing notification, so a plain Status READ
+	// answers with it instead of an unconditional success. A central whose
+	// notify subscription died polls this characteristic, and a hardcoded
+	// ok:true told it a failed connection test had passed.
+	outcomeOK     bool
+	outcomeDetail string
 }
 
 func newSession(deps sessionDeps) *session {
 	if deps.Logf == nil {
 		deps.Logf = func(string, ...any) {}
 	}
-	return &session{deps: deps, state: stateIdle}
+	return &session{deps: deps, state: stateIdle, outcomeOK: true}
 }
 
 // DeviceInfo renders the plain-readable identity characteristic.
@@ -87,10 +94,17 @@ func (s *session) DeviceInfo() []byte {
 	return b
 }
 
-// StatusValue renders the current state for a plain Status read.
+// StatusValue renders the current state, and the outcome that produced it, for
+// a plain Status read.
+//
+// The outcome matters: a central that polls this characteristic (its notify
+// subscription can die with a bonding collision) uses the reply to decide
+// whether an operation succeeded. Reporting ok:true unconditionally made a
+// failed connection test look passed, and the app moved on to `complete`, which
+// the device then refused — leaving the failure visible only in the unit's log.
 func (s *session) StatusValue() []byte {
 	s.mu.Lock()
-	st := Status{V: protocolVersion, State: s.state, OK: true}
+	st := Status{V: protocolVersion, State: s.state, OK: s.outcomeOK, Detail: s.outcomeDetail}
 	s.mu.Unlock()
 	b, _ := json.Marshal(st)
 	return b
@@ -98,6 +112,11 @@ func (s *session) StatusValue() []byte {
 
 func (s *session) notifyLocked(st Status) {
 	st.V = protocolVersion
+	// test_step statuses are transient progress, not the session's state; a
+	// plain read must keep answering with the state the session is actually in.
+	if st.State != "test_step" {
+		s.outcomeOK, s.outcomeDetail = st.OK, st.Detail
+	}
 	if s.deps.Notify != nil {
 		s.deps.Notify(st)
 	}
