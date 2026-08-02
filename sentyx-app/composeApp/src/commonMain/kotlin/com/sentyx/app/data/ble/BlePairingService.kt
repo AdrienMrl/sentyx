@@ -19,6 +19,7 @@ import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.withTimeoutOrNull
@@ -184,9 +185,34 @@ class BlePairingService(
             }
         }
 
+        // A unit we can see advertising that then refuses the link is the
+        // signature of a bond it no longer holds: reflashing wipes the unit's
+        // bond store, its BLE address does not change, and nothing tells
+        // Android. The phone offers keys the unit cannot answer and the unit
+        // drops the link within a few hundred milliseconds ("Disconnect
+        // detected"). The app created that bond and system Bluetooth settings
+        // do not list it, so the user cannot clear it — drop it here and
+        // connect again. Costs one extra attempt when the cause was something
+        // else, which beats stranding every reflashed unit.
+        suspend fun openSessionClearingStaleBond(): PiBleSession =
+            if (advertisement == null) {
+                openSession() // the bonded path reports its own failure
+            } else {
+                try {
+                    openSession()
+                } catch (e: KCancellationException) {
+                    throw e
+                } catch (e: Throwable) {
+                    log("connect refused (${e.message}); clearing the bond and retrying")
+                    if (!bondedDevices.removeBond(device.id)) throw e
+                    delay(REBOND_SETTLE_MS)
+                    openSession()
+                }
+            }
+
         // Bound the whole connect → (re)bond → authenticate dance.
         val status = withTimeoutOrNull(PAIR_MS) {
-            var s = openSession()
+            var s = openSessionClearingStaleBond()
             session = s
 
             // The first write to an encrypt-write characteristic triggers Just
@@ -466,6 +492,13 @@ class BlePairingService(
 
         /** Whole beginPairing budget: connect + possible rebond-reconnect + auth. */
         const val PAIR_MS = 30_000L
+
+        /**
+         * Pause between dropping a stale bond and reconnecting. Android removes
+         * a bond asynchronously; connecting in the same breath can still be
+         * served the keys that were just discarded.
+         */
+        const val REBOND_SETTLE_MS = 500L
 
         fun log(message: String) = println("SentyxBLE: $message")
     }
