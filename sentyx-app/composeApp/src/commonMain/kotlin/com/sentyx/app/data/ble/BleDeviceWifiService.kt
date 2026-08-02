@@ -59,7 +59,7 @@ class BleDeviceWifiService(
             // can still drop the GATT link on some stacks (mirrors begin_pair);
             // reconnect once and retry the begin_manage write.
             val status = withTimeoutOrNull(CONNECT_TOTAL_MS) {
-                var s = PiBleSession.connect(scope, advertisement, DEVICE_LABEL)
+                var s = openLink(advertisement)
                 session = s
                 try {
                     s.awaitStatus(OP_MS, ControlOp.beginManage()) {
@@ -70,7 +70,7 @@ class BleDeviceWifiService(
                 } catch (e: Throwable) {
                     log("begin_manage: first attempt failed (${e.message}); reconnecting after bond")
                     releaseSession()
-                    s = PiBleSession.connect(scope, advertisement, DEVICE_LABEL)
+                    s = openLink(advertisement)
                     session = s
                     try {
                         s.awaitStatus(OP_MS, ControlOp.beginManage()) {
@@ -115,7 +115,12 @@ class BleDeviceWifiService(
             // when it carries no message at all, as the bare "write failed"
             // fallback composed in PiBleSession — both of which reached this
             // screen verbatim and told the user nothing actionable.
-            fail("Couldn't connect to your Sentyx Pi. Make sure it's powered and nearby, then retry.", e)
+            //
+            // This is the last-resort branch, so it must not speculate about
+            // the cause either: every failure with a known cause is named at
+            // the point it happens (not found / refused / stale bond / slow).
+            log("connect: unclassified failure (${e.message})")
+            fail("Couldn't connect to your Sentyx Pi. Try again.", e)
         }
     }
 
@@ -173,6 +178,26 @@ class BleDeviceWifiService(
         }
     }
 
+    /**
+     * Open a GATT link to an advertisement we have just seen.
+     *
+     * Split out so a refused link never inherits copy about the device being
+     * off or out of range: reaching this function means the scan *did* find the
+     * Pi and we hold its address, so "make sure it's powered and nearby" is
+     * contradicted by our own evidence. A refusal here is a link-layer event —
+     * on this stack, overwhelmingly a bond the Pi no longer recognises, which
+     * it drops within a few hundred milliseconds ("Disconnect detected").
+     */
+    private suspend fun openLink(advertisement: PlatformAdvertisement): PiBleSession =
+        try {
+            PiBleSession.connect(scope, advertisement, DEVICE_LABEL)
+        } catch (e: KCancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            log("connect: link refused (${e.message})")
+            fail(LINK_REFUSED_MESSAGE, e)
+        }
+
     /** Scan for the first Sentyx advertisement, or null if none appears in time. */
     private suspend fun scanForDevice(): PlatformAdvertisement? =
         withTimeoutOrNull(SCAN_MS) {
@@ -199,14 +224,37 @@ class BleDeviceWifiService(
 
         /**
          * Shown when the encrypted write fails twice — the phone and the Pi no
-         * longer agree on bond keys. Names the exact Android setting because
-         * that is the only place the bond can be cleared, and says setup has to
-         * be redone: a Pi that wiped its bonds is unprovisioned, so management
-         * would be refused even with a working link.
+         * longer agree on bond keys. Points at Android's Bluetooth settings
+         * because that is the only place a bond can be cleared (an app cannot:
+         * removeBond is not public API), and says setup has to be redone: a Pi
+         * that wiped its bonds is unprovisioned, so management would be refused
+         * even over a working link.
+         *
+         * Deliberately does NOT quote the paired entry's name. It is whatever
+         * the unit last advertised, which changes across a reset — this very
+         * unit shows up as "sentyx" or "Sentyx-Pi" depending on when Android
+         * last saw it — and naming the wrong one sends the user hunting.
          */
         const val STALE_BOND_MESSAGE =
             "This phone's Bluetooth pairing with your Sentyx Pi is no longer valid. " +
-                "Open Android Settings › Bluetooth, forget \"sentyx\", then set the device up again."
+                "Remove any saved Sentyx entry in Android Settings › Bluetooth — note that a " +
+                "pairing an app created may not be listed there — then set the device up again."
+
+        /**
+         * Shown when a device we just saw advertising refuses the GATT link.
+         *
+         * Leads with the fact that it was found, so the copy never contradicts
+         * what the app already knows. It also stops short of naming a cause: a
+         * refusal here has been observed both with a stale bond present AND
+         * with no bond at all (the Pi accepting then dropping the link within
+         * ~300 ms), and an earlier draft that blamed the pairing sent users
+         * hunting for a Bluetooth entry that did not exist. Suggest the step
+         * that helps in both cases, and qualify the second one.
+         */
+        const val LINK_REFUSED_MESSAGE =
+            "Your Sentyx Pi is nearby, but it refused the Bluetooth connection. " +
+                "Power-cycle the Pi and try again. If it keeps refusing, remove any saved " +
+                "Sentyx entry in Android Settings › Bluetooth and set the device up again."
         const val SCAN_MS = 8_000L
         const val OP_MS = 15_000L
 
