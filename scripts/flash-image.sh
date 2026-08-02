@@ -13,6 +13,15 @@
 # expands its rootfs, creates the exFAT backing image, and waits for BLE
 # onboarding (see scripts/build-image.sh).
 #
+# Writing the card needs root. Run scripts/install-flash-helper.sh once and
+# flashing stops asking for a password (see that script for the trade-off);
+# otherwise this prompts for sudo before the write.
+#
+# With TESLCAM_DEV_LINK=1, also arms the USB dev link on the card: the unit
+# then exposes an ethernet + serial console alongside the drive, reachable at
+# <hostname>.local over the same USB cable, so an agent fix is an scp instead
+# of another 20-minute image rebuild. DEBUG only — never for a car-bound unit.
+#
 # After flashing, offers to provision remote access: generates a per-unit
 # WireGuard keypair and writes it to the FAT boot partition, so the unit can
 # be reached over LTE despite carrier CGNAT. Needs `brew install
@@ -29,7 +38,7 @@ die() { printf '\033[1;31merror:\033[0m %s\n' "$*" >&2; exit 1; }
 # xz is the one dependency macOS doesn't ship; the rest are stock but cheap
 # to verify (protects against exotic PATHs).
 command -v xz >/dev/null || die "xz not found — install with: brew install xz"
-for c in diskutil plutil dd; do
+for c in diskutil plutil dd perl awk; do
   command -v "$c" >/dev/null || die "$c not found on PATH (expected stock macOS tool)"
 done
 
@@ -43,8 +52,36 @@ if ! command -v wg >/dev/null; then
   printf '      install with: brew install wireguard-tools    (flashing itself works without it)\n\n'
 fi
 
+# ------------------------------------------------ non-interactive selection
+# A flash that needs three typed answers cannot be part of an automated
+# build->flash->healthcheck run. --disk/--yes make the whole thing unattended;
+# without them the interactive prompts below are unchanged, including the
+# type-the-identifier confirmation that guards a manual flash.
+DISK_ARG=""
+ASSUME_YES=0
+POSITIONAL=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --disk) DISK_ARG="${2:-}"; shift 2 ;;
+    --yes|-y) ASSUME_YES=1; shift ;;
+    --image) POSITIONAL+=("${2:-}"); shift 2 ;;
+    -h|--help) sed -n '2,50p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -*) die "unknown option: $1" ;;
+    *) POSITIONAL+=("$1"); shift ;;
+  esac
+done
+set -- "${POSITIONAL[@]+"${POSITIONAL[@]}"}"
+[[ "$ASSUME_YES" == 1 && -z "$DISK_ARG" ]] \
+  && die "--yes requires --disk <diskN>: refusing to pick a disk to erase on its own"
+
 # ------------------------------------------------------------- pick an image
 IMAGE="${1:-}"
+if [[ -z "$IMAGE" && "$ASSUME_YES" == 1 ]]; then
+  # Newest first, same order the menu shows.
+  IMAGE="$(ls -t "$PROJECT_DIR"/build/teslcam-pi4-*.img.xz 2>/dev/null | head -1)"
+  [[ -n "$IMAGE" ]] || die "no images in build/ — run scripts/build-image.sh first"
+  say "image (newest): $(basename "$IMAGE")"
+fi
 if [[ -z "$IMAGE" ]]; then
   IMAGES=()
   while IFS= read -r f; do IMAGES+=("$f"); done \
@@ -100,8 +137,17 @@ list_external_disks() {
   done
 }
 
+# --disk names the target outright. It still goes through is_flashable below,
+# so an unattended run can no more erase the boot disk than an interactive one.
+if [[ -n "$DISK_ARG" ]]; then
+  DISK="${DISK_ARG#/dev/}"
+  is_flashable "$DISK" \
+    || die "--disk $DISK is not a removable whole disk (or is the boot disk) — refusing"
+  say "target: /dev/$DISK — $(diskutil info "$DISK" | awk -F': +' '/Disk Size/ {print $2}' | awk -F' \\(' '{print $1}')"
+fi
+
 DISKS=()
-while true; do
+while [[ -z "${DISK:-}" ]]; do
   DISKS=()
   while IFS= read -r d; do [[ -n "$d" ]] && DISKS+=("$d"); done < <(list_external_disks)
   [[ ${#DISKS[@]} -gt 0 ]] && break
@@ -109,6 +155,7 @@ while true; do
   [[ "$R" == q* ]] && exit 1
 done
 
+if [[ -z "${DISK:-}" ]]; then
 echo
 echo "External disks:"
 for i in "${!DISKS[@]}"; do
@@ -125,6 +172,7 @@ read -r -p "Disk number to FLASH: " PICK
 [[ "$PICK" =~ ^[0-9]+$ && "$PICK" -ge 1 && "$PICK" -le ${#DISKS[@]} ]] \
   || die "invalid selection: $PICK"
 DISK="${DISKS[$((PICK - 1))]}"
+fi
 
 # Re-verify right before erasing: still attached, still a removable target,
 # still not the boot disk. Re-running the same predicate (rather than trusting
@@ -136,17 +184,98 @@ is_flashable "$DISK" \
 
 echo
 printf '\033[1;31mThis will ERASE /dev/%s completely.\033[0m\n' "$DISK"
-read -r -p "Type the disk identifier ($DISK) to confirm: " CONFIRM
-[[ "$CONFIRM" == "$DISK" ]] || die "confirmation mismatch — nothing was written"
+if [[ "$ASSUME_YES" == 1 ]]; then
+  # The typed confirmation exists to catch a mis-picked disk. With --disk the
+  # caller named the target explicitly and is_flashable re-vetted it twice, so
+  # there is nothing left for the human to disambiguate.
+  say "--yes: proceeding without the typed confirmation"
+else
+  read -r -p "Type the disk identifier ($DISK) to confirm: " CONFIRM
+  [[ "$CONFIRM" == "$DISK" ]] || die "confirmation mismatch — nothing was written"
+fi
 
 # -------------------------------------------------------------------- flash
-sudo -v   # prompt for the password up front, not mid-pipeline
+# Writing a raw disk needs root on macOS, full stop. Two ways to get there:
+# the privileged helper (scripts/install-flash-helper.sh), which is reachable
+# without a password and vets its own target, or plain sudo with a prompt.
+# The helper is probed rather than assumed so an uninstalled Mac still works.
+FLASH_HELPER=/usr/local/libexec/teslcam-flash-write
+if [[ -x "$FLASH_HELPER" ]] && sudo -n "$FLASH_HELPER" --check 2>/dev/null; then
+  WRITE_CMD=(sudo -n "$FLASH_HELPER" "$DISK")
+  say "using the privileged flash helper (no password needed)"
+else
+  WRITE_CMD=(sudo dd "of=/dev/r$DISK" bs=4m)
+  sudo -v   # prompt for the password up front, not mid-pipeline
+fi
 
 say "unmounting /dev/$DISK"
 diskutil unmountDisk force "/dev/$DISK"
 
-say "flashing (raw device, ~5–15 min for an SD card; progress below)"
-xz -dc "$IMAGE" | sudo dd of="/dev/r$DISK" bs=4m status=progress
+# `status=progress` is a GNU coreutils extension: BSD dd accepts the operand
+# and silently emits nothing, so the write used to sit mute for ten-plus
+# minutes with no way to tell a slow card from a hung one. Count the bytes in
+# the pipe instead. The uncompressed total comes from the xz index (no need to
+# decompress twice), and a 1 MiB-block copier is orders of magnitude faster
+# than any SD card, so interposing it costs nothing. perl is stock on macOS.
+TOTAL="$(xz -l --robot "$IMAGE" | awk '$1 == "totals" {print $5}')"
+[[ "$TOTAL" =~ ^[0-9]+$ && "$TOTAL" -gt 0 ]] \
+  || die "cannot read the uncompressed size of $IMAGE — is it a valid .xz?"
+
+PROGRESS_PL="$(cat <<'PERL'
+use strict; use warnings; use Time::HiRes qw(time);
+my $total = shift or die "progress: total-bytes argument required\n";
+binmode STDIN; binmode STDOUT;
+# Redraw in place on a terminal; fall back to periodic lines when stderr is a
+# log or a pipe, where carriage returns would produce one unreadable line.
+my $tty = -t STDERR;
+my ($done, $start, $last_draw, $last_pct) = (0, time, 0, -1);
+
+sub human { my $b = shift;
+  $b >= 2 ** 30 ? sprintf("%.2f GB", $b / 2 ** 30) : sprintf("%.0f MB", $b / 2 ** 20) }
+
+sub draw {
+  my $elapsed = time - $start; $elapsed = 0.001 if $elapsed <= 0;
+  my $rate = $done / $elapsed;
+  my $pct  = $done * 100 / $total; $pct = 100 if $pct > 100;
+  my $eta  = ($rate > 0 && $done < $total) ? ($total - $done) / $rate : 0;
+  if ($tty) {
+    my $width = 32;
+    my $fill  = int($width * $pct / 100);
+    printf STDERR "\r  [%s%s] %3d%%  %s / %s  %.1f MB/s  ETA %d:%02d ",
+      "#" x $fill, "." x ($width - $fill), $pct,
+      human($done), human($total), $rate / 2 ** 20, int($eta / 60), int($eta) % 60;
+  } else {
+    printf STDERR "  %3d%%  %s / %s  %.1f MB/s\n",
+      $pct, human($done), human($total), $rate / 2 ** 20;
+  }
+}
+
+while (1) {
+  my $n = sysread(STDIN, my $buf, 1 << 20);
+  die "progress: read failed: $!\n" unless defined $n;
+  last if $n == 0;
+  # sysread/syswrite, not print: a short write to a pipe is normal and must be
+  # resumed at the right offset, or the image silently loses bytes.
+  my $off = 0;
+  while ($off < $n) {
+    my $w = syswrite(STDOUT, $buf, $n - $off, $off);
+    die "progress: write failed: $!\n" unless defined $w;
+    $off += $w;
+  }
+  $done += $n;
+  my $pct = int($done * 100 / $total);
+  if ($tty ? time - $last_draw >= 0.25 : $pct >= $last_pct + 5) {
+    ($last_draw, $last_pct) = (time, $pct);
+    draw();
+  }
+}
+draw();
+print STDERR "\n";
+PERL
+)"
+
+say "flashing $(awk -v b="$TOTAL" 'BEGIN {printf "%.2f GB", b / 2 ^ 30}') to /dev/r$DISK (~5–15 min for an SD card)"
+xz -dc "$IMAGE" | perl -e "$PROGRESS_PL" "$TOTAL" | "${WRITE_CMD[@]}"
 sync
 
 # ------------------------------------------------ remote access provisioning
@@ -240,6 +369,40 @@ WGCONF
     # until this runs. Loud, with the exact command.
     printf '\033[1;31merror:\033[0m hub registration failed — the unit cannot connect until you run:\n' >&2
     echo "  ssh ${TESLCAM_VPS:-adri@vps} '$REGISTER_CMD'" >&2
+  fi
+fi
+
+# ------------------------------------------------- optional: USB dev link
+# Both debug functions are armed by an empty marker file on the FAT boot
+# partition, and the card is already in this Mac — so offering it here is the
+# difference between a dev unit that is reachable from its very first boot and
+# one that costs another card swap the first time something goes wrong.
+# Opt-in via TESLCAM_DEV_LINK=1, never by default: the console is passwordless
+# root over USB, and both make the gadget composite (see gadget.Config), which
+# the car has not been validated against.
+if [[ "${TESLCAM_DEV_LINK:-}" == 1 ]]; then
+  # Read the baked hostname from the image builder rather than repeating it:
+  # the mDNS name the dev link is reached by is exactly that hostname.
+  DEV_LINK_HOST="$(awk -F= '/^HOSTNAME_BAKED=/{print $2; exit}' "$PROJECT_DIR/scripts/build-image.sh")"
+  [[ -n "$DEV_LINK_HOST" ]] || DEV_LINK_HOST=sentyx
+  diskutil mountDisk "/dev/$DISK" >/dev/null 2>&1 || true
+  DEVBOOT=""
+  for _ in $(seq 1 20); do
+    for v in /Volumes/bootfs /Volumes/boot; do
+      [[ -d "$v" ]] && { DEVBOOT="$v"; break 2; }
+    done
+    sleep 0.5
+  done
+  if [[ -n "$DEVBOOT" ]]; then
+    : > "$DEVBOOT/teslcam-gadget-net"
+    : > "$DEVBOOT/teslcam-gadget-console"
+    sync
+    say "armed the USB dev link (ethernet + serial console) on $DEVBOOT"
+    printf '  reach it over the USB cable: \033[1mssh adri@%s.local\033[0m\n' "$DEV_LINK_HOST"
+    printf '  deploy an agent build:       TESLCAM_PI=adri@%s.local scripts/install-agent.sh deploy\n' "$DEV_LINK_HOST"
+    printf '  \033[1;33mremove both files before this unit goes in a car.\033[0m\n'
+  else
+    printf '\033[1;33mnote:\033[0m boot partition did not mount — dev link not armed.\n'
   fi
 fi
 

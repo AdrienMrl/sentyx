@@ -8,6 +8,8 @@
 #   scripts/teslcam.sh build            build a golden image
 #   scripts/teslcam.sh pipeline         build -> validate -> flash -> verify
 #   scripts/teslcam.sh flash            flash the newest image to removable media
+#   scripts/teslcam.sh healthcheck      first-boot check over BLE + USB (no network)
+#   scripts/teslcam.sh unit [diskN]     flash -> wait for boot -> healthcheck, unattended
 #   scripts/teslcam.sh verify [host]    health-check a flashed unit over SSH
 #
 # Options: --yes (never prompt; CI), --no-color, --plain (no cursor control),
@@ -15,7 +17,9 @@
 #
 # Everything hardware-free runs in the Lima VM (teslcam-dev). What still needs
 # the real board — Pi firmware boot chain, EEPROM SD/USB order, dwc2 silicon,
-# the BLE radio, and the car — is what `verify` covers, over SSH, after flashing.
+# the BLE radio, and the car — is covered after flashing: `healthcheck` from
+# this Mac over BLE and USB (no network needed, so it works on a first boot),
+# then `verify` over SSH once the unit is on Wi-Fi.
 set -uo pipefail
 
 VM=teslcam-dev
@@ -506,6 +510,46 @@ if grep -aq "legacy advertising: asserting instance" "$M/usr/local/bin/teslcam-a
 else
   f "agent binary predates the BLE advertising fixes — onboarding will be undiscoverable"
 fi
+
+# The offline escape hatches: a unit with no network is only debuggable through
+# the USB cable, and both paths need image-side wiring that the agent alone
+# cannot supply. Shipping the CDC-ACM console without a getty (as the first
+# version did) yields a port that opens and then sits mute, which is worse than
+# not having it — the fault looks like the unit, not the missing service.
+grep -rq "ttyGS0" "$M/etc/udev/rules.d/" 2>/dev/null \
+  && p "udev starts a getty when the gadget console appears" \
+  || f "no getty wiring for ttyGS0 — the USB serial console would be a dead port"
+grep -q -- "--autologin" "$M/etc/systemd/system/serial-getty@ttyGS0.service.d/10-teslcam-autologin.conf" 2>/dev/null \
+  && p "gadget console autologin drop-in present" \
+  || f "no autologin on the gadget console — the admin password is locked, so the prompt is unanswerable"
+# The Wi-Fi trap this image was shipped with once: rfkill unblocked, radio
+# healthy, and NetworkManager still refusing to scan because it persisted
+# WirelessEnabled=false at first boot. Silent — the scan returns an empty list
+# with no error — so only an explicit check catches a regression here.
+[ -L "$M/etc/systemd/system/multi-user.target.wants/teslcam-wifi-enable.service" ] \
+  && p "wifi radio switch is re-enabled every boot" \
+  || f "no teslcam-wifi-enable unit — a unit can end up unable to scan Wi-Fi at all"
+grep -q "NM_UNMANAGED" "$M/etc/udev/rules.d/86-teslcam-usb0-managed.rules" 2>/dev/null \
+  && p "usb0 udev override present (NM ignores gadget devices by default)" \
+  || f "no usb0 udev override — NetworkManager would leave the dev link unmanaged"
+grep -q "ip link set usb0 up" "$M/etc/udev/rules.d/86-teslcam-usb0-managed.rules" 2>/dev/null \
+  && p "usb0 rule brings the link up (no carrier, no NM activation)" \
+  || f "usb0 rule does not raise the link — NM never activates a carrier-less device"
+
+USBNM="$M/etc/NetworkManager/system-connections/usb-gadget.nmconnection"
+if grep -q "interface-name=usb0" "$USBNM" 2>/dev/null; then
+  p "usb0 NM profile present (USB dev link)"
+  # Only meaningful once the profile exists; otherwise it double-reports the
+  # same missing file as two failures.
+  grep -q "never-default=true" "$USBNM" \
+    && p "usb0 profile is never-default (no route hijack from the dev host)" \
+    || f "usb0 profile may take a default route from whatever host the cable is in"
+else
+  f "no usb0 NM profile — the USB ethernet link would come up unconfigured"
+fi
+[ -e "$M/boot/firmware/teslcam-gadget-net" ] || [ -e "$M/boot/firmware/teslcam-gadget-console" ] \
+  && f "a gadget debug marker is baked into the image — every unit would ship composite" \
+  || p "no gadget debug marker baked in (armed per-unit at flash time)"
 VMAUDIT
   local rc=$? seen=0 line
   while IFS= read -r line; do
@@ -796,6 +840,93 @@ cmd_build()   { banner; do_doctor || { verdict none; return 1; }
                 do_source_checks; do_build; verdict none; }
 cmd_flash()   { banner; require_image || { verdict none; return 1; }
                 do_flash "$IMAGE_PATH"; }
+# The first-boot check runs on this Mac, not in the VM and not over SSH: a
+# freshly flashed unit has no network yet, so the only ways in are the two its
+# clients use — BLE (as the app) and USB mass storage (as the car).
+cmd_healthcheck(){
+  banner
+  if [ "$(uname)" != "Darwin" ]; then
+    bad "healthcheck needs macOS (CoreBluetooth + diskutil)"; verdict none; return 1
+  fi
+  phase "first-boot healthcheck"
+  info "power the unit and plug its USB-C *data* port into this Mac"
+  local args=()
+  [ "$ASSUME_YES" = 1 ] && args+=(--yes)
+  "$PROJECT_DIR/scripts/healthcheck-unit.sh" "${args[@]+"${args[@]}"}"
+}
+
+# flash -> wait for the unit to come up -> healthcheck, with no typing in
+# between. The card must already be in this Mac and the unit's USB-C data port
+# plugged in; everything after that is unattended.
+#
+# The wait is not a fixed sleep: first boot expands the rootfs and creates a
+# multi-gigabyte backing image, which takes anywhere from one to several
+# minutes depending on the card, and the gadget only appears once the agent has
+# it. Polling for the drive is both faster on a quick card and correct on a
+# slow one.
+cmd_unit(){
+  banner
+  [ "$(uname)" = "Darwin" ] || { bad "unit needs macOS"; verdict none; return 1; }
+
+  local disk="${1:-}"
+  if [ -z "$disk" ]; then
+    local candidates=()
+    while IFS= read -r d; do [ -n "$d" ] && candidates+=("$d"); done < <(removable_disks)
+    case "${#candidates[@]}" in
+      0) bad "no removable disk found — insert the card first"; verdict none; return 1 ;;
+      1) disk="${candidates[0]}"; info "target card: /dev/$disk" ;;
+      *) bad "several removable disks (${candidates[*]}) — name one: $(basename "$0") unit diskN"
+         verdict none; return 1 ;;
+    esac
+  fi
+
+  phase "flash  /dev/$disk"
+  if ! TESLCAM_DEV_LINK=1 "$PROJECT_DIR/scripts/flash-image.sh" --disk "$disk" --yes; then
+    bad "flashing failed"; verdict none; return 1
+  fi
+  ok "card written"
+
+  phase "first boot"
+  info "insert the card into the Pi, power it up, keep the USB-C data cable to this Mac"
+  # The card was just ejected, so the operator has to move it. Wait for the
+  # unit to announce itself rather than guessing how long that takes.
+  local waited=0
+  while [ "$waited" -lt 600 ]; do
+    if diskutil list 2>/dev/null | grep -q TESLACAM; then
+      ok "unit enumerated its drive after ${waited}s"
+      break
+    fi
+    sleep 10
+    waited=$((waited + 10))
+  done
+  if [ "$waited" -ge 600 ]; then
+    bad "no drive from the unit after 10 minutes — is it powered and cabled?"
+    verdict none; return 1
+  fi
+  # The agent needs a moment past the drive appearing before BLE is up.
+  sleep 20
+
+  phase "healthcheck"
+  "$PROJECT_DIR/scripts/healthcheck-unit.sh" --yes
+}
+
+# Whole removable disks, by the same predicate flash-image.sh uses (the
+# built-in SD reader reports Internal=true, so Ejectable is the discriminator).
+removable_disks() {
+  local d root_whole
+  root_whole="$(diskutil info -plist / 2>/dev/null | plutil -extract ParentWholeDisk raw -o - - 2>/dev/null)"
+  for d in $(diskutil list 2>/dev/null | grep -oE '^/dev/disk[0-9]+' | sed 's|/dev/||'); do
+    [ "$(diskutil info -plist "$d" 2>/dev/null | plutil -extract VirtualOrPhysical raw -o - - 2>/dev/null)" = "Physical" ] || continue
+    [ "$(diskutil info -plist "$d" 2>/dev/null | plutil -extract WholeDisk raw -o - - 2>/dev/null)" = "true" ] || continue
+    [ "$d" = "$root_whole" ] && continue
+    local internal ejectable
+    internal="$(diskutil info -plist "$d" 2>/dev/null | plutil -extract Internal raw -o - - 2>/dev/null)"
+    ejectable="$(diskutil info -plist "$d" 2>/dev/null | plutil -extract Ejectable raw -o - - 2>/dev/null)"
+    [ "$internal" = "false" ] || [ "$ejectable" = "true" ] || continue
+    printf '%s\n' "$d"
+  done
+}
+
 cmd_verify()  { banner
                 local h="${1:-$DEFAULT_HOST}"
                 [ -n "$h" ] || h="$(prompt_value 'unit to verify (ssh host, e.g. pi or 10.8.0.2)')"
@@ -815,6 +946,13 @@ cmd_pipeline(){
   fi
   verdict hardware-free
   do_flash "$IMAGE_PATH" || return 0
+  printf '\n'
+  # The first-boot check comes before the SSH one: it is the only one that works
+  # on a unit that has never been onboarded, and it is what puts it on Wi-Fi.
+  if [ "$(uname)" = "Darwin" ] && confirm "run the first-boot healthcheck (BLE + USB) now?"; then
+    info "power the unit from the card you just flashed and plug its USB-C data port into this Mac"
+    confirm "unit powered and plugged in?" && cmd_healthcheck
+  fi
   printf '\n'
   if confirm "verify the flashed unit over SSH now?"; then
     info "power the unit and wait for it to join Wi-Fi (BLE onboarding first, if fresh)"
@@ -838,6 +976,8 @@ interactive() {
       "audit            static audit of the newest image (fast)" \
       "build            build a golden image" \
       "flash            write the newest image to removable media" \
+      "healthcheck      first-boot check over BLE + USB (no network needed)" \
+      "unit             flash a card, wait for boot, healthcheck (unattended)" \
       "verify unit      health-check a flashed Pi over SSH" \
       "doctor           check this machine and the Lima VM" \
       "quit" || return 0
@@ -848,9 +988,11 @@ interactive() {
       3) cmd_audit ;;
       4) cmd_build ;;
       5) cmd_flash ;;
-      6) cmd_verify ;;
-      7) cmd_doctor ;;
-      8|0) return 0 ;;
+      6) cmd_healthcheck ;;
+      7) cmd_unit ;;
+      8) cmd_verify ;;
+      9) cmd_doctor ;;
+      10|0) return 0 ;;
     esac
     [ -t 0 ] || return 0
     confirm "back to the menu?" || return 0
@@ -867,7 +1009,7 @@ while [ $# -gt 0 ]; do
     --plain)    USE_COLOR=0; USE_CURSOR=0; init_caps ;;
     --host)     shift; DEFAULT_HOST="${1:-}"; [ -n "$DEFAULT_HOST" ] || die "--host needs a value" ;;
     --image)    shift; IMAGE_OVERRIDE="${1:-}"; [ -f "$IMAGE_OVERRIDE" ] || die "no such image: ${1:-}" ;;
-    -h|--help)  sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help)  sed -n '2,21p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     -*)         die "unknown option: $1" ;;
     *)          if [ -z "$CMD" ]; then CMD="$1"; else ARGS="$1"; fi ;;
   esac
@@ -881,6 +1023,8 @@ case "${CMD:-}" in
   validate)   cmd_validate ;;
   build)      cmd_build ;;
   flash)      cmd_flash ;;
+  healthcheck) cmd_healthcheck ;;
+  unit)       cmd_unit "$ARGS" ;;
   verify)     cmd_verify "$ARGS" ;;
   pipeline)   cmd_pipeline ;;
   *)          die "unknown command: $CMD (try --help)" ;;
