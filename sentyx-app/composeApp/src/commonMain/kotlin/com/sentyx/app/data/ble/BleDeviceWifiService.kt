@@ -72,8 +72,26 @@ class BleDeviceWifiService(
                     releaseSession()
                     s = PiBleSession.connect(scope, advertisement, DEVICE_LABEL)
                     session = s
-                    s.awaitStatus(OP_MS, ControlOp.beginManage()) {
-                        it.state == "authenticated" || it.ok == false
+                    try {
+                        s.awaitStatus(OP_MS, ControlOp.beginManage()) {
+                            it.state == "authenticated" || it.ok == false
+                        }
+                    } catch (retry: KCancellationException) {
+                        throw retry
+                    } catch (retry: Throwable) {
+                        // The retry above exists for one specific failure: the
+                        // link dropping the instant a *successful* bond
+                        // completes. Failing twice means the write never got an
+                        // encrypted link at all — the phone is offering bond
+                        // keys the Pi no longer has, because the Pi wipes its
+                        // bonds whenever it starts unprovisioned (see
+                        // internal/blepair: removeBondedDevices). Nothing
+                        // propagates that wipe to Android, and an app cannot
+                        // drop its own bond (removeBond is not public API), so
+                        // the only way out is the system Bluetooth settings.
+                        // Say that, instead of relaying "write failed".
+                        log("begin_manage: retry failed (${retry.message}) — treating as stale bond")
+                        fail(STALE_BOND_MESSAGE, retry)
                     }
                 }
             }
@@ -91,7 +109,13 @@ class BleDeviceWifiService(
             releaseSession()
             _linkState.value = WifiLinkState.Disconnected
             if (e is DeviceWifiException) throw e
-            fail(e.message ?: "Couldn't connect to your Sentyx Pi.", e)
+            // Never relay the BLE layer's own wording. Kable describes a
+            // rejected write either as the toString() of an internal data class
+            // ("OnCharacteristicWrite(... status=GATT_NO_RESOURCES(128))") or,
+            // when it carries no message at all, as the bare "write failed"
+            // fallback composed in PiBleSession — both of which reached this
+            // screen verbatim and told the user nothing actionable.
+            fail("Couldn't connect to your Sentyx Pi. Make sure it's powered and nearby, then retry.", e)
         }
     }
 
@@ -136,9 +160,11 @@ class BleDeviceWifiService(
             // A dropped link ends the settings session; reflect it so the UI can
             // offer to reconnect.
             _linkState.value = WifiLinkState.Disconnected
-            fail(e.message ?: "Lost the connection to your Sentyx Pi.", e)
+            log("wifi command: link lost (${e.message})")
+            fail("Lost the connection to your Sentyx Pi. Reconnect and try again.", e)
         } catch (e: Throwable) {
-            fail(e.message ?: "The Wi-Fi command failed.", e)
+            log("wifi command failed (${e.message})")
+            fail("The Wi-Fi command didn't go through. Try again.", e)
         }
         return try {
             SentyxGatt.json.decodeFromString<WifiResultDto>(json)
@@ -170,6 +196,17 @@ class BleDeviceWifiService(
 
     private companion object {
         const val DEVICE_LABEL = "your Sentyx Pi"
+
+        /**
+         * Shown when the encrypted write fails twice — the phone and the Pi no
+         * longer agree on bond keys. Names the exact Android setting because
+         * that is the only place the bond can be cleared, and says setup has to
+         * be redone: a Pi that wiped its bonds is unprovisioned, so management
+         * would be refused even with a working link.
+         */
+        const val STALE_BOND_MESSAGE =
+            "This phone's Bluetooth pairing with your Sentyx Pi is no longer valid. " +
+                "Open Android Settings › Bluetooth, forget \"sentyx\", then set the device up again."
         const val SCAN_MS = 8_000L
         const val OP_MS = 15_000L
 
