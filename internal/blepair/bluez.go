@@ -276,28 +276,6 @@ func (g *gattServer) setAdapterProp(prop string, value any) error {
 	return g.adapterObj().Call(ifaceProperties+".Set", 0, ifaceAdapter, prop, dbus.MakeVariant(value)).Err
 }
 
-// removeBondedDevices drops every device BlueZ remembers on this adapter.
-// A phone that stays bonded to a Pi whose bond store was wiped (or vice
-// versa) fails encryption silently, so onboarding starts from a clean slate.
-// The Pi's Bluetooth is dedicated to this service.
-func (g *gattServer) removeBondedDevices() {
-	var objs map[dbus.ObjectPath]map[string]map[string]dbus.Variant
-	if err := g.conn.Object("org.bluez", "/").Call(ifaceObjectManager+".GetManagedObjects", 0).Store(&objs); err != nil {
-		g.logf("blepair: listing devices: %v", err)
-		return
-	}
-	for path, ifaces := range objs {
-		if _, isDevice := ifaces[ifaceDevice]; !isDevice {
-			continue
-		}
-		if err := g.adapterObj().Call("org.bluez.Adapter1.RemoveDevice", 0, path).Err; err != nil {
-			g.logf("blepair: removing stale device %s: %v", path, err)
-		} else {
-			g.logf("blepair: removed stale bonded device %s", path)
-		}
-	}
-}
-
 // register wires everything into BlueZ: NoInputNoOutput agent, GATT
 // application, and advertisement. Registration is retried briefly because
 // bluetoothd may still be settling right after boot.
@@ -505,7 +483,12 @@ func (g *gattServer) watchLegacyAdv(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				if g.connected.Load() {
+				// Two gates, because getting this wrong silently breaks
+				// pairing: the cached flag, and BlueZ's own view. Re-asserting
+				// the advertisement mid-SMP kills the exchange with no error
+				// anywhere, so a stale flag must not be the only thing standing
+				// between a first-time phone and a working onboarding.
+				if g.connected.Load() || g.anyCentralConnected() {
 					continue
 				}
 				// Quiet on success: one log line per minute would be noise.
@@ -513,6 +496,57 @@ func (g *gattServer) watchLegacyAdv(ctx context.Context) {
 			}
 		}
 	}()
+}
+
+// initiatePairing asks BlueZ to bond with a freshly connected central, from
+// the peripheral side.
+//
+// A central pairing with this unit for the first time gets no further than the
+// Pairing Response: it sends its request, the controller answers, and the
+// exchange then sits there until the client gives up — no SMP failure, no agent
+// callback, nothing in any log. A central that already holds a bond re-pairs
+// through the same code path without trouble, which is what made this look like
+// a stale-key problem for so long.
+//
+// Driving the bond from here turns that dead wait into a normal, mutually
+// initiated pairing. It is best-effort and asynchronous: Pair() blocks for the
+// duration of the exchange, "already exists" is the ordinary answer for a peer
+// we know, and a failure must never take down the GATT service.
+func (g *gattServer) initiatePairing(path dbus.ObjectPath) {
+	go func() {
+		call := g.conn.Object("org.bluez", path).Call("org.bluez.Device1.Pair", 0)
+		if call.Err != nil {
+			// AlreadyExists simply means the peer is already bonded.
+			if !strings.Contains(call.Err.Error(), "AlreadyExists") {
+				g.logf("blepair: pairing %s: %v", path, call.Err)
+			}
+			return
+		}
+		g.logf("blepair: paired with %s", path)
+	}()
+}
+
+// anyCentralConnected asks BlueZ whether any device is connected right now,
+// rather than trusting state we accumulated from signals we might have missed.
+func (g *gattServer) anyCentralConnected() bool {
+	var objs map[dbus.ObjectPath]map[string]map[string]dbus.Variant
+	if err := g.conn.Object("org.bluez", "/").Call(ifaceObjectManager+".GetManagedObjects", 0).Store(&objs); err != nil {
+		// Unknown means "maybe": skipping one advertising pass is harmless,
+		// interrupting a pairing is not.
+		return true
+	}
+	for _, ifaces := range objs {
+		props, isDevice := ifaces[ifaceDevice]
+		if !isDevice {
+			continue
+		}
+		if v, ok := props["Connected"]; ok {
+			if connected, _ := v.Value().(bool); connected {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (g *gattServer) unregister() {
@@ -525,11 +559,23 @@ func (g *gattServer) unregister() {
 	g.conn.Object("org.bluez", "/org/bluez").Call("org.bluez.AgentManager1.UnregisterAgent", 0, agentPath)
 }
 
-// watchDisconnects invokes onDisconnect whenever a Device1 loses its
-// connection (Connected -> false PropertiesChanged signal). It also tracks the
-// current connected state on g.connected and, on the btmgmt fallback path,
+// watchDisconnects tracks central connections: it invokes onDisconnect when one
+// goes away, keeps g.connected current, and on the btmgmt fallback path
 // re-asserts the advertisement after each disconnect — the controller does not
 // reliably resume the legacy instance on its own.
+//
+// It listens for InterfacesAdded as well as PropertiesChanged, and that is not
+// belt and braces. BlueZ only has a Device1 object for a peer it already knows;
+// a central that has never paired with this unit arrives as a *new* object,
+// announced by InterfacesAdded with Connected already true, and never emits the
+// PropertiesChanged that a Connected-only watcher waits for. g.connected then
+// stays false for exactly the peers that are pairing for the first time — and
+// the advertising watchdog, which skips passes while a central is connected,
+// happily re-asserts the advertisement in the middle of their SMP exchange and
+// kills it. The pairing dies with no error on either side: the phone reports a
+// write that was never acknowledged, the unit logs nothing at all. It only ever
+// bit first-time pairings, which made it look like anything but a race with our
+// own watchdog.
 func (g *gattServer) watchDisconnects(onDisconnect func()) error {
 	if err := g.conn.AddMatchSignal(
 		dbus.WithMatchSender("org.bluez"),
@@ -538,11 +584,36 @@ func (g *gattServer) watchDisconnects(onDisconnect func()) error {
 	); err != nil {
 		return err
 	}
+	if err := g.conn.AddMatchSignal(
+		dbus.WithMatchSender("org.bluez"),
+		dbus.WithMatchInterface(ifaceObjectManager),
+		dbus.WithMatchMember("InterfacesAdded"),
+	); err != nil {
+		return err
+	}
 	ch := make(chan *dbus.Signal, 16)
 	g.conn.Signal(ch)
 	go func() {
 		for sig := range ch {
 			if len(sig.Body) < 2 {
+				continue
+			}
+			// A device object appearing already connected: the first-pairing
+			// case above.
+			if sig.Name == ifaceObjectManager+".InterfacesAdded" {
+				ifaces, _ := sig.Body[1].(map[string]map[string]dbus.Variant)
+				props, isDevice := ifaces[ifaceDevice]
+				if !isDevice {
+					continue
+				}
+				if v, ok := props["Connected"]; ok {
+					if connected, _ := v.Value().(bool); connected {
+						g.connected.Store(true)
+						path, _ := sig.Body[0].(dbus.ObjectPath)
+						g.logf("blepair: central %s connected (new device)", path)
+						g.initiatePairing(path)
+					}
+				}
 				continue
 			}
 			iface, _ := sig.Body[0].(string)

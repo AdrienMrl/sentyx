@@ -536,6 +536,13 @@ grep -q "ip link set usb0 up" "$M/etc/udev/rules.d/86-teslcam-usb0-managed.rules
   && p "usb0 rule brings the link up (no carrier, no NM activation)" \
   || f "usb0 rule does not raise the link — NM never activates a carrier-less device"
 
+# Without this, onboarding works exactly once per boot: BlueZ rejects the
+# second Just Works pairing from a phone it still holds a bond for, inside
+# bluetoothd, and the app can only report "write failed".
+grep -q "^JustWorksRepairing = always" "$M/etc/bluetooth/main.conf" 2>/dev/null \
+  && p "BlueZ allows Just Works re-pairing (retried onboarding works)" \
+  || f "JustWorksRepairing not set — a retried pairing is rejected before our agent sees it"
+
 USBNM="$M/etc/NetworkManager/system-connections/usb-gadget.nmconnection"
 if grep -q "interface-name=usb0" "$USBNM" 2>/dev/null; then
   p "usb0 NM profile present (USB dev link)"

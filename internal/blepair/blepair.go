@@ -129,18 +129,40 @@ func Run(ctx context.Context, cfg Config) error {
 		},
 	})
 
+	// None of these require encryption, and that is a deliberate, measured
+	// retreat rather than an oversight.
+	//
+	// Requiring it made onboarding impossible for any client pairing with a
+	// unit for the first time. BlueZ answers the pairing request with IO
+	// capability NoInputNoOutput *and* the MITM bit set — a combination no
+	// association model can satisfy — and both macOS and Android respond by
+	// going silent: no SMP failure, no agent callback, nothing logged on the
+	// unit. The write that triggered it is rejected with "Insufficient
+	// Encryption" and never replayed, so the app reports a write that failed
+	// or a status that never came, and the unit reports nothing at all. Only
+	// clients that already held a bond could get through, which is why this
+	// survived earlier testing.
+	//
+	// What is actually lost is smaller than it looks: Just Works pairing has
+	// no MITM protection to begin with, so an attacker in radio range during
+	// the onboarding window could always have sat in the middle. The gate that
+	// matters is physical presence in that window. What is genuinely exposed
+	// now is payload confidentiality — the server token and the Wi-Fi PSK
+	// travel in the clear to a listener in range — and that is worth closing
+	// again by encrypting those payloads at the application layer, which is
+	// under our control, rather than by an SMP negotiation that is not.
 	g.chars = []*characteristic{
 		{path: servicePath + "/char0", uuid: UUIDDeviceInfo, flags: []string{"read"},
 			read: sess.DeviceInfo, server: g},
-		{path: servicePath + "/char1", uuid: UUIDControl, flags: []string{"encrypt-write"},
+		{path: servicePath + "/char1", uuid: UUIDControl, flags: []string{"write"},
 			write: sess.HandleControl, server: g},
-		{path: servicePath + "/char2", uuid: UUIDStatus, flags: []string{"encrypt-read", "notify"},
+		{path: servicePath + "/char2", uuid: UUIDStatus, flags: []string{"read", "notify"},
 			read: sess.StatusValue, server: g},
-		{path: servicePath + "/char3", uuid: UUIDConfig, flags: []string{"encrypt-write"},
+		{path: servicePath + "/char3", uuid: UUIDConfig, flags: []string{"write"},
 			write: sess.HandleConfigFrame, server: g},
-		{path: servicePath + "/char4", uuid: UUIDWifiCmd, flags: []string{"encrypt-write"},
+		{path: servicePath + "/char4", uuid: UUIDWifiCmd, flags: []string{"write"},
 			write: sess.HandleWifiFrame, server: g},
-		{path: servicePath + "/char5", uuid: UUIDWifiResult, flags: []string{"encrypt-read", "notify"},
+		{path: servicePath + "/char5", uuid: UUIDWifiResult, flags: []string{"read", "notify"},
 			read: sess.WifiResultValue, server: g},
 		// Plain read, like DeviceInfo: a health check must be able to ask a unit
 		// how it is without pairing with it (see Health).
@@ -173,14 +195,19 @@ func Run(ctx context.Context, cfg Config) error {
 	if err := g.setAdapterProp("Pairable", true); err != nil {
 		return fmt.Errorf("blepair: setting pairable: %w", err)
 	}
-	// Only an unprovisioned device starts from a clean bond slate: a phone
-	// bonded to a Pi whose bond store was wiped (or vice versa) fails
-	// encryption silently, so onboarding removes any stale bonds. A
-	// provisioned device keeps its bonds — the onboarded phone reconnects
-	// with them for Wi-Fi management after every agent restart.
-	if !provisioned {
-		g.removeBondedDevices()
-	}
+	// Bonds are deliberately NOT wiped here any more. Wiping them on every
+	// unprovisioned start was meant to clear stale Pi-side keys, but it
+	// created the mismatch it was trying to prevent: the phone that paired a
+	// minute ago keeps a key this unit has just discarded, so its next
+	// encrypted write fails, and neither side can recover — a phone cannot be
+	// made to re-pair without the user hunting through system Bluetooth
+	// settings, which is not something onboarding can ask for.
+	//
+	// What actually fixes the mismatch is letting either side re-pair:
+	// JustWorksRepairing=always in the image (BlueZ refuses Just Works
+	// re-pairing by default, inside bluetoothd, before this agent is ever
+	// consulted). With that, a peer holding a key we do not have simply pairs
+	// again, and a peer holding a valid one keeps working across restarts.
 	if err := g.watchDisconnects(sess.Disconnected); err != nil {
 		return fmt.Errorf("blepair: watching disconnects: %w", err)
 	}

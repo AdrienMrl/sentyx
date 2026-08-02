@@ -275,6 +275,20 @@ systemctl enable teslcam-wifi-enable.service
 # carrier, and an ECM gadget has no carrier until its interface is brought up —
 # so without the RUN+= the device sits "unavailable" forever and the link never
 # forms. 86- so it is parsed after NetworkManager's own rule.
+# BlueZ refuses Just Works re-pairing by default (JustWorksRepairing = never),
+# and this design depends on exactly that: an unprovisioned unit wipes its bond
+# store on every agent start, so the phone that paired a minute ago is an
+# unknown peer on the next attempt while BlueZ still holds a bond for it. The
+# rejection happens inside bluetoothd, before our pairing agent is ever asked,
+# and reaches the user as an unexplained "write failed" the moment onboarding
+# is retried. Just Works has no MITM protection to preserve in the first place
+# — the security model here is physical proximity during the onboarding window.
+if grep -q "^#*JustWorksRepairing" /etc/bluetooth/main.conf; then
+  sed -i "s/^#*JustWorksRepairing.*/JustWorksRepairing = always/" /etc/bluetooth/main.conf
+else
+  sed -i "s/^\[General\]/[General]\nJustWorksRepairing = always/" /etc/bluetooth/main.conf
+fi
+
 cat > /etc/udev/rules.d/86-teslcam-usb0-managed.rules <<'USB0'
 ACTION=="add|change", SUBSYSTEM=="net", KERNEL=="usb0", ENV{NM_UNMANAGED}="0", RUN+="/usr/sbin/ip link set usb0 up"
 USB0
