@@ -511,6 +511,18 @@ else
   f "agent binary predates the BLE advertising fixes — onboarding will be undiscoverable"
 fi
 
+# The connection test's auth probe must be the device's own status endpoint,
+# never /usage. A per-device token is authorized for the device it was minted
+# for; /usage is operator-only, so an agent built before the fix fails the last
+# step of onboarding with 403 on a token that is perfectly valid. Detected by
+# the absence of the "/usage" literal, which only that probe ever put in this
+# binary.
+if grep -aq "/usage" "$M/usr/local/bin/teslcam-agent"; then
+  f "agent binary still probes /usage — onboarding will fail 403 at the connection test"
+else
+  p "agent binary probes the device's own endpoint for the auth check"
+fi
+
 # The offline escape hatches: a unit with no network is only debuggable through
 # the USB cable, and both paths need image-side wiring that the agent alone
 # cannot supply. Shipping the CDC-ACM console without a getty (as the first
