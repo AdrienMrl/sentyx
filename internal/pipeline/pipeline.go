@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/AdrienMrl/teslcam/internal/cameraselect"
@@ -70,6 +71,12 @@ type Config struct {
 	// via client.Pending() without the pipeline owning that concern.
 	UploaderReady func(*eventupload.Client)
 
+	// RecordingChanged reports whether the Tesla appears to be actively
+	// changing a file. The false transition is deliberately delayed until a
+	// complete stability window has elapsed, making it suitable as the OTA
+	// restart interlock.
+	RecordingChanged func(bool)
+
 	Logf func(format string, v ...any)
 }
 
@@ -128,6 +135,44 @@ func Run(ctx context.Context, cfg Config) error {
 	if err != nil {
 		return err
 	}
+
+	var recordingMu sync.Mutex
+	var recordingTimer *time.Timer
+	recording := false
+	setRecording := func(active bool) {
+		if cfg.RecordingChanged == nil {
+			return
+		}
+		recordingMu.Lock()
+		defer recordingMu.Unlock()
+		if active {
+			if !recording {
+				recording = true
+				cfg.RecordingChanged(true)
+			}
+			if recordingTimer != nil {
+				recordingTimer.Stop()
+			}
+			recordingTimer = time.AfterFunc(cfg.Interval*time.Duration(cfg.StablePolls+1), func() {
+				recordingMu.Lock()
+				defer recordingMu.Unlock()
+				if recording {
+					recording = false
+					cfg.RecordingChanged(false)
+				}
+			})
+		}
+	}
+	defer func() {
+		recordingMu.Lock()
+		if recordingTimer != nil {
+			recordingTimer.Stop()
+		}
+		if recording && cfg.RecordingChanged != nil {
+			cfg.RecordingChanged(false)
+		}
+		recordingMu.Unlock()
+	}()
 
 	var uploader *eventupload.Client
 	if cfg.PostTo != "" {
@@ -267,6 +312,10 @@ func Run(ctx context.Context, cfg Config) error {
 	err = w.Run(ctx,
 		func(ev watch.Event) {
 			cfg.Logf("%s", ev)
+			if !ev.IsDir && (ev.Type == watch.FileAdded || ev.Type == watch.FileChanged) &&
+				(cfg.CopyPrefix == "" || strings.HasPrefix(ev.Path, cfg.CopyPrefix+"/")) {
+				setRecording(true)
+			}
 			if ev.Type == watch.DirAdded && IsSentryEventDir(ev.Path) {
 				cfg.Logf(">>> NEW SENTRY EVENT: %s", ev.Path)
 			}

@@ -39,6 +39,7 @@ import (
 	"github.com/AdrienMrl/teslcam/internal/lte"
 	"github.com/AdrienMrl/teslcam/internal/pipeline"
 	"github.com/AdrienMrl/teslcam/internal/tokenfile"
+	"github.com/AdrienMrl/teslcam/internal/updateready"
 	"github.com/AdrienMrl/teslcam/internal/videocompress"
 	"github.com/AdrienMrl/teslcam/internal/wifi"
 )
@@ -113,6 +114,7 @@ func main() {
 	heartbeatInterval := flag.Duration("heartbeat-interval", 0, "heartbeat POST interval, e.g. 30s (required, > 0, with -heartbeat; no implicit default)")
 	healthDB := flag.String("health-db", "", "SQLite path for the local heartbeat sample spool: samples are stored here first and backfilled to the server after offline windows; empty = direct sends only (no offline history)")
 	healthLogInterval := flag.Duration("health-log-interval", 0, "log a local health line (SoC temp, load, throttle flags) at this interval, e.g. 1m; 0 disables")
+	updateReadinessSocket := flag.String("update-readiness-socket", "", "Unix socket exposing whether an OTA restart is safe; empty disables")
 	lteIface := flag.String("lte-iface", "", "metered LTE fallback interface, e.g. eth1; uploads and heartbeats retry bound to it when the default route fails (empty = disabled)")
 	lteDNS := flag.String("lte-dns", "", "DNS resolver dialed over the LTE interface, e.g. 8.8.8.8:53 (required with -lte-iface)")
 	lteDialTimeout := flag.Duration("lte-dial-timeout", 0, "per-attempt dial timeout before falling back to LTE, e.g. 10s (required, > 0, with -lte-iface)")
@@ -217,6 +219,26 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	var recordingNow atomic.Bool
+	var uploaderRef atomic.Pointer[eventupload.Client]
+	if *updateReadinessSocket != "" {
+		go func() {
+			err := updateready.Run(ctx, updateready.Config{
+				SocketPath: *updateReadinessSocket,
+				Recording:  recordingNow.Load,
+				Backlog: func() int {
+					if u := uploaderRef.Load(); u != nil {
+						return u.Pending()
+					}
+					return 0
+				},
+			})
+			if err != nil && ctx.Err() == nil {
+				log.Printf("update readiness: %v", err)
+			}
+		}()
+	}
+
 	// BLE onboarding starts before gadget setup, and deliberately so.
 	// Everything below this point is fatal on error — no UDC, a missing or
 	// corrupt backing image — and with Restart=on-failure a fatal start turns
@@ -244,6 +266,12 @@ func main() {
 				Wifi:         wifi.NewNMCLI(),
 				HealthFunc:   func() blepair.Health { return agentHealth(wifiHealth, *imagePath, *configfs, *gadgetName) },
 				Restart: func() {
+					// Provisioning has just created server.token and populated
+					// agent.env. Start the updater before restarting ourselves;
+					// its systemd Conditions were false on the unprovisioned boot.
+					if err := exec.Command("systemctl", "restart", "teslcam-updater").Run(); err != nil {
+						log.Printf("blepair: start teslcam-updater: %v", err)
+					}
 					if err := exec.Command("systemctl", "restart", "teslcam-agent").Run(); err != nil {
 						log.Printf("blepair: restart teslcam-agent: %v", err)
 					}
@@ -408,8 +436,6 @@ func main() {
 	// exists, letting the heartbeat reporter read the live pending-upload
 	// backlog without the reporter and pipeline sharing lifecycle. Reads before
 	// the pipeline sets it see nil and report a zero backlog.
-	var uploaderRef atomic.Pointer[eventupload.Client]
-
 	// Device-status heartbeats run beside the pipeline on the same signal ctx.
 	// They are pure best-effort telemetry: a failure here must never take down
 	// the agent, so New/Run errors are only logged. Only a provisioned device
@@ -441,11 +467,10 @@ func main() {
 					}
 					return 0
 				},
-				// TODO(m6): recordingNow needs the watcher to expose whether a clip
-				// is currently stabilizing; not surfaced today, so report false.
-				// All other device-health metrics (storage, temp, throttle, wifi,
-				// uptime, backlog) are real.
-				RecordingNow: func() bool { return false },
+				// The watcher holds this true until a complete stability window has
+				// elapsed since the last Tesla file change. The same conservative
+				// signal gates OTA restarts through the local readiness socket.
+				RecordingNow: recordingNow.Load,
 			})
 			if err != nil {
 				log.Printf("health: heartbeat disabled (config error): %v", err)
@@ -493,6 +518,7 @@ func main() {
 		CameraScorer:          cameraScorer,
 		CameraScoreWait:       *cameraScoreWait,
 		UploaderReady:         func(u *eventupload.Client) { uploaderRef.Store(u) },
+		RecordingChanged:      recordingNow.Store,
 		Logf:                  log.Printf,
 	})
 

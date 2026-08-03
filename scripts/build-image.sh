@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 # Build a flashable "golden" SD/SSD image for a teslcam Pi 4 field unit.
 #
-#   scripts/build-image.sh <backing-gb> <authorized-keys-file>
+#   scripts/build-image.sh <backing-gb> <authorized-keys-file> <ota-public-key>
 #
 #   backing-gb            size of the sparse exFAT backing image the unit
 #                         creates on first boot (e.g. 64). Required — there is
 #                         no default.
 #   authorized-keys-file  SSH public key(s) baked into the admin user
 #                         (e.g. ~/.ssh/id_rsa.pub). Required.
+#   ota-public-key        Ed25519 release verification public key (PEM).
 #
 # Output: build/teslcam-pi4-<version>.img.xz — flash to an SD card *or* a USB
 # SSD with Raspberry Pi Imager or dd; the image is device-agnostic (Pi OS
@@ -63,12 +64,15 @@ usage() {
 
 BACKING_GB="${1:-}"
 KEYFILE="${2:-}"
+OTA_KEYFILE="${3:-}"
 [[ "$BACKING_GB" =~ ^[0-9]+$ && "$BACKING_GB" -gt 0 ]] || usage
 [[ -n "$KEYFILE" ]] || usage
+[[ -n "$OTA_KEYFILE" ]] || usage
 
 # ---------------------------------------------------------------- host phase
 if [ "$(uname)" = "Darwin" ]; then
   [[ -f "$KEYFILE" ]] || die "authorized-keys file not found: $KEYFILE"
+  [[ -f "$OTA_KEYFILE" ]] || die "OTA public key not found: $OTA_KEYFILE"
   grep -qE '^(ssh|ecdsa)-' "$KEYFILE" || die "$KEYFILE does not look like an SSH public key"
 
   VERSION="$(git -C "$PROJECT_DIR" describe --always --dirty 2>/dev/null || echo dev)"
@@ -80,7 +84,10 @@ if [ "$(uname)" = "Darwin" ]; then
     -o "$INPUTS/teslcam-agent" ./cmd/teslcam-agent)
   (cd "$PROJECT_DIR" && env GOOS=linux GOARCH=arm64 CGO_ENABLED=0 \
     go build -trimpath -o "$INPUTS/teslcam-lte" ./cmd/teslcam-lte)
+  (cd "$PROJECT_DIR" && env GOOS=linux GOARCH=arm64 CGO_ENABLED=0 \
+    go build -trimpath -o "$INPUTS/teslcam-updater" ./cmd/teslcam-updater)
   cp "$KEYFILE" "$INPUTS/authorized_keys"
+  cp "$OTA_KEYFILE" "$INPUTS/ota-release.pub.pem"
   echo "$VERSION" > "$INPUTS/version"
 
   if ! limactl list --format '{{.Name}} {{.Status}}' | grep -q "^$VM Running"; then
@@ -89,11 +96,11 @@ if [ "$(uname)" = "Darwin" ]; then
   fi
 
   say "re-exec'ing inside $VM"
-  exec limactl shell "$VM" -- bash "$PROJECT_DIR/scripts/build-image.sh" "$BACKING_GB" "$KEYFILE"
+  exec limactl shell "$VM" -- bash "$PROJECT_DIR/scripts/build-image.sh" "$BACKING_GB" "$KEYFILE" "$OTA_KEYFILE"
 fi
 
 # ------------------------------------------------------------------ VM phase
-[[ -f "$INPUTS/teslcam-agent" && -f "$INPUTS/authorized_keys" ]] \
+[[ -f "$INPUTS/teslcam-agent" && -f "$INPUTS/teslcam-updater" && -f "$INPUTS/authorized_keys" && -f "$INPUTS/ota-release.pub.pem" ]] \
   || die "missing $INPUTS — run this script from the Mac, it prepares inputs first"
 VERSION="$(cat "$INPUTS/version")"
 
@@ -162,7 +169,8 @@ printf '#!/bin/sh\nexit 101\n' | sudo tee "$MNT/usr/sbin/policy-rc.d" >/dev/null
 sudo chmod +x "$MNT/usr/sbin/policy-rc.d"
 
 say "staging build inputs into image"
-sudo install -m 755 "$INPUTS/teslcam-agent" "$MNT/usr/local/bin/teslcam-agent"
+sudo install -D -m 755 "$INPUTS/teslcam-agent" "$MNT/opt/teslcam/releases/$VERSION/teslcam-agent"
+sudo install -m 755 "$INPUTS/teslcam-updater" "$MNT/usr/local/bin/teslcam-updater"
 sudo install -m 755 "$INPUTS/teslcam-lte" "$MNT/usr/local/bin/teslcam-lte"
 sudo install -m 644 "$PROJECT_DIR/scripts/teslcam-agent-pi4.service" \
   "$MNT/etc/systemd/system/teslcam-agent.service"
@@ -170,12 +178,16 @@ sudo install -m 755 "$PROJECT_DIR/scripts/teslcam-power-evidence" \
   "$MNT/usr/local/sbin/teslcam-power-evidence"
 sudo install -m 644 "$PROJECT_DIR/scripts/teslcam-power-evidence.service" \
   "$MNT/etc/systemd/system/teslcam-power-evidence.service"
+sudo install -m 644 "$PROJECT_DIR/scripts/teslcam-updater.service" \
+  "$MNT/etc/systemd/system/teslcam-updater.service"
+sudo install -D -m 644 "$INPUTS/ota-release.pub.pem" \
+  "$MNT/etc/teslcam/ota-release.pub.pem"
 sudo rm -rf "$MNT/tmp/scorer-src"
 sudo cp -r "$PROJECT_DIR/tools/camera-scorer" "$MNT/tmp/scorer-src"
 sudo install -m 644 "$INPUTS/authorized_keys" "$MNT/tmp/authorized_keys"
 
 say "customizing in chroot (apt + scorer build; several minutes)"
-sudo env BACKING_GB="$BACKING_GB" ADMIN_USER="$ADMIN_USER" \
+sudo env BACKING_GB="$BACKING_GB" ADMIN_USER="$ADMIN_USER" VERSION="$VERSION" \
   HOSTNAME_BAKED="$HOSTNAME_BAKED" WIFI_REGDOM="$WIFI_REGDOM" \
   chroot "$MNT" /bin/bash -s <<'CHROOT'
 set -euo pipefail
@@ -201,7 +213,8 @@ apt-get install -y --no-install-recommends \
 # Camera scorer, built against this image's own OpenCV so .so versions match.
 cmake -S /tmp/scorer-src -B /tmp/scorer-build >/dev/null
 cmake --build /tmp/scorer-build -j2
-install -m 755 /tmp/scorer-build/teslcam-camera-scorer /usr/local/bin/teslcam-camera-scorer
+install -m 755 /tmp/scorer-build/teslcam-camera-scorer "/opt/teslcam/releases/$VERSION/teslcam-camera-scorer"
+ln -sfn "releases/$VERSION" /opt/teslcam/current
 rm -rf /tmp/scorer-src /tmp/scorer-build
 
 # USB device-mode gadget support (same as install-agent.sh setup).
@@ -719,7 +732,7 @@ OnUnitActiveSec=2min
 WantedBy=timers.target
 UNIT
 
-systemctl enable ssh bluetooth teslcam-firstboot teslcam-agent \
+systemctl enable ssh bluetooth teslcam-firstboot teslcam-agent teslcam-updater \
   teslcam-lte-guard teslcam-lte-watchdog.timer teslcam-wg-provision \
   teslcam-boot-report.service teslcam-boot-report.timer \
   teslcam-power-evidence.service systemd-pstore.service

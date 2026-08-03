@@ -96,6 +96,9 @@ func New(cfg Config) (*Server, error) {
 	if err := os.MkdirAll(filepath.Join(cfg.DataDir, "files"), 0o755); err != nil {
 		return nil, err
 	}
+	if err := os.MkdirAll(filepath.Join(cfg.DataDir, "updates"), 0o755); err != nil {
+		return nil, err
+	}
 	st, err := openStore(filepath.Join(cfg.DataDir, "server.db"))
 	if err != nil {
 		return nil, err

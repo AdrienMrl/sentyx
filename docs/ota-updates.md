@@ -1,0 +1,123 @@
+# Fleet OTA updates
+
+The fleet updater is pull-based. Operators publish a signed release and
+activate a campaign; every Pi polls the server with its existing device token.
+This remains reliable while units are offline or behind carrier CGNAT.
+
+## Components and trust
+
+- teslcam-ota: operator CLI for keys, releases and campaigns.
+- teslcam-updater: root service installed independently from the application.
+- internal/ota: manifests and Ed25519 verification.
+- Server /v1/ota API: release storage and rollout control.
+- /run/teslcam/update-ready.sock: local interlock exposed by the agent.
+
+The signing private key must never be copied to a Pi or the VPS. The golden
+image contains only the public key at /etc/teslcam/ota-release.pub.pem.
+
+## Setup
+
+    go run ./cmd/teslcam-ota keygen -out keys/ota-release
+    scripts/build-image.sh 64 ~/.ssh/id_ed25519.pub keys/ota-release.public.pem
+
+For an existing prototype:
+
+    scripts/install-agent.sh ota keys/ota-release.public.pem
+
+Back up the private key offline. Losing it requires a separately authenticated
+operation to provision a new trust anchor on deployed units.
+
+## Application release
+
+    teslcam-ota bundle-app \
+      -id app-v1.4.0 -version v1.4.0 -sequence 14 \
+      -agent build/teslcam-agent \
+      -scorer build/teslcam-camera-scorer \
+      -key keys/ota-release.private.pem \
+      -out build/app-v1.4.0.tar.gz
+
+    teslcam-ota publish \
+      -server https://teslcam.example.com \
+      -token-file .secrets/operator.token \
+      -release build/app-v1.4.0.tar.gz.release.json \
+      -artifact build/app-v1.4.0.tar.gz
+
+The updater resumes interrupted downloads, verifies size, SHA-256 and the
+signature, waits for the Tesla-write interlock, and installs under
+/opt/teslcam/releases. It atomically changes /opt/teslcam/current. A failed
+agent healthcheck restores and restarts the previous release.
+
+## Controlled APT release
+
+System releases contain exact package versions and never run a generic
+apt full-upgrade. Example unsigned manifest:
+
+    {
+      "v": 1,
+      "id": "system-2026.08.1",
+      "type": "system",
+      "version": "2026.08.1",
+      "sequence": 1,
+      "hardware": ["pi4"],
+      "osCodename": "trixie",
+      "system": {
+        "packages": [
+          {"name": "ffmpeg", "version": "7:7.1.1-1+rpt1"}
+        ],
+        "backupPaths": ["/etc/teslcam"],
+        "postInstall": ["systemctl daemon-reload"],
+        "reboot": true,
+        "maxAttempts": 2
+      }
+    }
+
+Sign and publish it:
+
+    teslcam-ota sign-system \
+      -manifest system-2026.08.1.json \
+      -key keys/ota-release.private.pem \
+      -out system-2026.08.1.release.json
+
+    teslcam-ota publish -server https://teslcam.example.com \
+      -token-file .secrets/operator.token \
+      -release system-2026.08.1.release.json
+
+The updater runs apt-get update, a simulation, a complete download, and only
+then the pinned installation. Pre/post commands are trusted only because the
+whole manifest is signed. APT updates have no full OS rollback; recovery during
+beta remains WireGuard/SSH or reflash.
+
+## Progressive rollout
+
+Explicit canary:
+
+    teslcam-ota campaign -server https://teslcam.example.com \
+      -token-file .secrets/operator.token -release app-v1.4.0 \
+      -percent 100 -devices sentyx-canary-01
+
+Fleet cohort, then expansion:
+
+    teslcam-ota campaign -server https://teslcam.example.com \
+      -token-file .secrets/operator.token -release app-v1.4.0 -percent 1
+
+    teslcam-ota campaign-update -server https://teslcam.example.com \
+      -token-file .secrets/operator.token -id cmp-... -percent 5
+
+    teslcam-ota status -server https://teslcam.example.com \
+      -token-file .secrets/operator.token
+
+Campaigns may be active, paused, or cancelled. Any rollback pauses a campaign
+immediately; three failed devices also pause it. Installed devices are not
+offered the same release again, and each Pi rejects replay or downgrade by
+remembering the highest installed sequence independently for application and
+system releases.
+
+## Failure model
+
+- Network loss: retain and resume the partial application download.
+- Corrupt or forged artifact: reject before extraction.
+- Power loss: persist updater state atomically; dpkg performs normal recovery.
+- Tesla writing: remain in waiting-safe.
+- Broken application: roll back the current symlink.
+- Broken OS or kernel: no automatic rollback in the beta APT design. Adopt an
+  A/B image updater before production-scale unattended OS updates.

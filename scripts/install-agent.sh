@@ -6,6 +6,7 @@
 #   scripts/install-agent.sh image <size-gb>   create the MBR+exFAT backing image
 #   scripts/install-agent.sh scorer            build + install the camera scorer
 #   scripts/install-agent.sh deploy            cross-compile, ship, restart agent
+#   scripts/install-agent.sh ota <public-key>  install fleet updater + trust key
 #   scripts/install-agent.sh check             verify prerequisites on the Pi
 #   scripts/install-agent.sh status            service status
 #   scripts/install-agent.sh logs [n]          last n journal lines (default 100)
@@ -53,6 +54,7 @@ usage: $0 <command>
   scorer            install build deps, build tools/camera-scorer on the Pi,
                     install /usr/local/bin/teslcam-camera-scorer
   deploy            cross-compile teslcam-agent for the Pi, upload, restart
+  ota <public-key>  install teslcam-updater and its Ed25519 public trust key
   check             verify prerequisites (UDC, modules, tools, image, unit)
   status            systemctl status of teslcam-agent
   logs [n]          last n journal lines (default 100)
@@ -268,9 +270,14 @@ cmd_deploy() {
   # teardown can block the restart for up to systemd's stop timeout — that is
   # expected; don't interrupt it (interrupting churns USB and can drop SSH).
   say "installing binary and restarting"
-  run_sudo <<'EOF'
+  run_sudo "VERSION=$version" <<'EOF'
 set -euo pipefail
-install -m 755 /tmp/teslcam-agent.new /usr/local/bin/teslcam-agent
+RELEASE="/opt/teslcam/releases/$VERSION"
+install -d -m 755 "$RELEASE"
+install -m 755 /tmp/teslcam-agent.new "$RELEASE/teslcam-agent"
+[ ! -x /usr/local/bin/teslcam-camera-scorer ] || install -m 755 /usr/local/bin/teslcam-camera-scorer "$RELEASE/teslcam-camera-scorer"
+ln -sfn "$RELEASE" /opt/teslcam/current.new
+mv -Tf /opt/teslcam/current.new /opt/teslcam/current
 rm -f /tmp/teslcam-agent.new
 systemctl restart teslcam-agent
 sleep 2
@@ -279,9 +286,46 @@ systemctl is-active --quiet teslcam-agent || {
   journalctl -u teslcam-agent --no-pager -n 20 >&2
   exit 1
 }
+
 echo "teslcam-agent running"
 EOF
   say "deployed"
+}
+
+cmd_ota() {
+  local key="${1:-}" goarch tmp
+  [[ -f "$key" ]] || die "usage: $0 ota <ota-public-key.pem>"
+  goarch="$(remote_goarch)"
+  tmp="$(mktemp -d)"
+  trap "rm -rf '$tmp'" EXIT
+  say "building teslcam-updater for linux/$goarch"
+  (cd "$ROOT" && env GOOS=linux CGO_ENABLED=0 $goarch \
+    go build -trimpath -o "$tmp/teslcam-updater" ./cmd/teslcam-updater)
+  scp -q "$tmp/teslcam-updater" "$HOST:/tmp/teslcam-updater.new"
+  scp -q "$key" "$HOST:/tmp/ota-release.pub.pem"
+  scp -q "$ROOT/scripts/teslcam-updater.service" "$HOST:/tmp/teslcam-updater.service"
+  scp -q "$ROOT/scripts/teslcam-agent-pi4.service" "$HOST:/tmp/teslcam-agent.service"
+  run_sudo <<'EOF'
+set -euo pipefail
+install -m 755 /tmp/teslcam-updater.new /usr/local/bin/teslcam-updater
+install -m 644 /tmp/ota-release.pub.pem /etc/teslcam/ota-release.pub.pem
+install -m 644 /tmp/teslcam-updater.service /etc/systemd/system/teslcam-updater.service
+install -m 644 /tmp/teslcam-agent.service /etc/systemd/system/teslcam-agent.service
+rm -f /tmp/teslcam-updater.new /tmp/ota-release.pub.pem /tmp/teslcam-updater.service /tmp/teslcam-agent.service
+# Bootstrap a hand-provisioned unit that predates versioned application
+# releases. Future deploys and OTA releases replace this legacy slot.
+if [[ ! -x /opt/teslcam/current/teslcam-agent && -x /usr/local/bin/teslcam-agent ]]; then
+  install -d -m 755 /opt/teslcam/releases/legacy
+  install -m 755 /usr/local/bin/teslcam-agent /opt/teslcam/releases/legacy/teslcam-agent
+  [[ ! -x /usr/local/bin/teslcam-camera-scorer ]] || install -m 755 /usr/local/bin/teslcam-camera-scorer /opt/teslcam/releases/legacy/teslcam-camera-scorer
+  ln -sfn releases/legacy /opt/teslcam/current
+fi
+systemctl daemon-reload
+systemctl enable teslcam-updater
+systemctl restart teslcam-agent
+systemctl restart teslcam-updater || true
+EOF
+  say "OTA updater installed"
 }
 
 cmd_check() {
@@ -300,8 +344,8 @@ cmd_check() {
     command -v vcgencmd >/dev/null && ok "vcgencmd on PATH" || echo "  warn vcgencmd missing (thermal telemetry degraded; fine on non-RPiOS)"
     systemctl is-active --quiet bluetooth && ok "bluetoothd running" || bad "bluetoothd not running"
     [ -f /var/lib/teslcam/backing.img ] && ok "backing image present" || bad "backing image (run: image <size-gb>)"
-    [ -x /usr/local/bin/teslcam-camera-scorer ] && ok "camera scorer installed" || bad "camera scorer (run: scorer)"
-    [ -x /usr/local/bin/teslcam-agent ] && ok "agent binary installed" || bad "agent binary (run: deploy)"
+    [ -x /opt/teslcam/current/teslcam-camera-scorer ] && ok "camera scorer installed" || bad "camera scorer (run: scorer + deploy)"
+    [ -x /opt/teslcam/current/teslcam-agent ] && ok "agent binary installed" || bad "agent binary (run: deploy)"
     [ -f /etc/systemd/system/teslcam-agent.service ] && ok "systemd unit installed" || bad "systemd unit (run: setup)"
     [ -f /etc/teslcam/server.token ] && ok "provisioned (server.token present)" \
       || echo "  info unprovisioned — pair via BLE onboarding from the app"
@@ -317,6 +361,7 @@ case "${1:-}" in
   image) shift; cmd_image "$@" ;;
   scorer) cmd_scorer ;;
   deploy) cmd_deploy ;;
+  ota) shift; cmd_ota "$@" ;;
   check) cmd_check ;;
   status) cmd_status ;;
   logs) shift; cmd_logs "$@" ;;

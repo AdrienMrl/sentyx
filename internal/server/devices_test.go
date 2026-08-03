@@ -70,7 +70,11 @@ func TestDeviceRegistrationAndTokenAuth(t *testing.T) {
 	if resp, _ := do(http.MethodPut, putPath, "Bearer "+devToken, eventBody); resp.StatusCode != http.StatusOK {
 		t.Fatalf("PUT with device token = %d, want 200", resp.StatusCode)
 	}
-	if resp, _ := do(http.MethodPut, putPath, "Bearer "+devToken[:63]+"0", eventBody); resp.StatusCode != http.StatusUnauthorized {
+	corrupted := devToken[:63] + "0"
+	if corrupted == devToken {
+		corrupted = devToken[:63] + "1"
+	}
+	if resp, _ := do(http.MethodPut, putPath, "Bearer "+corrupted, eventBody); resp.StatusCode != http.StatusUnauthorized {
 		t.Fatal("PUT with corrupted device token should be 401")
 	}
 

@@ -29,6 +29,11 @@ import (
 //	POST /v1/devices                                              register a device, minting its token
 //	POST /v1/devices/<deviceId>/heartbeat                         record a device's latest status payload
 //	GET  /v1/devices/<deviceId>                                   a device's registration + latest heartbeat
+//	GET  /v1/devices/<deviceId>/updates/plan                      desired signed OTA release
+//	POST /v1/devices/<deviceId>/updates/status                    OTA progress/result
+//	POST /v1/ota/releases                                         publish signed release metadata
+//	PUT  /v1/ota/releases/<releaseId>/artifact                    upload a release artifact
+//	POST /v1/ota/campaigns                                        start a progressive rollout
 //	GET  /events                                                  all events (JSON)
 //	GET  /events/<id>                                             one event + its files
 //	GET  /events/<id>/thumb                                       event thumbnail (JPEG, or uploaded thumb.png)
@@ -46,6 +51,15 @@ func (c *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/devices/{deviceId}/heartbeat", c.handleDeviceHeartbeat)
 	mux.HandleFunc("POST /v1/devices/{deviceId}/heartbeats", c.handleDeviceHeartbeats)
 	mux.HandleFunc("GET /v1/devices/{deviceId}", c.handleDeviceStatus)
+	mux.HandleFunc("GET /v1/devices/{deviceId}/updates/plan", c.handleOTAPlan)
+	mux.HandleFunc("POST /v1/devices/{deviceId}/updates/status", c.handleOTAStatus)
+	mux.HandleFunc("POST /v1/ota/releases", c.handleCreateOTARelease)
+	mux.HandleFunc("GET /v1/ota/releases/{releaseId}", c.handleGetOTARelease)
+	mux.HandleFunc("PUT /v1/ota/releases/{releaseId}/artifact", c.handlePutOTAArtifact)
+	mux.HandleFunc("GET /v1/ota/releases/{releaseId}/artifact", c.handleGetOTAArtifact)
+	mux.HandleFunc("POST /v1/ota/campaigns", c.handleCreateOTACampaign)
+	mux.HandleFunc("GET /v1/ota/campaigns", c.handleListOTACampaigns)
+	mux.HandleFunc("PATCH /v1/ota/campaigns/{campaignId}", c.handleUpdateOTACampaign)
 	mux.HandleFunc("PUT /v1/me/push-tokens", c.handlePutPushToken)
 	mux.HandleFunc("DELETE /v1/me/push-tokens/{token}", c.handleDeletePushToken)
 	mux.HandleFunc("GET /v1/me/notification-settings", c.handleGetNotificationSettings)

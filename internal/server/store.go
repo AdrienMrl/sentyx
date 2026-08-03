@@ -98,6 +98,41 @@ CREATE TABLE IF NOT EXISTS analysis_jobs (
   available_at INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (event_id, generation)
 );
+CREATE TABLE IF NOT EXISTS ota_releases (
+  release_id     TEXT PRIMARY KEY,
+  release_type   TEXT NOT NULL,
+  version        TEXT NOT NULL,
+  sequence       INTEGER NOT NULL,
+  manifest_json  TEXT NOT NULL,
+  signature      TEXT NOT NULL,
+  artifact_path  TEXT,
+  artifact_size  INTEGER NOT NULL DEFAULT 0,
+  created_at     INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS ota_campaigns (
+  campaign_id     TEXT PRIMARY KEY,
+  release_id      TEXT NOT NULL REFERENCES ota_releases(release_id),
+  rollout_percent INTEGER NOT NULL,
+  state           TEXT NOT NULL,
+  created_at      INTEGER NOT NULL,
+  updated_at      INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS ota_campaign_devices (
+  campaign_id TEXT NOT NULL REFERENCES ota_campaigns(campaign_id) ON DELETE CASCADE,
+  device_id   TEXT NOT NULL REFERENCES devices(device_id),
+  PRIMARY KEY (campaign_id, device_id)
+);
+CREATE TABLE IF NOT EXISTS ota_device_updates (
+  device_id    TEXT NOT NULL REFERENCES devices(device_id),
+  release_id   TEXT NOT NULL REFERENCES ota_releases(release_id),
+  campaign_id  TEXT,
+  state        TEXT NOT NULL,
+  progress_pct INTEGER NOT NULL DEFAULT 0,
+  error        TEXT,
+  status_json  TEXT NOT NULL,
+  updated_at   INTEGER NOT NULL,
+  PRIMARY KEY (device_id, release_id)
+);
 `
 
 type store struct {

@@ -1,0 +1,16 @@
+[Unit]
+Description=teslcam signed fleet updater
+After=network-online.target teslcam-agent.service
+Wants=network-online.target
+ConditionPathExists=/etc/teslcam/server.token
+ConditionPathExists=/etc/teslcam/ota-release.pub.pem
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/teslcam/agent.env
+ExecStart=/usr/local/bin/teslcam-updater -server=${POST_TO} -device-id=${DEVICE_ID} -token-file=/etc/teslcam/server.token -public-key=/etc/teslcam/ota-release.pub.pem -hardware=pi4 -os-codename=trixie -state-dir=/var/lib/teslcam/updater -releases-dir=/opt/teslcam/releases -current-link=/opt/teslcam/current -readiness-socket=/run/teslcam/update-ready.sock -poll-interval=15m -max-jitter=5m -safe-poll=10s -health-timeout=30s -lte-iface=eth1 -lte-dns=8.8.8.8:53 -lte-dial-timeout=10s
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target

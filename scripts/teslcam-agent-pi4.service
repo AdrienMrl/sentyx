@@ -16,7 +16,7 @@ Wants=network-online.target
 Type=simple
 EnvironmentFile=-/etc/teslcam/agent.env
 ExecStartPre=/sbin/modprobe libcomposite
-ExecStart=/usr/local/bin/teslcam-agent \
+ExecStart=/opt/teslcam/current/teslcam-agent \
   -image /var/lib/teslcam/backing.img \
   -udc auto \
   -interval 2s \
@@ -30,7 +30,7 @@ ExecStart=/usr/local/bin/teslcam-agent \
   -spool-max-mb 2048 \
   -select-clips \
   -select-metadata-timeout 5m \
-  -camera-scorer /usr/local/bin/teslcam-camera-scorer \
+  -camera-scorer /opt/teslcam/current/teslcam-camera-scorer \
   -video-encoder h264_v4l2m2m \
   -video-fallback-encoder libx264 \
   -ble-onboard \
@@ -41,6 +41,7 @@ ExecStart=/usr/local/bin/teslcam-agent \
   -heartbeat-interval 30s \
   -health-db /var/lib/teslcam/health.db \
   -health-log-interval 5s \
+  -update-readiness-socket /run/teslcam/update-ready.sock \
   -lte-iface eth1 \
   -lte-dns 8.8.8.8:53 \
   -lte-dial-timeout 10s

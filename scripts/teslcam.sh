@@ -384,8 +384,11 @@ while read -r path label; do
   [ -z "$path" ] && continue
   [ -e "$M$path" ] && p "$label" || f "$label (missing $path)"
 done <<'MANIFEST'
-/usr/local/bin/teslcam-agent            agent binary
-/usr/local/bin/teslcam-camera-scorer    camera scorer
+/opt/teslcam/current/teslcam-agent            agent binary
+/opt/teslcam/current/teslcam-camera-scorer    camera scorer
+/usr/local/bin/teslcam-updater                OTA updater
+/etc/systemd/system/teslcam-updater.service   OTA updater unit
+/etc/teslcam/ota-release.pub.pem              OTA release trust key
 /usr/local/sbin/teslcam-firstboot       firstboot script
 /usr/local/sbin/teslcam-wg-provision    wireguard provisioning script
 /usr/local/sbin/teslcam-boot-report     boot-report script
@@ -504,8 +507,8 @@ done
 # Checked by grepping the binary for their log/path strings — crude but exact:
 # an agent built before the fix lacks both, and that unit is undiscoverable in
 # practice (kernel-default 1280 ms interval + wedged adv state machine).
-if grep -aq "legacy advertising: asserting instance" "$M/usr/local/bin/teslcam-agent" \
-   && grep -aq "adv_min_interval" "$M/usr/local/bin/teslcam-agent"; then
+if grep -aq "legacy advertising: asserting instance" "$M/opt/teslcam/current/teslcam-agent" \
+   && grep -aq "adv_min_interval" "$M/opt/teslcam/current/teslcam-agent"; then
   p "agent binary contains the BLE advertising fixes (interval + teardown)"
 else
   f "agent binary predates the BLE advertising fixes — onboarding will be undiscoverable"
@@ -517,7 +520,7 @@ fi
 # step of onboarding with 403 on a token that is perfectly valid. Detected by
 # the absence of the "/usage" literal, which only that probe ever put in this
 # binary.
-if grep -aq "/usage" "$M/usr/local/bin/teslcam-agent"; then
+if grep -aq "/usage" "$M/opt/teslcam/current/teslcam-agent"; then
   f "agent binary still probes /usage — onboarding will fail 403 at the connection test"
 else
   p "agent binary probes the device's own endpoint for the auth check"
@@ -601,19 +604,23 @@ do_freshness() {
 # ══════════════════════════════════════════════════════════════ phase: build
 do_build() {
   phase "build"
-  local gb keys
+  local gb keys ota_key
   if [ "$ASSUME_YES" = 1 ]; then
-    gb="${BACKING_GB:-}"; keys="${AUTHORIZED_KEYS:-}"
+    gb="${BACKING_GB:-}"; keys="${AUTHORIZED_KEYS:-}"; ota_key="${OTA_PUBLIC_KEY:-}"
     [ -n "$gb" ] || die "--yes with a build requires BACKING_GB in the environment"
     [ -n "$keys" ] || die "--yes with a build requires AUTHORIZED_KEYS in the environment"
+    [ -n "$ota_key" ] || die "--yes with a build requires OTA_PUBLIC_KEY in the environment"
   else
     gb="$(prompt_value 'backing image size in GB (e.g. 64)')"
     keys="$(prompt_value 'SSH public key to bake in (e.g. ~/.ssh/id_rsa.pub)')"
+    ota_key="$(prompt_value 'OTA Ed25519 public key (PEM)')"
   fi
   keys="${keys/#\~/$HOME}"
+  ota_key="${ota_key/#\~/$HOME}"
   case "$gb" in ''|*[!0-9]*) die "backing size must be an integer, got: $gb" ;; esac
   [ -f "$keys" ] || die "no such key file: $keys"
-  run_step "build-image.sh $gb" 3600 scripts/build-image.sh "$gb" "$keys"
+  [ -f "$ota_key" ] || die "no such OTA public key: $ota_key"
+  run_step "build-image.sh $gb" 3600 scripts/build-image.sh "$gb" "$keys" "$ota_key"
 }
 
 # ═══════════════════════════════════════════════════ phases: boot + datapath
