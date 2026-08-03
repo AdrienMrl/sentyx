@@ -1,19 +1,25 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from './api'
+import ErrBox from './ErrBox'
 import { fmtAgo, fmtBytes, fmtUptime, pctFree } from './format'
 
 // Fleet view: one row per registered Pi, refreshed every 15 s.
 export default function Fleet() {
   const [devices, setDevices] = useState(null)
+  const [err, setErr] = useState('')
+  const [tick, setTick] = useState(0)
   useEffect(() => {
     let alive = true
-    const load = () => api.devices().then((d) => alive && setDevices(d.devices)).catch(() => {})
+    const load = () => api.devices()
+      .then((d) => { if (alive) { setDevices(d.devices); setErr('') } })
+      .catch((e) => alive && setErr(e.message))
     load()
     const t = setInterval(load, 15_000)
     return () => { alive = false; clearInterval(t) }
-  }, [])
+  }, [tick])
 
+  if (!devices && err) return <ErrBox what="fleet" err={err} onRetry={() => setTick((t) => t + 1)} />
   if (!devices) return <div className="loading">LOADING FLEET</div>
   if (!devices.length) return <div className="empty">no devices registered yet</div>
 

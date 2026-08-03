@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { api } from './api'
 import Chart from './Chart'
+import ErrBox from './ErrBox'
 import { fmtAgo, fmtBytes, fmtUptime, pctFree } from './format'
 
 const RANGES = [
@@ -14,14 +15,19 @@ const RANGES = [
 export default function Device() {
   const { deviceId } = useParams()
   const [device, setDevice] = useState(null)
+  const [err, setErr] = useState('')
+  const [tick, setTick] = useState(0)
   const [range, setRange] = useState(RANGES[1])
   const [window_, setWindow] = useState(null) // {sinceMs, untilMs, samples}
   const [events, setEvents] = useState([])
 
   useEffect(() => {
-    api.devices().then((d) => setDevice(d.devices.find((x) => x.deviceId === deviceId) || 'missing'))
+    setErr('')
+    api.devices()
+      .then((d) => setDevice(d.devices.find((x) => x.deviceId === deviceId) || 'missing'))
+      .catch((e) => setErr(e.message))
     api.events().then((evs) => setEvents(evs.filter((e) => e.device_id === deviceId).reverse().slice(0, 8))).catch(() => {})
-  }, [deviceId])
+  }, [deviceId, tick])
 
   useEffect(() => {
     let alive = true
@@ -30,13 +36,13 @@ export default function Device() {
       const sinceMs = untilMs - range.ms
       api.heartbeats(deviceId, sinceMs)
         .then((h) => alive && setWindow({ sinceMs, untilMs, samples: h.samples || [] }))
-        .catch(() => {})
+        .catch((e) => alive && setErr(e.message))
     }
     setWindow(null)
     load()
     const t = setInterval(load, 30_000)
     return () => { alive = false; clearInterval(t) }
-  }, [deviceId, range])
+  }, [deviceId, range, tick])
 
   const series = useMemo(() => {
     if (!window_) return null
@@ -53,6 +59,7 @@ export default function Device() {
   }, [window_])
 
   if (device === 'missing') return <div className="empty">unknown device {deviceId}</div>
+  if (!device && err) return <ErrBox what="device" err={err} onRetry={() => setTick((t) => t + 1)} />
   if (!device) return <div className="loading">LOADING</div>
   const hb = device.status || {}
   const free = pctFree(hb)
@@ -83,7 +90,9 @@ export default function Device() {
         ))}
       </div>
 
-      {!series ? <div className="loading">LOADING METRICS</div> : (
+      {!series ? (err
+        ? <ErrBox what="metrics" err={err} onRetry={() => setTick((t) => t + 1)} />
+        : <div className="loading">LOADING METRICS</div>) : (
         <div className="charts">
           <div className="chartcard">
             <h2>SoC temperature <i>°C — red bands = no samples (offline)</i></h2>

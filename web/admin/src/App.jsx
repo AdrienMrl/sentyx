@@ -53,13 +53,26 @@ function Chrome({ children }) {
 }
 
 export default function App() {
-  const [auth, setAuth] = useState('checking') // checking | out | in
+  const [auth, setAuth] = useState('checking') // checking | out | in | unreachable
   useEffect(() => {
     setAuthErrorHandler(() => setAuth('out'))
-    api.me().then(() => setAuth('in')).catch(() => {})
+    api.me().then(() => setAuth('in')).catch((e) => {
+      // An auth failure already routed to the login screen via the handler;
+      // anything else means the server itself is unreachable.
+      if (e.message !== 'not authenticated') setAuth('unreachable')
+    })
   }, [])
 
   if (auth === 'checking') return <div className="loading">CONNECTING</div>
+  if (auth === 'unreachable') return (
+    <div className="login-wrap">
+      <div className="login">
+        <span className="brand">SENT<em>YX</em><small>fleet console</small></span>
+        <div className="err">server unreachable — is teslcam-server running?</div>
+        <button onClick={() => window.location.reload()}>Retry</button>
+      </div>
+    </div>
+  )
   if (auth === 'out') return <Login onDone={() => setAuth('in')} />
   return (
     <HashRouter>

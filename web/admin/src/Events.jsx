@@ -1,15 +1,21 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from './api'
+import ErrBox from './ErrBox'
 
 // Events browser (BETA: operator sees every user's events for debugging).
 export default function Events() {
   const [events, setEvents] = useState(null)
+  const [err, setErr] = useState('')
+  const [tick, setTick] = useState(0)
   const [device, setDevice] = useState('')
   const [threat, setThreat] = useState('')
   const [q, setQ] = useState('')
 
-  useEffect(() => { api.events().then((e) => setEvents(e.reverse())).catch(() => {}) }, [])
+  useEffect(() => {
+    setErr('')
+    api.events().then((e) => setEvents(e.reverse())).catch((e) => setErr(e.message))
+  }, [tick])
 
   const devices = useMemo(
     () => [...new Set((events || []).map((e) => e.device_id).filter(Boolean))].sort(),
@@ -21,6 +27,7 @@ export default function Events() {
     (!q || `${e.id} ${e.reason} ${e.city} ${e.camera}`.toLowerCase().includes(q.toLowerCase())),
   ), [events, device, threat, q])
 
+  if (!events && err) return <ErrBox what="events" err={err} onRetry={() => setTick((t) => t + 1)} />
   if (!events) return <div className="loading">LOADING EVENTS</div>
 
   return (
