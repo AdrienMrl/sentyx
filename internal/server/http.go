@@ -50,6 +50,7 @@ func (c *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/devices", c.handleRegisterDevice)
 	mux.HandleFunc("POST /v1/devices/{deviceId}/heartbeat", c.handleDeviceHeartbeat)
 	mux.HandleFunc("POST /v1/devices/{deviceId}/heartbeats", c.handleDeviceHeartbeats)
+	mux.HandleFunc("POST /v1/devices/{deviceId}/blackbox", c.handleDeviceBlackbox)
 	mux.HandleFunc("GET /v1/devices/{deviceId}", c.handleDeviceStatus)
 	mux.HandleFunc("GET /v1/devices/{deviceId}/updates/plan", c.handleOTAPlan)
 	mux.HandleFunc("POST /v1/devices/{deviceId}/updates/status", c.handleOTAStatus)
@@ -78,6 +79,7 @@ func (c *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /admin/api/logout", c.handleAdminLogout)
 	mux.HandleFunc("GET /admin/api/devices", c.handleAdminDevices)
 	mux.HandleFunc("GET /admin/api/devices/{deviceId}/heartbeats", c.handleAdminDeviceHeartbeats)
+	mux.HandleFunc("GET /admin/api/devices/{deviceId}/blackbox", c.handleAdminDeviceBlackbox)
 	authed := c.requireToken(mux)
 
 	outer := http.NewServeMux()
@@ -407,6 +409,71 @@ func (c *Server) handleDeviceHeartbeats(w http.ResponseWriter, r *http.Request) 
 		samples = append(samples, HeartbeatSample{AtMs: sm.AtMs, JSON: string(sm.Heartbeat)})
 	}
 	if err := c.store.insertHeartbeats(deviceID, samples); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// Blackbox batch limits. Events are tiny (a type + short detail); the entry
+// cap matches the heartbeat batch and covers weeks of offline transitions.
+const (
+	maxBlackboxBatchBytes  = 1 << 20
+	maxBlackboxBatchEvents = 5000
+	maxBlackboxTypeLen     = 64
+	maxBlackboxDetailLen   = 256
+)
+
+// handleDeviceBlackbox records a batch of blackbox events — recording
+// interruptions (USB dismounts, write stalls, boots, clean stops) captured on
+// the device with agent-clock timestamps and forwarded store-and-forward
+// style. Duplicates (device, atMs, type) are ignored so retrying a batch is
+// idempotent. Auth matches heartbeats: the device itself or the operator.
+func (c *Server) handleDeviceBlackbox(w http.ResponseWriter, r *http.Request) {
+	deviceID := r.PathValue("deviceId")
+	ai := authFrom(r.Context())
+	if c.cfg.Token != "" && !ai.Operator && ai.DeviceID != deviceID {
+		http.Error(w, "a device may only send its own blackbox events", http.StatusForbidden)
+		return
+	}
+	var req struct {
+		V      *int `json:"v"`
+		Events []struct {
+			AtMs   int64  `json:"atMs"`
+			Type   string `json:"type"`
+			Detail string `json:"detail"`
+		} `json:"events"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, maxBlackboxBatchBytes)).Decode(&req); err != nil {
+		http.Error(w, "invalid JSON body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if req.V == nil || *req.V != 1 {
+		http.Error(w, `batch body must have "v":1`, http.StatusBadRequest)
+		return
+	}
+	if len(req.Events) == 0 || len(req.Events) > maxBlackboxBatchEvents {
+		http.Error(w, fmt.Sprintf("events must contain 1..%d entries", maxBlackboxBatchEvents), http.StatusBadRequest)
+		return
+	}
+	maxAt := time.Now().UnixMilli() + maxHeartbeatFutureSkewMs
+	events := make([]BlackboxEvent, 0, len(req.Events))
+	for i, ev := range req.Events {
+		if ev.AtMs <= 0 || ev.AtMs > maxAt {
+			http.Error(w, fmt.Sprintf("events[%d].atMs is missing or in the future", i), http.StatusBadRequest)
+			return
+		}
+		if ev.Type == "" || len(ev.Type) > maxBlackboxTypeLen {
+			http.Error(w, fmt.Sprintf("events[%d].type is missing or too long", i), http.StatusBadRequest)
+			return
+		}
+		if len(ev.Detail) > maxBlackboxDetailLen {
+			http.Error(w, fmt.Sprintf("events[%d].detail is too long", i), http.StatusBadRequest)
+			return
+		}
+		events = append(events, BlackboxEvent{AtMs: ev.AtMs, Type: ev.Type, Detail: ev.Detail})
+	}
+	if err := c.store.insertBlackboxEvents(deviceID, events); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}

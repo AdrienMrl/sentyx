@@ -115,6 +115,10 @@ func main() {
 	healthDB := flag.String("health-db", "", "SQLite path for the local heartbeat sample spool: samples are stored here first and backfilled to the server after offline windows; empty = direct sends only (no offline history)")
 	healthLogInterval := flag.Duration("health-log-interval", 0, "log a local health line (SoC temp, load, throttle flags) at this interval, e.g. 1m; 0 disables")
 	updateReadinessSocket := flag.String("update-readiness-socket", "", "Unix socket exposing whether an OTA restart is safe; empty disables")
+	blackboxDB := flag.String("blackbox-db", "", "SQLite path for the durable blackbox event log (USB dismounts, write stalls, boots); events upload to the server when provisioned and always survive locally; empty = disabled")
+	blackboxPoll := flag.Duration("blackbox-poll", 0, "blackbox transition sampling period, e.g. 2s (required, > 0, with -blackbox-db)")
+	blackboxWriteIdle := flag.Duration("blackbox-write-idle", 0, "quiet time on the backing image before the blackbox records writes as idle, e.g. 90s (required, > 0, with -blackbox-db)")
+	blackboxFlush := flag.Duration("blackbox-flush", 0, "blackbox upload retry period, e.g. 60s (required, > 0, with -blackbox-db)")
 	lteIface := flag.String("lte-iface", "", "metered LTE fallback interface, e.g. eth1; uploads and heartbeats retry bound to it when the default route fails (empty = disabled)")
 	lteDNS := flag.String("lte-dns", "", "DNS resolver dialed over the LTE interface, e.g. 8.8.8.8:53 (required with -lte-iface)")
 	lteDialTimeout := flag.Duration("lte-dial-timeout", 0, "per-attempt dial timeout before falling back to LTE, e.g. 10s (required, > 0, with -lte-iface)")
@@ -164,6 +168,15 @@ func main() {
 	}
 	if *healthDB != "" && !*heartbeat {
 		log.Fatal("-health-db set without -heartbeat")
+	}
+	// The blackbox timing knobs are explicit whenever the blackbox is on (no
+	// implicit defaults, per project rule), and rejected when it is off so a
+	// half-configured setup fails loudly.
+	if *blackboxDB != "" && (*blackboxPoll <= 0 || *blackboxWriteIdle <= 0 || *blackboxFlush <= 0) {
+		log.Fatal("-blackbox-poll, -blackbox-write-idle and -blackbox-flush (all > 0) are required with -blackbox-db")
+	}
+	if *blackboxDB == "" && (*blackboxPoll != 0 || *blackboxWriteIdle != 0 || *blackboxFlush != 0) {
+		log.Fatal("-blackbox-poll/-blackbox-write-idle/-blackbox-flush set without -blackbox-db")
 	}
 	// Track which -ble-* flags were explicitly set, so a stray one can be
 	// rejected when the master switch is off.
@@ -430,6 +443,44 @@ func main() {
 		uploadClient = &http.Client{Timeout: 5 * time.Minute, Transport: lteTransport}
 		heartbeatClient = &http.Client{Timeout: 30 * time.Second, Transport: lteTransport}
 		log.Printf("lte: fallback enabled on %s (dns %s, dial timeout %s)", *lteIface, *lteDNS, *lteDialTimeout)
+	}
+
+	// The blackbox records every transition that could cost a Sentry recording
+	// — USB dismounts, car sleep, write stalls, power cuts (visible as an
+	// agent-start with no preceding agent-stop) — durably on the device first,
+	// then on the server when reachable. It is telemetry: any failure is
+	// logged and the agent carries on. It watches the UDC state file of the
+	// gadget brought up above. Unprovisioned devices (no -post-to/token) still
+	// record locally and backfill after provisioning.
+	if *blackboxDB != "" {
+		bbServer, bbToken := *postTo, token
+		if bbServer == "" || bbToken == "" {
+			bbServer, bbToken = "", ""
+			log.Print("blackbox: no -post-to/token (pre-provisioning): recording locally only")
+		}
+		bb, err := health.NewBlackbox(health.BlackboxConfig{
+			SpoolDBPath:    *blackboxDB,
+			UDCStatePath:   filepath.Join(*udcClass, udcName, "state"),
+			ImagePath:      *imagePath,
+			Poll:           *blackboxPoll,
+			WriteIdleAfter: *blackboxWriteIdle,
+			FlushInterval:  *blackboxFlush,
+			AgentVersion:   version,
+			ServerURL:      bbServer,
+			Token:          bbToken,
+			HTTPClient:     heartbeatClient,
+			Logf:           log.Printf,
+		})
+		if err != nil {
+			log.Printf("blackbox: disabled (config error): %v", err)
+		} else {
+			log.Printf("blackbox: recording interruption events to %s (poll %s)", *blackboxDB, *blackboxPoll)
+			go func() {
+				if err := bb.Run(ctx, *deviceID); err != nil && ctx.Err() == nil {
+					log.Printf("blackbox: watcher error (agent continues): %v", err)
+				}
+			}()
+		}
 	}
 
 	// uploaderRef is published by the pipeline once the durable upload client

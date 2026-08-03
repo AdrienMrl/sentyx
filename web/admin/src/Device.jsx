@@ -3,7 +3,7 @@ import { Link, useParams } from 'react-router-dom'
 import { api } from './api'
 import Chart from './Chart'
 import ErrBox from './ErrBox'
-import { fmtAgo, fmtBytes, fmtUptime, pctFree } from './format'
+import { fmtAgo, fmtBytes, fmtDur, fmtUptime, pctFree } from './format'
 
 const RANGES = [
   { label: '6h', ms: 6 * 36e5 },
@@ -20,6 +20,7 @@ export default function Device() {
   const [range, setRange] = useState(RANGES[1])
   const [window_, setWindow] = useState(null) // {sinceMs, untilMs, samples}
   const [events, setEvents] = useState([])
+  const [blackbox, setBlackbox] = useState(null) // [{atMs,type,detail}] in range
 
   useEffect(() => {
     setErr('')
@@ -37,6 +38,9 @@ export default function Device() {
       api.heartbeats(deviceId, sinceMs)
         .then((h) => alive && setWindow({ sinceMs, untilMs, samples: h.samples || [] }))
         .catch((e) => alive && setErr(e.message))
+      api.blackbox(deviceId, sinceMs)
+        .then((b) => alive && setBlackbox(b.events || []))
+        .catch(() => alive && setBlackbox([]))
     }
     setWindow(null)
     load()
@@ -57,6 +61,40 @@ export default function Device() {
       backlog: pick((h) => h.uploadBacklog),
     }
   }, [window_])
+
+  // Blackbox rows, newest first, each classified for display. A boot whose
+  // preceding recorded event is not a clean agent-stop was a power cut — on
+  // this hardware the car cutting glovebox power is the expected sleep path,
+  // but it is exactly the transition that can cost a Sentry recording, so it
+  // is surfaced loudest.
+  const bbRows = useMemo(() => {
+    if (!blackbox) return null
+    const asc = [...blackbox].sort((a, b) => a.atMs - b.atMs)
+    return asc.map((ev, i) => {
+      const prev = i > 0 ? asc[i - 1] : null
+      let label = `${ev.type} ${ev.detail}`, cls = 'state', note = ''
+      if (ev.type === 'udc') {
+        if (ev.detail === 'configured') { label = 'MOUNTED'; cls = 'good'; note = 'car mounted the drive' }
+        else if (ev.detail === 'suspended') { label = 'USB SUSPENDED'; cls = 'warn'; note = 'host put the bus to sleep' }
+        else if (ev.detail === 'not attached') { label = 'DISMOUNTED'; cls = 'alarm'; note = 'car dropped the drive while the Pi stayed up' }
+        else { label = `UDC ${ev.detail.toUpperCase()}`; cls = 'alarm' }
+      } else if (ev.type === 'writes') {
+        if (ev.detail === 'active') { label = 'WRITING'; cls = 'good'; note = 'car is writing to the drive' }
+        else { label = 'WRITES STALLED'; cls = 'warn'; note = 'mounted but no writes — buffering or silent failure' }
+      } else if (ev.type === 'agent-start') {
+        label = 'BOOT'; cls = 'state'; note = `agent ${ev.detail} came up`
+        if (prev && prev.type !== 'agent-stop') {
+          label = 'POWER CUT → BOOT'; cls = 'alarm'
+          note = `no clean stop before this boot; dark for ${fmtDur(ev.atMs - prev.atMs)}`
+        } else if (prev) {
+          note += ` after a clean stop (dark ${fmtDur(ev.atMs - prev.atMs)})`
+        }
+      } else if (ev.type === 'agent-stop') {
+        label = 'CLEAN STOP'; cls = 'state'; note = 'agent shut down in an orderly way'
+      }
+      return { ...ev, label, cls, note }
+    }).reverse()
+  }, [blackbox])
 
   if (device === 'missing') return <div className="empty">unknown device {deviceId}</div>
   if (!device && err) return <ErrBox what="device" err={err} onRetry={() => setTick((t) => t + 1)} />
@@ -114,6 +152,25 @@ export default function Device() {
             <Chart points={series.backlog} unit="" color="var(--series-temp)" domain={[0, 1]}
               sinceMs={window_.sinceMs} untilMs={window_.untilMs} />
           </div>
+        </div>
+      )}
+
+      <h1 style={{ marginTop: 28 }}>Blackbox <i className="sub">recording interruptions in the selected range</i></h1>
+      {!bbRows ? (
+        <div className="loading">LOADING BLACKBOX</div>
+      ) : bbRows.length === 0 ? (
+        <div className="empty">no transitions in this range — either uninterrupted recording or a device without the blackbox agent</div>
+      ) : (
+        <div className="bblist">
+          {bbRows.map((ev, i) => (
+            <div className="bbrow" key={`${ev.atMs}-${ev.type}-${i}`}>
+              <span className="when" title={new Date(ev.atMs).toISOString()}>
+                {new Date(ev.atMs).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+              </span>
+              <span className={`badge ${ev.cls}`}>{ev.label}</span>
+              <span className="note">{ev.note}</span>
+            </div>
+          ))}
         </div>
       )}
 
