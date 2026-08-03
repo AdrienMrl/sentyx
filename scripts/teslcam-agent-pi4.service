@@ -39,6 +39,7 @@ ExecStart=/usr/local/bin/teslcam-agent \
   -ble-config-dir /etc/teslcam \
   -heartbeat \
   -heartbeat-interval 30s \
+  -health-db /var/lib/teslcam/health.db \
   -health-log-interval 1m \
   -lte-iface eth1 \
   -lte-dns 8.8.8.8:53 \

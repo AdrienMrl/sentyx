@@ -33,7 +33,8 @@ ExecStart=/usr/local/bin/teslcam-agent \
   -ble-name Sentyx-Pi \
   -ble-config-dir /etc/teslcam \
   -heartbeat \
-  -heartbeat-interval 30s
+  -heartbeat-interval 30s \
+  -health-db /var/lib/teslcam/health.db
 Restart=on-failure
 RestartSec=5
 

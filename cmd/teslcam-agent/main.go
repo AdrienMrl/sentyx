@@ -111,6 +111,7 @@ func main() {
 	bleConfigDir := flag.String("ble-config-dir", "", "directory where onboarding writes agent.env + server.token, e.g. /etc/teslcam (required with -ble-onboard)")
 	heartbeat := flag.Bool("heartbeat", false, "POST periodic device-status heartbeats to the server (requires -post-to, -token-file and -heartbeat-interval)")
 	heartbeatInterval := flag.Duration("heartbeat-interval", 0, "heartbeat POST interval, e.g. 30s (required, > 0, with -heartbeat; no implicit default)")
+	healthDB := flag.String("health-db", "", "SQLite path for the local heartbeat sample spool: samples are stored here first and backfilled to the server after offline windows; empty = direct sends only (no offline history)")
 	healthLogInterval := flag.Duration("health-log-interval", 0, "log a local health line (SoC temp, load, throttle flags) at this interval, e.g. 1m; 0 disables")
 	lteIface := flag.String("lte-iface", "", "metered LTE fallback interface, e.g. eth1; uploads and heartbeats retry bound to it when the default route fails (empty = disabled)")
 	lteDNS := flag.String("lte-dns", "", "DNS resolver dialed over the LTE interface, e.g. 8.8.8.8:53 (required with -lte-iface)")
@@ -158,6 +159,9 @@ func main() {
 	// inert until BLE onboarding writes agent.env + the token.
 	if *heartbeat && *heartbeatInterval <= 0 {
 		log.Fatal("-heartbeat-interval (> 0) is required with -heartbeat")
+	}
+	if *healthDB != "" && !*heartbeat {
+		log.Fatal("-health-db set without -heartbeat")
 	}
 	// Track which -ble-* flags were explicitly set, so a stray one can be
 	// rejected when the master switch is off.
@@ -426,6 +430,7 @@ func main() {
 				StoragePath:  storagePath,
 				Interval:     *heartbeatInterval,
 				AgentVersion: version,
+				SampleDBPath: *healthDB,
 				HTTPClient:   heartbeatClient,
 				Logf:         log.Printf,
 				// Live pending-upload backlog from the durable spool, surfaced via

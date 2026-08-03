@@ -31,9 +31,24 @@ type Config struct {
 	UploadBacklog func() int
 	RecordingNow  func() bool
 
+	// SampleDBPath, if set, enables store-and-forward: every collection is
+	// written to a local SQLite spool first and uploaded in timestamped
+	// batches, so metrics gathered while offline are backfilled on reconnect
+	// instead of lost. Empty = direct single-heartbeat POSTs (no local
+	// history survives a failed send).
+	SampleDBPath string
+
 	// HTTPClient is optional; a sensible bounded client is used when nil.
 	HTTPClient *http.Client
 }
+
+// Store-and-forward bounds: retain at most a week of samples locally (60 s
+// samples ≈ 10k rows), upload at most 500 per batch (well under the server's
+// per-request cap).
+const (
+	sampleRetention = 7 * 24 * time.Hour
+	maxUploadBatch  = 500
+)
 
 func (c Config) validate() error {
 	switch {
@@ -59,11 +74,14 @@ func (c Config) validate() error {
 	return nil
 }
 
-// Reporter periodically collects metrics and POSTs heartbeats to the server.
+// Reporter periodically collects metrics and POSTs heartbeats to the server,
+// optionally through a local store-and-forward spool (Config.SampleDBPath).
 type Reporter struct {
-	cfg    Config
-	url    string
-	client *http.Client
+	cfg      Config
+	url      string // single-heartbeat endpoint
+	batchURL string // batch backfill endpoint
+	client   *http.Client
+	spool    *SampleSpool // nil = direct sends
 }
 
 // New validates cfg and returns a Reporter.
@@ -75,9 +93,16 @@ func New(cfg Config) (*Reporter, error) {
 	if client == nil {
 		client = &http.Client{Timeout: 15 * time.Second}
 	}
-	base := strings.TrimSuffix(cfg.ServerURL, "/")
-	u := base + "/v1/devices/" + url.PathEscape(cfg.DeviceID) + "/heartbeat"
-	return &Reporter{cfg: cfg, url: u, client: client}, nil
+	base := strings.TrimSuffix(cfg.ServerURL, "/") + "/v1/devices/" + url.PathEscape(cfg.DeviceID)
+	r := &Reporter{cfg: cfg, url: base + "/heartbeat", batchURL: base + "/heartbeats", client: client}
+	if cfg.SampleDBPath != "" {
+		spool, err := OpenSampleSpool(cfg.SampleDBPath)
+		if err != nil {
+			return nil, err
+		}
+		r.spool = spool
+	}
+	return r, nil
 }
 
 // Run sends a heartbeat immediately, then every Interval, until ctx is
@@ -88,6 +113,9 @@ func New(cfg Config) (*Reporter, error) {
 func (r *Reporter) Run(ctx context.Context) error {
 	ticker := time.NewTicker(r.cfg.Interval)
 	defer ticker.Stop()
+	if r.spool != nil {
+		defer r.spool.Close()
+	}
 
 	failing := false
 	report := func() {
@@ -118,9 +146,14 @@ func (r *Reporter) Run(ctx context.Context) error {
 	}
 }
 
-// sendOnce collects metrics, builds the heartbeat and POSTs it. Metric
+// sendOnce collects metrics, builds the heartbeat and delivers it. Metric
 // collection itself is fully best-effort (missing metrics are omitted); only a
-// transport/HTTP failure is returned here.
+// transport/HTTP (or spool I/O) failure is returned here.
+//
+// With a spool, the sample is committed locally first — an unreachable server
+// costs nothing but a growing spool — then every pending sample (this one and
+// any offline backlog, oldest first) is uploaded in batches and deleted on
+// success.
 func (r *Reporter) sendOnce(ctx context.Context) error {
 	m := collect(r.cfg.StoragePath)
 	hb := buildHeartbeat(r.cfg.AgentVersion, m, r.cfg.UploadBacklog(), r.cfg.RecordingNow())
@@ -128,7 +161,56 @@ func (r *Reporter) sendOnce(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, r.url, bytes.NewReader(body))
+	if r.spool == nil {
+		return r.post(ctx, r.url, body)
+	}
+	now := time.Now()
+	if err := r.spool.Insert(Sample{AtMs: now.UnixMilli(), JSON: string(body)}); err != nil {
+		return fmt.Errorf("sample spool insert: %w", err)
+	}
+	if err := r.spool.Prune(now.Add(-sampleRetention).UnixMilli()); err != nil {
+		return fmt.Errorf("sample spool prune: %w", err)
+	}
+	for {
+		pending, err := r.spool.Oldest(maxUploadBatch)
+		if err != nil {
+			return fmt.Errorf("sample spool read: %w", err)
+		}
+		if len(pending) == 0 {
+			return nil
+		}
+		type wireSample struct {
+			AtMs      int64           `json:"atMs"`
+			Heartbeat json.RawMessage `json:"heartbeat"`
+		}
+		batch := struct {
+			V       int          `json:"v"`
+			Samples []wireSample `json:"samples"`
+		}{V: 1, Samples: make([]wireSample, len(pending))}
+		for i, sm := range pending {
+			batch.Samples[i] = wireSample{AtMs: sm.AtMs, Heartbeat: json.RawMessage(sm.JSON)}
+		}
+		payload, err := json.Marshal(batch)
+		if err != nil {
+			return err
+		}
+		if err := r.post(ctx, r.batchURL, payload); err != nil {
+			return err
+		}
+		// Only this goroutine writes the spool, so everything through the
+		// newest uploaded timestamp is exactly the batch just accepted.
+		if err := r.spool.DeleteThrough(pending[len(pending)-1].AtMs); err != nil {
+			return fmt.Errorf("sample spool delete: %w", err)
+		}
+		if len(pending) < maxUploadBatch {
+			return nil
+		}
+	}
+}
+
+// post delivers one JSON payload, treating any non-2xx as an error.
+func (r *Reporter) post(ctx context.Context, url string, body []byte) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
@@ -141,7 +223,7 @@ func (r *Reporter) sendOnce(ctx context.Context) error {
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-		return fmt.Errorf("heartbeat POST %s: %s: %s", r.url, resp.Status, strings.TrimSpace(string(msg)))
+		return fmt.Errorf("heartbeat POST %s: %s: %s", url, resp.Status, strings.TrimSpace(string(msg)))
 	}
 	io.Copy(io.Discard, resp.Body)
 	return nil
