@@ -40,10 +40,15 @@ Original prompt:
 > created by each user. And view everything about it. Details on which camera
 > was picked by the client, gemini output, cost, etc.
 
-- [ ] User accounts (in progress — see plan)
-- [ ] Admin API on the server
-- [ ] React dashboard: browse clips per user; per-clip detail (camera picked
-      by the client, Gemini output, cost, …)
+- [x] User accounts
+- [x] Admin API on the server (`/admin/api/*`, operator-only, cookie login)
+- [x] React dashboard (`web/admin`, served at `/admin`): fleet view (online,
+      temp, disk, backlog per Pi), device detail with 6h–30d metric curves
+      (heartbeat history + agent-side offline backfill via `-health-db`),
+      offline watchdog with Telegram alerts, and the beta events browser
+      (clip playback, camera picked, Gemini output, token usage).
+- [ ] Phase 2: OTA agent update from the dashboard (today: version shown,
+      update over WireGuard); tighten event access for privacy before GA.
 
 (The old `cmd/teslcam-debug` exFAT debug UI was scratched in favor of this.)
 

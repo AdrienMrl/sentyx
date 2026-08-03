@@ -593,8 +593,17 @@ func (c *Server) handleEventClip(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	// No analyzed clip yet (analysis not run) means there is nothing to play.
-	if ev.AnalyzedClip == "" {
+	// Default to the analyzer's clip; ?file= plays any other uploaded video of
+	// the event (the admin dashboard uses this to inspect events that were
+	// never analyzed). The name must resolve against the event's own file
+	// rows, so it cannot reach outside the event.
+	name := r.URL.Query().Get("file")
+	if name == "" {
+		name = ev.AnalyzedClip
+	}
+	// No analyzed clip yet (analysis not run) and no explicit file means there
+	// is nothing to play.
+	if name == "" {
 		http.NotFound(w, r)
 		return
 	}
@@ -604,7 +613,7 @@ func (c *Server) handleEventClip(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Resolve exactly the file the analyzer used (thumbs.go uses the same lookup).
-	clip := fileByName(files, ev.AnalyzedClip)
+	clip := fileByName(files, name)
 	if clip == nil {
 		http.NotFound(w, r)
 		return

@@ -3,6 +3,38 @@ import { Link, useParams } from 'react-router-dom'
 import { api } from './api'
 import { fmtBytes } from './format'
 
+// Clip player with a selector over every uploaded video of the event; the
+// analyzer's pick (if any) is the default.
+function ClipPanel({ id, ev }) {
+  const videos = (ev.files || []).filter((f) => f.name.toLowerCase().endsWith('.mp4'))
+  const [file, setFile] = useState(ev.analyzed_clip || videos[0]?.name || '')
+  if (!file) return (
+    <div className="panel">
+      <h2>Clip</h2>
+      <div className="empty">no video uploaded — analysis {ev.analysis_state}</div>
+    </div>
+  )
+  return (
+    <div className="panel">
+      <h2>Clip — {file}{file === ev.analyzed_clip ? ' (analyzed)' : ''}</h2>
+      <video key={file} controls preload="metadata"
+        src={`/events/${encodeURIComponent(id)}/clip?file=${encodeURIComponent(file)}`}
+        poster={`/events/${encodeURIComponent(id)}/thumb`} />
+      {videos.length > 1 && (
+        <div className="filterrow" style={{ marginTop: 10, marginBottom: 0 }}>
+          <select value={file} onChange={(e) => setFile(e.target.value)}>
+            {videos.map((v) => (
+              <option key={v.name} value={v.name}>
+                {v.name}{v.name === ev.analyzed_clip ? ' (analyzed)' : ''}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+    </div>
+  )
+}
+
 const pretty = (raw) => {
   try { return JSON.stringify(JSON.parse(raw), null, 2) } catch { return raw }
 }
@@ -23,13 +55,7 @@ export default function EventDetail() {
       <h1>{ev.reason || 'event'} — {ev.city || 'unknown location'}</h1>
       <div className="evgrid">
         <div style={{ display: 'grid', gap: 18 }}>
-          <div className="panel">
-            <h2>Analyzed clip {ev.analyzed_clip ? `— ${ev.analyzed_clip}` : '(none yet)'}</h2>
-            {ev.analyzed_clip
-              ? <video controls preload="metadata" src={`/events/${encodeURIComponent(id)}/clip`}
-                  poster={`/events/${encodeURIComponent(id)}/thumb`} />
-              : <div className="empty">no analyzed clip — analysis {ev.analysis_state}</div>}
-          </div>
+          <ClipPanel id={id} ev={ev} />
           <div className="panel">
             <h2>Files received ({ev.files?.length ?? 0})</h2>
             <table className="filetable">
