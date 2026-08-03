@@ -74,6 +74,44 @@ func (c *Server) requireOperator(w http.ResponseWriter, r *http.Request) bool {
 	return false
 }
 
+// handleAdminDeviceBlackbox returns a device's blackbox events in
+// [sinceMs, untilMs) — the dashboard's recording-interruption timeline.
+// Parameter semantics match handleAdminDeviceHeartbeats.
+func (c *Server) handleAdminDeviceBlackbox(w http.ResponseWriter, r *http.Request) {
+	if !c.requireOperator(w, r) {
+		return
+	}
+	deviceID := r.PathValue("deviceId")
+	sinceMs, err := strconv.ParseInt(r.URL.Query().Get("sinceMs"), 10, 64)
+	if err != nil || sinceMs <= 0 {
+		http.Error(w, "sinceMs (unix ms, > 0) is required", http.StatusBadRequest)
+		return
+	}
+	untilMs := time.Now().UnixMilli() + 1
+	if raw := r.URL.Query().Get("untilMs"); raw != "" {
+		if untilMs, err = strconv.ParseInt(raw, 10, 64); err != nil || untilMs <= sinceMs {
+			http.Error(w, "untilMs must be a unix ms timestamp after sinceMs", http.StatusBadRequest)
+			return
+		}
+	}
+	events, err := c.store.blackboxHistory(deviceID, sinceMs, untilMs, maxHeartbeatWindowRows)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	type row struct {
+		AtMs   int64  `json:"atMs"`
+		Type   string `json:"type"`
+		Detail string `json:"detail"`
+	}
+	rows := make([]row, 0, len(events))
+	for _, ev := range events {
+		rows = append(rows, row{AtMs: ev.AtMs, Type: ev.Type, Detail: ev.Detail})
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{"events": rows})
+}
+
 // adminDevice is the fleet-view row for one device.
 type adminDevice struct {
 	DeviceID       string          `json:"deviceId"`

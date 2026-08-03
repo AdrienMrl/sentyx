@@ -194,6 +194,16 @@ h1::before { content: '▚ '; color: var(--accent); }
 .badge.medium{ color: var(--status-warn); border-color: var(--status-warn); }
 .badge.high  { color: var(--status-bad); border-color: var(--status-bad); }
 .badge.state { color: var(--text-muted); }
+.badge.good  { color: var(--status-good); border-color: var(--status-good); }
+.badge.warn  { color: var(--status-warn); border-color: var(--status-warn); }
+.badge.alarm { color: var(--status-bad); border-color: var(--status-bad); }
+
+/* Blackbox timeline: one line per recording-interruption transition. */
+.bblist { display: grid; gap: 4px; font-size: 13px; }
+.bbrow { display: flex; align-items: baseline; gap: 10px; padding: 4px 8px; border-left: 2px solid var(--border); }
+.bbrow .when { color: var(--text-muted); font-family: var(--mono, monospace); white-space: nowrap; }
+.bbrow .note { color: var(--text-muted); }
+h1 .sub { font-size: 13px; color: var(--text-muted); font-weight: 400; margin-left: 8px; }
 
 /* ---------- event detail ---------- */
 .evgrid { display: grid; grid-template-columns: 1.4fr 1fr; gap: 18px; align-items: start; }

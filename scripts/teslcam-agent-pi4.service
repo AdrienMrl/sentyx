@@ -41,6 +41,10 @@ ExecStart=/usr/local/bin/teslcam-agent \
   -heartbeat-interval 30s \
   -health-db /var/lib/teslcam/health.db \
   -health-log-interval 1m \
+  -blackbox-db /var/lib/teslcam/blackbox.db \
+  -blackbox-poll 2s \
+  -blackbox-write-idle 90s \
+  -blackbox-flush 60s \
   -lte-iface eth1 \
   -lte-dns 8.8.8.8:53 \
   -lte-dial-timeout 10s

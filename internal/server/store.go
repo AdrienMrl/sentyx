@@ -86,6 +86,13 @@ CREATE TABLE IF NOT EXISTS heartbeats (
   json      TEXT NOT NULL,                    -- verbatim v1 heartbeat payload
   PRIMARY KEY (device_id, at_ms)
 );
+CREATE TABLE IF NOT EXISTS blackbox_events (
+  device_id TEXT NOT NULL,                    -- REFERENCES devices(device_id)
+  at_ms     INTEGER NOT NULL,                 -- transition time (agent clock)
+  type      TEXT NOT NULL,                    -- agent-start | agent-stop | udc | writes
+  detail    TEXT NOT NULL,
+  PRIMARY KEY (device_id, at_ms, type)
+);
 CREATE TABLE IF NOT EXISTS analysis_jobs (
   event_id     TEXT NOT NULL REFERENCES events(id),
   generation   INTEGER NOT NULL,
@@ -557,6 +564,66 @@ func (s *store) heartbeatHistory(deviceID string, sinceMs, untilMs int64, limit 
 		out = append(out, sm)
 	}
 	return out, rows.Err()
+}
+
+// BlackboxEvent is one stored recording-interruption transition.
+type BlackboxEvent struct {
+	AtMs   int64
+	Type   string
+	Detail string
+}
+
+// insertBlackboxEvents records blackbox events for a device, ignoring
+// duplicates (device, atMs, type) so a retried upload batch is idempotent.
+func (s *store) insertBlackboxEvents(deviceID string, events []BlackboxEvent) error {
+	if len(events) == 0 {
+		return nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, ev := range events {
+		if _, err := tx.Exec(`
+			INSERT INTO blackbox_events (device_id, at_ms, type, detail) VALUES (?, ?, ?, ?)
+			ON CONFLICT(device_id, at_ms, type) DO NOTHING`, deviceID, ev.AtMs, ev.Type, ev.Detail); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// blackboxHistory returns a device's stored blackbox events in
+// [sinceMs, untilMs), oldest first, capped at limit rows.
+func (s *store) blackboxHistory(deviceID string, sinceMs, untilMs int64, limit int) ([]BlackboxEvent, error) {
+	rows, err := s.db.Query(`
+		SELECT at_ms, type, detail FROM blackbox_events
+		WHERE device_id = ? AND at_ms >= ? AND at_ms < ?
+		ORDER BY at_ms LIMIT ?`, deviceID, sinceMs, untilMs, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []BlackboxEvent
+	for rows.Next() {
+		var ev BlackboxEvent
+		if err := rows.Scan(&ev.AtMs, &ev.Type, &ev.Detail); err != nil {
+			return nil, err
+		}
+		out = append(out, ev)
+	}
+	return out, rows.Err()
+}
+
+// pruneBlackboxEvents deletes blackbox events older than cutoffMs across all
+// devices and reports how many rows were removed.
+func (s *store) pruneBlackboxEvents(cutoffMs int64) (int64, error) {
+	res, err := s.db.Exec(`DELETE FROM blackbox_events WHERE at_ms < ?`, cutoffMs)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
 }
 
 // pruneHeartbeats deletes history older than cutoffMs across all devices and

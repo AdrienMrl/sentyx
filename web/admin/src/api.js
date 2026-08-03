@@ -29,6 +29,8 @@ export const api = {
   devices: () => request('/admin/api/devices'),
   heartbeats: (deviceId, sinceMs) =>
     request(`/admin/api/devices/${encodeURIComponent(deviceId)}/heartbeats?sinceMs=${sinceMs}`),
+  blackbox: (deviceId, sinceMs) =>
+    request(`/admin/api/devices/${encodeURIComponent(deviceId)}/blackbox?sinceMs=${sinceMs}`),
   events: () => request('/events'),
   event: (id) => request(`/events/${encodeURIComponent(id)}`),
 }

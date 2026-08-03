@@ -14,6 +14,15 @@ export const fmtAgo = (ms) => {
   return `${Math.round(s / 86400)}d ago`
 }
 
+// fmtDur renders a millisecond duration compactly (8s, 14m, 3h, 2d).
+export const fmtDur = (ms) => {
+  const s = Math.max(0, Math.floor(ms / 1000))
+  if (s < 90) return `${s}s`
+  if (s < 5400) return `${Math.round(s / 60)}m`
+  if (s < 129600) return `${Math.round(s / 3600)}h`
+  return `${Math.round(s / 86400)}d`
+}
+
 export const fmtUptime = (sec) => {
   if (sec == null) return '—'
   if (sec < 3600) return `${Math.floor(sec / 60)}m`

@@ -91,6 +91,11 @@ func (c *Server) watchdogLoop(ctx context.Context, logf func(string, ...any)) {
 			} else if n > 0 {
 				logf("watchdog: pruned %d heartbeat rows older than %s", n, heartbeatRetention)
 			}
+			if n, err := c.store.pruneBlackboxEvents(now.Add(-heartbeatRetention).UnixMilli()); err != nil {
+				logf("watchdog: pruning blackbox history: %v", err)
+			} else if n > 0 {
+				logf("watchdog: pruned %d blackbox rows older than %s", n, heartbeatRetention)
+			}
 		}
 	}
 }
