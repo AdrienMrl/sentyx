@@ -43,6 +43,10 @@ type Config struct {
 	// gets a live alert. Nil = no notifications. Delivery failures are logged
 	// and never fail the analysis flow (the verdict is already persisted).
 	Notifier Notifier
+	// Alerter, if set, receives plain-text operator alerts from the device
+	// watchdog (a unit going offline/recovering). Nil = no alerts; the
+	// transitions are still logged.
+	Alerter Alerter
 	// Pusher, if set, sends an FCM push on each completed verdict to the phones
 	// of the user who owns the event's device, subject to that user's severity
 	// threshold. Nil = push disabled. Delivery failures are logged and never
@@ -61,6 +65,7 @@ type Server struct {
 	store    *store
 	analyzer Analyzer     // nil = record only
 	notifier Notifier     // nil = no notifications
+	alerter  Alerter      // nil = no watchdog alerts
 	pusher   Pusher       // nil = push disabled
 	jwt      *jwtVerifier // nil = Supabase user-JWT auth disabled
 }
@@ -95,7 +100,7 @@ func New(cfg Config) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Server{cfg: cfg, store: st, analyzer: analyzer, notifier: cfg.Notifier, pusher: cfg.Pusher, jwt: jwtVer}, nil
+	return &Server{cfg: cfg, store: st, analyzer: analyzer, notifier: cfg.Notifier, alerter: cfg.Alerter, pusher: cfg.Pusher, jwt: jwtVer}, nil
 }
 
 // Run serves the ingest API and drives event completion until ctx is
@@ -110,6 +115,7 @@ func (c *Server) Run(ctx context.Context, logf func(format string, args ...any))
 	go func() { errc <- srv.Serve(ln) }()
 	go c.analyzeLoop(ctx, logf)
 	go c.backfillThumbs(ctx, logf)
+	go c.watchdogLoop(ctx, logf)
 
 	logf("server listening on %s (data in %s)", ln.Addr(), c.cfg.DataDir)
 	select {

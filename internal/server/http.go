@@ -7,12 +7,16 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/AdrienMrl/teslcam/internal/server/adminui"
 )
 
 // Handler returns the server's HTTP API:
@@ -40,6 +44,7 @@ func (c *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/devices", c.handleRegisterDevice)
 	mux.HandleFunc("POST /v1/devices/{deviceId}/heartbeat", c.handleDeviceHeartbeat)
+	mux.HandleFunc("POST /v1/devices/{deviceId}/heartbeats", c.handleDeviceHeartbeats)
 	mux.HandleFunc("GET /v1/devices/{deviceId}", c.handleDeviceStatus)
 	mux.HandleFunc("PUT /v1/me/push-tokens", c.handlePutPushToken)
 	mux.HandleFunc("DELETE /v1/me/push-tokens/{token}", c.handleDeletePushToken)
@@ -55,12 +60,57 @@ func (c *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /events/{id}/thumb", c.handleEventThumb)
 	mux.HandleFunc("GET /events/{id}/clip", c.handleEventClip)
 	mux.HandleFunc("GET /usage", c.handleUsage)
+	mux.HandleFunc("GET /admin/api/me", c.handleAdminMe)
+	mux.HandleFunc("POST /admin/api/logout", c.handleAdminLogout)
+	mux.HandleFunc("GET /admin/api/devices", c.handleAdminDevices)
+	mux.HandleFunc("GET /admin/api/devices/{deviceId}/heartbeats", c.handleAdminDeviceHeartbeats)
 	authed := c.requireToken(mux)
 
 	outer := http.NewServeMux()
 	outer.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("ok")) })
+	// Login is the one admin call that must work unauthenticated (it mints the
+	// session cookie); the rest of /admin/api/ goes through requireToken. The
+	// static dashboard shell is public — every piece of data it shows comes
+	// from the authenticated API.
+	outer.HandleFunc("POST /admin/api/login", c.handleAdminLogin)
+	outer.Handle("GET /admin/api/", authed)
+	outer.Handle("POST /admin/api/", authed)
+	outer.Handle("GET /admin/", adminUIHandler())
+	outer.Handle("GET /admin", http.RedirectHandler("/admin/", http.StatusMovedPermanently))
 	outer.Handle("/", authed)
 	return outer
+}
+
+// handleAdminMe reports whether the caller is the operator — the SPA's auth
+// probe on load. Reaching it at all requires valid auth, so it only has to
+// check the role.
+func (c *Server) handleAdminMe(w http.ResponseWriter, r *http.Request) {
+	if !c.requireOperator(w, r) {
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// adminUIHandler serves the embedded dashboard build with an SPA fallback:
+// any path that is not a real file gets index.html so client-side routes
+// survive a reload.
+func adminUIHandler() http.Handler {
+	sub, err := fs.Sub(adminui.Dist, "dist")
+	if err != nil {
+		panic(err) // embed layout is fixed at compile time
+	}
+	files := http.FileServerFS(sub)
+	return http.StripPrefix("/admin", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p := strings.TrimPrefix(r.URL.Path, "/")
+		if p != "" {
+			if f, err := sub.Open(p); err == nil {
+				f.Close()
+				files.ServeHTTP(w, r)
+				return
+			}
+		}
+		http.ServeFileFS(w, r, sub, "index.html")
+	}))
 }
 
 // authInfo records how a request authenticated: with the shared operator
@@ -129,6 +179,15 @@ func (c *Server) requireToken(next http.Handler) http.Handler {
 	wantShared := sha256.Sum256([]byte("Bearer " + c.cfg.Token))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		auth := r.Header.Get("Authorization")
+		// The admin dashboard authenticates with a session cookie (set by
+		// /admin/api/login) so browser subresource loads — video/img tags —
+		// work without an Authorization header. The cookie holds the operator
+		// token and takes the exact same verification path.
+		if auth == "" {
+			if ck, err := r.Cookie(adminCookieName); err == nil && ck.Value != "" {
+				auth = "Bearer " + ck.Value
+			}
+		}
 		// Compare hashes: constant-time and length-independent.
 		got := sha256.Sum256([]byte(auth))
 		if subtle.ConstantTimeCompare(got[:], wantShared[:]) == 1 {
@@ -263,7 +322,77 @@ func (c *Server) handleDeviceHeartbeat(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `heartbeat body must have "v":1`, http.StatusBadRequest)
 		return
 	}
-	if err := c.store.updateDeviceHeartbeat(deviceID, string(body), time.Now().UnixMilli()); err != nil {
+	sample := HeartbeatSample{AtMs: time.Now().UnixMilli(), JSON: string(body)}
+	if err := c.store.insertHeartbeats(deviceID, []HeartbeatSample{sample}); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// Batch heartbeat backfill limits: enough for several offline days of 60 s
+// samples in one request while bounding memory.
+const (
+	maxHeartbeatBatchBytes   = 4 << 20
+	maxHeartbeatBatchSamples = 5000
+	// maxHeartbeatFutureSkewMs tolerates modest agent clock drift; samples
+	// further in the future are rejected so a broken clock cannot pin the
+	// "latest" heartbeat forever.
+	maxHeartbeatFutureSkewMs = 2 * 60 * 1000
+)
+
+// handleDeviceHeartbeats records a batch of timestamped heartbeat samples —
+// the store-and-forward path an agent uses to backfill history gathered while
+// offline. Each sample carries the agent-clock capture time; duplicates
+// (device, atMs) are ignored so retrying a batch is idempotent. Auth matches
+// the single-heartbeat endpoint: the device itself or the operator.
+func (c *Server) handleDeviceHeartbeats(w http.ResponseWriter, r *http.Request) {
+	deviceID := r.PathValue("deviceId")
+	ai := authFrom(r.Context())
+	if c.cfg.Token != "" && !ai.Operator && ai.DeviceID != deviceID {
+		http.Error(w, "a device may only send its own heartbeats", http.StatusForbidden)
+		return
+	}
+	var req struct {
+		V       *int `json:"v"`
+		Samples []struct {
+			AtMs      int64           `json:"atMs"`
+			Heartbeat json.RawMessage `json:"heartbeat"`
+		} `json:"samples"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, maxHeartbeatBatchBytes)).Decode(&req); err != nil {
+		http.Error(w, "invalid JSON body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if req.V == nil || *req.V != 1 {
+		http.Error(w, `batch body must have "v":1`, http.StatusBadRequest)
+		return
+	}
+	if len(req.Samples) == 0 || len(req.Samples) > maxHeartbeatBatchSamples {
+		http.Error(w, fmt.Sprintf("samples must contain 1..%d entries", maxHeartbeatBatchSamples), http.StatusBadRequest)
+		return
+	}
+	maxAt := time.Now().UnixMilli() + maxHeartbeatFutureSkewMs
+	samples := make([]HeartbeatSample, 0, len(req.Samples))
+	for i, sm := range req.Samples {
+		if sm.AtMs <= 0 || sm.AtMs > maxAt {
+			http.Error(w, fmt.Sprintf("samples[%d].atMs is missing or in the future", i), http.StatusBadRequest)
+			return
+		}
+		if len(sm.Heartbeat) == 0 || len(sm.Heartbeat) > maxHeartbeatBytes {
+			http.Error(w, fmt.Sprintf("samples[%d].heartbeat is missing or too large", i), http.StatusBadRequest)
+			return
+		}
+		var probe struct {
+			V *int `json:"v"`
+		}
+		if err := json.Unmarshal(sm.Heartbeat, &probe); err != nil || probe.V == nil || *probe.V != 1 {
+			http.Error(w, fmt.Sprintf(`samples[%d].heartbeat must be JSON with "v":1`, i), http.StatusBadRequest)
+			return
+		}
+		samples = append(samples, HeartbeatSample{AtMs: sm.AtMs, JSON: string(sm.Heartbeat)})
+	}
+	if err := c.store.insertHeartbeats(deviceID, samples); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}

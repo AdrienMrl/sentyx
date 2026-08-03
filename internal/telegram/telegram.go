@@ -69,6 +69,12 @@ func (c *Client) Notify(ctx context.Context, n server.Notification) error {
 	return errors.Join(errs...)
 }
 
+// SendText delivers a plain operator alert (server.Alerter). The text is
+// HTML-escaped here since it is not authored as markup.
+func (c *Client) SendText(ctx context.Context, text string) error {
+	return c.sendMessage(ctx, esc(text))
+}
+
 // sendMessage calls the Bot API sendMessage method with HTML parse mode.
 func (c *Client) sendMessage(ctx context.Context, text string) error {
 	body, err := json.Marshal(map[string]any{

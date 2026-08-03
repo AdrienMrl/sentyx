@@ -80,6 +80,12 @@ CREATE TABLE IF NOT EXISTS push_tokens (
   platform   TEXT NOT NULL,                   -- android | ios
   updated_at INTEGER NOT NULL                 -- unix milliseconds
 );
+CREATE TABLE IF NOT EXISTS heartbeats (
+  device_id TEXT NOT NULL,                    -- REFERENCES devices(device_id)
+  at_ms     INTEGER NOT NULL,                 -- sample time (agent clock for backfill, server clock for live)
+  json      TEXT NOT NULL,                    -- verbatim v1 heartbeat payload
+  PRIMARY KEY (device_id, at_ms)
+);
 CREATE TABLE IF NOT EXISTS analysis_jobs (
   event_id     TEXT NOT NULL REFERENCES events(id),
   generation   INTEGER NOT NULL,
@@ -487,15 +493,105 @@ type DeviceStatus struct {
 	RegisteredAtMs    int64
 	LastHeartbeatJSON string
 	LastHeartbeatAtMs int64
+	OwnerUserID       string
+	OwnerEmail        string
 }
 
-// updateDeviceHeartbeat records the latest heartbeat payload (verbatim JSON) and
-// its receipt time for a device.
-func (s *store) updateDeviceHeartbeat(deviceID, json string, atMs int64) error {
-	_, err := s.db.Exec(`
-		UPDATE devices SET last_heartbeat_json = ?, last_heartbeat_at = ? WHERE device_id = ?`,
-		json, atMs, deviceID)
-	return err
+// HeartbeatSample is one stored heartbeat history row.
+type HeartbeatSample struct {
+	AtMs int64
+	JSON string
+}
+
+// insertHeartbeats records history samples for a device, ignoring duplicates
+// (same device + timestamp), and advances the device's last-heartbeat snapshot
+// when a sample is newer than the one currently recorded. Samples need not be
+// sorted. Used both by the live heartbeat path (one sample, server clock) and
+// by offline backfill (many samples, agent clock).
+func (s *store) insertHeartbeats(deviceID string, samples []HeartbeatSample) error {
+	if len(samples) == 0 {
+		return nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	newest := samples[0]
+	for _, sm := range samples {
+		if _, err := tx.Exec(`
+			INSERT INTO heartbeats (device_id, at_ms, json) VALUES (?, ?, ?)
+			ON CONFLICT(device_id, at_ms) DO NOTHING`, deviceID, sm.AtMs, sm.JSON); err != nil {
+			return err
+		}
+		if sm.AtMs > newest.AtMs {
+			newest = sm
+		}
+	}
+	if _, err := tx.Exec(`
+		UPDATE devices SET last_heartbeat_json = ?, last_heartbeat_at = ?
+		WHERE device_id = ? AND (last_heartbeat_at IS NULL OR last_heartbeat_at < ?)`,
+		newest.JSON, newest.AtMs, deviceID, newest.AtMs); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// heartbeatHistory returns a device's stored samples in [sinceMs, untilMs),
+// oldest first, capped at limit rows.
+func (s *store) heartbeatHistory(deviceID string, sinceMs, untilMs int64, limit int) ([]HeartbeatSample, error) {
+	rows, err := s.db.Query(`
+		SELECT at_ms, json FROM heartbeats
+		WHERE device_id = ? AND at_ms >= ? AND at_ms < ?
+		ORDER BY at_ms LIMIT ?`, deviceID, sinceMs, untilMs, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []HeartbeatSample
+	for rows.Next() {
+		var sm HeartbeatSample
+		if err := rows.Scan(&sm.AtMs, &sm.JSON); err != nil {
+			return nil, err
+		}
+		out = append(out, sm)
+	}
+	return out, rows.Err()
+}
+
+// pruneHeartbeats deletes history older than cutoffMs across all devices and
+// reports how many rows were removed.
+func (s *store) pruneHeartbeats(cutoffMs int64) (int64, error) {
+	res, err := s.db.Exec(`DELETE FROM heartbeats WHERE at_ms < ?`, cutoffMs)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
+// allDeviceStatuses returns every registered device with its latest heartbeat
+// snapshot and owner (email when the owning user is known), ordered by device id.
+func (s *store) allDeviceStatuses() ([]DeviceStatus, error) {
+	rows, err := s.db.Query(`
+		SELECT d.device_id, d.name, d.created_at,
+		       COALESCE(d.last_heartbeat_json,''), COALESCE(d.last_heartbeat_at,0),
+		       COALESCE(d.owner_user_id,''), COALESCE(u.email,'')
+		FROM devices d LEFT JOIN users u ON u.id = d.owner_user_id
+		ORDER BY d.device_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []DeviceStatus
+	for rows.Next() {
+		var ds DeviceStatus
+		if err := rows.Scan(&ds.DeviceID, &ds.Name, &ds.RegisteredAtMs,
+			&ds.LastHeartbeatJSON, &ds.LastHeartbeatAtMs, &ds.OwnerUserID, &ds.OwnerEmail); err != nil {
+			return nil, err
+		}
+		out = append(out, ds)
+	}
+	return out, rows.Err()
 }
 
 // deviceStatus returns a device and its last heartbeat, or nil when the device

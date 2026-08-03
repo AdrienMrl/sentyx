@@ -73,6 +73,7 @@ func main() {
 	// Telegram notifications are off unless configured, and require BOTH the
 	// bot token and the chat ID — no implicit default for either.
 	var notifier server.Notifier
+	var alerter server.Alerter
 	telegramToken, err := tokenfile.Read(*telegramTokenFile)
 	if err != nil {
 		log.Fatal(err)
@@ -86,6 +87,7 @@ func main() {
 			log.Fatal(err)
 		}
 		notifier = tg
+		alerter = tg // device-watchdog alerts ride the same bot/chat
 	}
 	telegramDebug := false
 	if raw := os.Getenv("TELEGRAM_DEBUG"); raw != "" {
@@ -122,6 +124,7 @@ func main() {
 		SupabaseJWKSURL:    *supabaseJWKSURL,
 		SupabaseIssuer:     *supabaseIssuer,
 		Notifier:           notifier,
+		Alerter:            alerter,
 		Pusher:             pusher,
 		DebugNotifications: telegramDebug,
 	})
