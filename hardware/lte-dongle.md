@@ -95,9 +95,15 @@ prototype Pi:
    route onto the metered link.
 2. **nftables egress allowlist** (`/etc/teslcam/lte-guard.nft`, loaded by
    `teslcam-lte-guard.service`): out of `eth1` only the dongle LAN, the
-   teslcam server `161.35.232.246:443`, and DNS `8.8.8.8/8.8.4.4:53` are
-   allowed; everything else is counter-logged and dropped, and the forward
-   chain blocks routing anything (Docker, WireGuard) out the dongle.
+   teslcam server `161.35.232.246:443`, DNS `8.8.8.8/8.8.4.4:53`, and NTP
+   `162.159.200.1/162.159.200.123:123` are allowed; everything else is
+   counter-logged and dropped, and the forward chain blocks routing anything
+   (Docker, WireGuard) out the dongle. The two fixed NTP destinations have
+   destination-specific rules into table 101 so `systemd-timesyncd` can set
+   the clock after a cold boot without creating a general LTE default route.
+   NetworkManager dispatcher `50-teslcam-lte-timesync` restarts timesyncd when
+   `eth1` reaches `up`; without that ordering hook, timesyncd can try before
+   DHCP installs table 101 and then back off for several minutes.
 3. **No background chatter:** `apt-daily{,-upgrade}.timer`, `man-db.timer`
    disabled (already the case in the field image; now also on the prototype).
 

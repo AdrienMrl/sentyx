@@ -539,7 +539,8 @@ UNIT
 #     table 101, reachable only by sockets bound to eth1's address (which only
 #     the agent's -lte-iface fallback dialer does).
 #  2. An nftables allowlist on eth1 permits just the teslcam server, the
-#     dongle LAN, and its DNS — dropped-counter everything else.
+#     dongle LAN, its DNS, and two fixed NTP endpoints — dropped-counter
+#     everything else.
 #  3. All periodic system chatter (apt, man-db) is disabled below anyway.
 mkdir -p /etc/NetworkManager/system-connections /etc/NetworkManager/conf.d
 cat > /etc/NetworkManager/system-connections/lte-dongle.nmconnection <<'NMCONN'
@@ -557,6 +558,11 @@ never-default=true
 route1=0.0.0.0/0,192.168.8.1
 route1_options=table=101
 routing-rule1=priority 30100 from 192.168.8.0/24 table 101
+# systemd-timesyncd does not bind its socket to eth1, so destination-specific
+# rules are required for its two fixed NTP peers. These do not create a general
+# LTE route; only packets to these exact addresses enter table 101.
+routing-rule2=priority 30090 to 162.159.200.1/32 table 101
+routing-rule3=priority 30091 to 162.159.200.123/32 table 101
 
 [ipv6]
 # Disabled so a carrier router-advertisement cannot install an IPv6 default
@@ -601,9 +607,10 @@ NMCONF
 
 cat > /etc/teslcam/lte-guard.nft <<'NFT'
 #!/usr/sbin/nft -f
-# Egress allowlist for the metered LTE dongle (eth1). Only the teslcam server
-# and the dongle's own LAN (web API, DNS relay, DHCP) may be reached over LTE;
-# every other destination is dropped, and nothing may be forwarded out of it.
+# Egress allowlist for the metered LTE dongle (eth1). Only the teslcam server,
+# the dongle's own LAN (web API, DNS relay, DHCP), and fixed DNS/NTP services
+# may be reached over LTE; every other destination is dropped, and nothing may
+# be forwarded out of it.
 add table inet lte_guard
 delete table inet lte_guard
 table inet lte_guard {
@@ -614,6 +621,7 @@ table inet lte_guard {
     ip daddr 161.35.232.246 tcp dport 443 accept comment "teslcam server"
     ip daddr 161.35.232.246 udp dport 51821 accept comment "wg1 remote access"
     ip daddr { 8.8.8.8, 8.8.4.4 } udp dport 53 accept comment "dongle upstream DNS"
+    ip daddr { 162.159.200.1, 162.159.200.123 } udp dport 123 accept comment "boot clock sync"
     counter log prefix "lte-guard drop: " drop
   }
   chain forward {
@@ -622,6 +630,28 @@ table inet lte_guard {
   }
 }
 NFT
+
+# The Pi has no RTC. Use fixed-address NTP peers whose traffic is routed through
+# LTE above, so TLS and event timestamps work after a cold boot with no Wi-Fi.
+# Keeping literal addresses avoids needing working DNS before the clock exists.
+mkdir -p /etc/systemd/timesyncd.conf.d
+cat > /etc/systemd/timesyncd.conf.d/50-teslcam-lte.conf <<'TIMESYNC'
+[Time]
+NTP=162.159.200.1 162.159.200.123
+FallbackNTP=0.debian.pool.ntp.org 1.debian.pool.ntp.org 2.debian.pool.ntp.org 3.debian.pool.ntp.org
+ConnectionRetrySec=10
+TIMESYNC
+
+# timesyncd starts before the USB dongle has DHCP and its table-101 rules. A
+# failed first attempt otherwise backs off for minutes even after eth1 is ready.
+# Restart it at the NetworkManager "up" event, when those routes are installed.
+mkdir -p /etc/NetworkManager/dispatcher.d
+cat > /etc/NetworkManager/dispatcher.d/50-teslcam-lte-timesync <<'TIMEDISPATCH'
+#!/bin/sh
+[ "$1" = eth1 ] && [ "$2" = up ] || exit 0
+systemctl try-restart systemd-timesyncd.service
+TIMEDISPATCH
+chmod 755 /etc/NetworkManager/dispatcher.d/50-teslcam-lte-timesync
 cat > /etc/systemd/system/teslcam-lte-guard.service <<'UNIT'
 [Unit]
 Description=teslcam LTE egress allowlist (nftables)

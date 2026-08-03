@@ -10,7 +10,7 @@
 #   scripts/install-agent.sh status            service status
 #   scripts/install-agent.sh logs [n]          last n journal lines (default 100)
 #
-# Target host is adri@pi; override with TESLCAM_PI=user@host.
+# Target host is adri@sentyx.local; override with TESLCAM_PI=user@host.
 #
 # Fresh-Pi bring-up order (Raspberry Pi OS Bookworm, 64-bit Lite recommended):
 #   1. setup      — installs packages, enables the dwc2 USB device-mode overlay.
@@ -37,7 +37,7 @@
 # degrades gracefully if it is absent.
 set -euo pipefail
 
-HOST="${TESLCAM_PI:-adri@pi}"
+HOST="${TESLCAM_PI:-adri@sentyx.local}"
 SSH=(ssh -o ConnectTimeout=10 "$HOST")
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 

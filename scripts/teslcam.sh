@@ -768,6 +768,28 @@ fi
 [ -f /boot/firmware/teslcam-wg1.conf ] && f "wg config still on FAT boot partition (private key readable)" \
   || p "no wg private key left on the boot partition"
 
+# --- clock synchronization. The fixed peers have destination-specific policy
+# rules through LTE, so this must work after a cold boot without Wi-Fi while
+# preserving the no-default-route invariant on the metered interface.
+if [ "$(timedatectl show -p NTPSynchronized --value 2>/dev/null)" = yes ]; then
+  TS_SERVER="$(timedatectl show-timesync -p ServerAddress --value 2>/dev/null)"
+  case "$TS_SERVER" in
+    162.159.200.1|162.159.200.123) p "clock synchronized through fixed LTE NTP peer $TS_SERVER" ;;
+    *) w "clock synchronized, but current NTP peer is ${TS_SERVER:-unknown} (not the LTE peers)" ;;
+  esac
+else
+  f "system clock is not synchronized"
+fi
+for ntp_ip in 162.159.200.1 162.159.200.123; do
+  ip rule show | grep -q "to $ntp_ip lookup 101" \
+    && p "LTE policy route present for NTP $ntp_ip" \
+    || f "LTE policy route missing for NTP $ntp_ip"
+done
+sudo nft list chain inet lte_guard output 2>/dev/null \
+  | grep -q '162.159.200.1.*162.159.200.123.*udp dport 123.*accept' \
+  && p "LTE firewall permits only the fixed NTP peers" \
+  || f "LTE firewall NTP exception missing"
+
 # --- sshd hardening, as actually resolved
 PW="$(sudo sshd -T 2>/dev/null | awk '/^passwordauthentication /{print $2}')"
 [ "$PW" = "no" ] && p "sshd passwordauthentication no" || f "sshd passwordauthentication is '${PW:-unknown}'"

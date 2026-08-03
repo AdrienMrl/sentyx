@@ -104,6 +104,24 @@ B="$MNT/var/lib/teslcam/backing.img"
 [[ -f "$B" ]] && ok "backing.img created" || bad "backing.img missing"
 [[ -f "$MNT/var/lib/teslcam/.firstboot-done" ]] && ok "completion marker" || bad "completion marker missing"
 [[ ! -e "$B.partial" ]] && ok "no partial left behind" || bad "backing.img.partial left behind"
+
+# A new field unit has no RTC and may boot with LTE as its only network. The
+# image must carry the complete narrow NTP path: fixed peers, destination-only
+# policy routing, firewall allowance, and the eth1-up ordering hook.
+grep -q '^NTP=162\.159\.200\.1 162\.159\.200\.123$' \
+  "$MNT/etc/systemd/timesyncd.conf.d/50-teslcam-lte.conf" 2>/dev/null \
+  && ok "fixed LTE NTP peers configured" || bad "fixed LTE NTP configuration missing"
+grep -q 'to 162\.159\.200\.1/32 table 101' \
+  "$MNT/etc/NetworkManager/system-connections/lte-dongle.nmconnection" 2>/dev/null \
+  && grep -q 'to 162\.159\.200\.123/32 table 101' \
+    "$MNT/etc/NetworkManager/system-connections/lte-dongle.nmconnection" 2>/dev/null \
+  && ok "LTE NTP policy routes configured" || bad "LTE NTP policy routes missing"
+grep -q '162\.159\.200\.1, 162\.159\.200\.123.*udp dport 123 accept' \
+  "$MNT/etc/teslcam/lte-guard.nft" 2>/dev/null \
+  && ok "LTE firewall permits fixed NTP peers" || bad "LTE firewall NTP exception missing"
+[[ -x "$MNT/etc/NetworkManager/dispatcher.d/50-teslcam-lte-timesync" ]] \
+  && ok "LTE-up time synchronization hook installed" || bad "LTE-up time synchronization hook missing"
+
 sfdisk -d "$B" 2>/dev/null | grep -q 'type=7' && ok "MBR partition type 7" || bad "MBR partition type"
 BL="$(losetup --find --show --partscan "$B")"
 for _ in $(seq 1 20); do [[ -e "${BL}p1" ]] && break; sleep 0.5; done

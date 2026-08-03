@@ -17,10 +17,10 @@
 # flashing stops asking for a password (see that script for the trade-off);
 # otherwise this prompts for sudo before the write.
 #
-# With TESLCAM_DEV_LINK=1, also arms the USB dev link on the card: the unit
-# then exposes an ethernet + serial console alongside the drive, reachable at
-# <hostname>.local over the same USB cable, so an agent fix is an scp instead
-# of another 20-minute image rebuild. DEBUG only — never for a car-bound unit.
+# The USB dev link is armed by default: the unit exposes Ethernet + a serial
+# console alongside the drive, reachable at <hostname>.local over the same USB
+# cable. Set TESLCAM_DEV_LINK=0 to disable it for a car-bound unit after
+# debugging; the composite gadget has not been validated against the car.
 #
 # After flashing, offers to provision remote access: generates a per-unit
 # WireGuard keypair and writes it to the FAT boot partition, so the unit can
@@ -32,6 +32,24 @@ PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd -P)"
 
 say() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
 die() { printf '\033[1;31merror:\033[0m %s\n' "$*" >&2; exit 1; }
+
+# Return the mount point for the boot partition on the disk we just flashed.
+# Looking only for /Volumes/bootfs is unsafe: if another volume has that name,
+# macOS mounts this card as /Volumes/bootfs 1 and we would provision the wrong
+# disk while still registering the new WireGuard peer on the hub.
+boot_mount_for_disk() {
+  local partition="/dev/${DISK}s1" mount_point=""
+  for _ in $(seq 1 20); do
+    mount_point="$(diskutil info -plist "$partition" 2>/dev/null \
+      | plutil -extract MountPoint raw -o - - 2>/dev/null || true)"
+    if [[ -n "$mount_point" && "$mount_point" != null && -d "$mount_point" ]]; then
+      printf '%s\n' "$mount_point"
+      return 0
+    fi
+    sleep 0.5
+  done
+  return 1
+}
 
 [ "$(uname)" = "Darwin" ] || die "this script is macOS-only (uses diskutil)"
 
@@ -335,13 +353,7 @@ if [[ "$WANT_WG" == y ]]; then
   # The boot partition is FAT and mounts on macOS; the rootfs (ext4) does not.
   say "mounting boot partition"
   diskutil mountDisk "/dev/$DISK" >/dev/null
-  BOOTVOL=""
-  for _ in $(seq 1 20); do
-    for v in /Volumes/bootfs /Volumes/boot; do
-      [[ -d "$v" ]] && { BOOTVOL="$v"; break 2; }
-    done
-    sleep 0.5
-  done
+  BOOTVOL="$(boot_mount_for_disk || true)"
   [[ -n "$BOOTVOL" ]] || die "boot partition did not mount — cannot provision"
 
   # umask so the key is not world-readable on the Mac while it is staged here.
@@ -380,27 +392,22 @@ WGCONF
   fi
 fi
 
-# ------------------------------------------------- optional: USB dev link
+# ---------------------------------------------------------- USB dev link
 # Both debug functions are armed by an empty marker file on the FAT boot
 # partition, and the card is already in this Mac — so offering it here is the
 # difference between a dev unit that is reachable from its very first boot and
 # one that costs another card swap the first time something goes wrong.
-# Opt-in via TESLCAM_DEV_LINK=1, never by default: the console is passwordless
-# root over USB, and both make the gadget composite (see gadget.Config), which
-# the car has not been validated against.
-if [[ "${TESLCAM_DEV_LINK:-}" == 1 ]]; then
+# Enabled by default for recoverability during development. The console is
+# passwordless root over USB, and both functions make the gadget composite
+# (see gadget.Config), which the car has not been validated against. Set
+# TESLCAM_DEV_LINK=0 when preparing a unit for in-car validation.
+if [[ "${TESLCAM_DEV_LINK:-1}" == 1 ]]; then
   # Read the baked hostname from the image builder rather than repeating it:
   # the mDNS name the dev link is reached by is exactly that hostname.
   DEV_LINK_HOST="$(awk -F= '/^HOSTNAME_BAKED=/{print $2; exit}' "$PROJECT_DIR/scripts/build-image.sh")"
   [[ -n "$DEV_LINK_HOST" ]] || DEV_LINK_HOST=sentyx
   diskutil mountDisk "/dev/$DISK" >/dev/null 2>&1 || true
-  DEVBOOT=""
-  for _ in $(seq 1 20); do
-    for v in /Volumes/bootfs /Volumes/boot; do
-      [[ -d "$v" ]] && { DEVBOOT="$v"; break 2; }
-    done
-    sleep 0.5
-  done
+  DEVBOOT="$(boot_mount_for_disk || true)"
   if [[ -n "$DEVBOOT" ]]; then
     : > "$DEVBOOT/teslcam-gadget-net"
     : > "$DEVBOOT/teslcam-gadget-console"

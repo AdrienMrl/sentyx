@@ -45,7 +45,7 @@ fronted by the existing Caddy install with automatic TLS:
 
 ## Prototype hardware (in-car Pi)
 
-Current prototype is a **Pi 4 Model B** at `ssh adri@pi` (not the Pi Zero 2 W the
+Current prototype is a **Pi 4 Model B** at `ssh adri@sentyx.local` (not the Pi Zero 2 W the
 plan targets — power is the constraint: glovebox USB is ~1–2A, keep CPU load low).
 Configured 2026-07: `dtoverlay=dwc2,dr_mode=peripheral` in `/boot/firmware/config.txt`,
 `dwc2`+`libcomposite` in `/etc/modules`; UDC `fe980000.usb`. Backing image at
@@ -92,7 +92,14 @@ provisions on first pairing). The same image flashes to SD card or USB SSD
 (PARTUUID boot + EEPROM SD→USB order). Builds inside the Lima dev VM
 (native arm64 chroot); first boot creates the sparse exFAT backing image.
 `scripts/flash-image.sh` interactively flashes it on macOS (external-disk
-detection, hard confirm). `scripts/test-image.sh` smoke-tests a built image
+detection, hard confirm). The flash script enables the USB development link by
+default, creating `teslcam-gadget-net` and `teslcam-gadget-console` on the boot
+partition so the Pi exposes USB Ethernet and a serial console; over a
+data-capable USB-C cable, SSH is available at `ssh adri@sentyx.local`. Set
+`TESLCAM_DEV_LINK=0 scripts/flash-image.sh ...` to disable it for a car-bound
+unit because the resulting composite gadget is not yet validated with the car,
+and the serial console provides passwordless root access over the cable.
+`scripts/test-image.sh` smoke-tests a built image
 without a Pi: runs first-boot provisioning in a chroot and boots the
 userspace via systemd-nspawn in the VM — only the Pi firmware/EEPROM/dwc2/BLE
 hardware paths need the real board.
