@@ -127,6 +127,7 @@ h1::before { content: '▚ '; color: var(--accent); }
 .metric.update.pending { color: var(--status-warn); }
 .metric.update.busy { color: var(--accent); }
 .metric.update.ok { color: var(--text-muted); }
+.metric.update.stale { color: var(--text-secondary); }
 .empty { color: var(--text-muted); font-family: var(--mono); font-size: 13px; padding: 40px 0; text-align: center; }
 
 /* ---------- device detail ---------- */

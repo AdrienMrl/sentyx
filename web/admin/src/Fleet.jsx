@@ -11,7 +11,12 @@ const RUNNING = ['offered', 'downloading', 'waiting-safe', 'installing', 'reboot
 // UpdateBadge renders one unit's firmware-update situation. Renders nothing
 // when no release has ever been published — there is no "up to date" to claim
 // against an empty release list.
-function UpdateBadge({ update }) {
+//
+// "up to date" requires the unit to actually be running the latest version.
+// A unit that is merely outside every active campaign is behind, not current,
+// and says so — otherwise the fleet view would quietly report stale units as
+// healthy whenever no rollout happens to target them.
+function UpdateBadge({ update, running }) {
   if (!update) return null
   const { available, state, targetVersion, latestVersion, progressPct } = update
   let cls = 'ok'
@@ -25,6 +30,12 @@ function UpdateBadge({ update }) {
   } else if (available) {
     cls = 'pending'
     text = `update available → ${targetVersion}`
+  } else if (running && running !== latestVersion) {
+    cls = 'stale'
+    text = `behind · latest ${latestVersion}`
+  } else if (!running) {
+    cls = 'stale'
+    text = `unknown · latest ${latestVersion}`
   }
   return <span className={`metric update ${cls}`}><b>firmware</b>{text}</span>
 }
@@ -78,7 +89,7 @@ export default function Fleet() {
               <span className="metric">
                 <b>agent</b>{hb.agentVersion || '—'} · up {fmtUptime(hb.uptimeSec)}
               </span>
-              <UpdateBadge update={d.update} />
+              <UpdateBadge update={d.update} running={hb.agentVersion} />
             </Link>
           )
         })}
