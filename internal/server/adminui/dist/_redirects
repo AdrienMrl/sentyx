@@ -1,0 +1,7 @@
+/admin/api/*  https://teslcam.161-35-232-246.sslip.io/admin/api/:splat  200
+/events       https://teslcam.161-35-232-246.sslip.io/events            200
+/events/*     https://teslcam.161-35-232-246.sslip.io/events/:splat     200
+/usage        https://teslcam.161-35-232-246.sslip.io/usage             200
+/admin/assets/*  /assets/:splat  200
+/admin/*         /index.html      200
+/                 /index.html      200
