@@ -42,3 +42,9 @@ experiments/tesla-signaling/tesla-signaling
 
 # Local Netlify folder
 .netlify
+
+# OTA release signing keys — the private key must never reach the repo,
+# a Pi or the VPS (see docs/ota-updates.md).
+keys/
+.secrets/
+*.private.pem
