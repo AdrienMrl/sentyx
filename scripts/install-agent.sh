@@ -254,7 +254,9 @@ cmd_deploy() {
   tmp="$(mktemp -d)"
   # Expand now: tmp is local, and an EXIT trap fires after it goes out of scope.
   trap "rm -rf '$tmp'" EXIT
-  version="$(git -C "$ROOT" describe --always --dirty 2>/dev/null || echo dev)"
+  # CalVer: tags are vYYYY.M.N, so exact builds report "2026.8.1" and dev
+  # builds "2026.8.1-3-g1f39698[-dirty]". Untagged history degrades to a hash.
+  version="$(git -C "$ROOT" describe --tags --always --dirty 2>/dev/null | sed 's/^v//' || echo dev)"
 
   say "building teslcam-agent for linux/$goarch (version $version)"
   # env applies $goarch ("GOARCH=arm64" or "GOARCH=arm GOARM=7"); a bare

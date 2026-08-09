@@ -27,20 +27,36 @@ For an existing prototype:
 Back up the private key offline. Losing it requires a separately authenticated
 operation to provision a new trust anchor on deployed units.
 
+## Versioning
+
+Releases use CalVer: `YYYY.M.N`, where `N` counts releases within the month
+(`2026.8.1` is the first release of August 2026; `N` resets each month). Cut a
+release by tagging main with a `v` prefix:
+
+    git tag -a v2026.8.1 -m "..." && git push origin v2026.8.1
+
+Build scripts derive the reported agent version from `git describe --tags`, so
+an exact tagged build reports `2026.8.1` and a dev build
+`2026.8.1-3-g1f39698[-dirty]` — this is the string shown in heartbeats, the
+admin dashboard and BLE onboarding. The human-facing version carries no
+ordering semantics: the updater orders strictly by the manifest `sequence`, a
+fleet-wide monotonic counter that never resets. Use `app-<version>` /
+`sys-<version>` as release IDs.
+
 ## Application release
 
     teslcam-ota bundle-app \
-      -id app-v1.4.0 -version v1.4.0 -sequence 14 \
+      -id app-2026.8.1 -version 2026.8.1 -sequence 14 \
       -agent build/teslcam-agent \
       -scorer build/teslcam-camera-scorer \
       -key keys/ota-release.private.pem \
-      -out build/app-v1.4.0.tar.gz
+      -out build/app-2026.8.1.tar.gz
 
     teslcam-ota publish \
       -server https://teslcam.example.com \
       -token-file .secrets/operator.token \
-      -release build/app-v1.4.0.tar.gz.release.json \
-      -artifact build/app-v1.4.0.tar.gz
+      -release build/app-2026.8.1.tar.gz.release.json \
+      -artifact build/app-2026.8.1.tar.gz
 
 The updater resumes interrupted downloads, verifies size, SHA-256 and the
 signature, waits for the Tesla-write interlock, and installs under

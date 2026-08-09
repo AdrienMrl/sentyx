@@ -75,7 +75,8 @@ if [ "$(uname)" = "Darwin" ]; then
   [[ -f "$OTA_KEYFILE" ]] || die "OTA public key not found: $OTA_KEYFILE"
   grep -qE '^(ssh|ecdsa)-' "$KEYFILE" || die "$KEYFILE does not look like an SSH public key"
 
-  VERSION="$(git -C "$PROJECT_DIR" describe --always --dirty 2>/dev/null || echo dev)"
+  # CalVer: tags are vYYYY.M.N (see docs/ota-updates.md, Versioning).
+  VERSION="$(git -C "$PROJECT_DIR" describe --tags --always --dirty 2>/dev/null | sed 's/^v//' || echo dev)"
 
   say "cross-compiling teslcam-agent for linux/arm64 (version $VERSION)"
   mkdir -p "$INPUTS"
