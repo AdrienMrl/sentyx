@@ -12,6 +12,8 @@ import (
 	"net/http"
 	"strconv"
 	"time"
+
+	"github.com/AdrienMrl/teslcam/internal/ota"
 )
 
 // adminCookieName holds the operator token in an HttpOnly cookie so plain
@@ -83,6 +85,21 @@ type adminDevice struct {
 	Online         bool            `json:"online"`
 	LastSeenMs     int64           `json:"lastSeenMs,omitempty"`
 	Status         json.RawMessage `json:"status"`
+	Update         *adminUpdate    `json:"update,omitempty"`
+}
+
+// adminUpdate summarises a device's firmware-update situation for the fleet
+// view. Available reflects what the updater would actually be offered on its
+// next poll (campaign active, device in the rollout cohort, not yet
+// installed) — not merely that a newer release exists somewhere.
+type adminUpdate struct {
+	LatestVersion string `json:"latestVersion,omitempty"`
+	Available     bool   `json:"available"`
+	TargetVersion string `json:"targetVersion,omitempty"`
+	ReleaseID     string `json:"releaseId,omitempty"`
+	State         string `json:"state,omitempty"`
+	ProgressPct   int    `json:"progressPct,omitempty"`
+	Error         string `json:"error,omitempty"`
 }
 
 // handleAdminDevices lists every registered device with its latest heartbeat
@@ -92,6 +109,16 @@ func (c *Server) handleAdminDevices(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	statuses, err := c.store.allDeviceStatuses()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	latest, err := c.store.latestOTARelease(ota.ReleaseApplication)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	progress, err := c.store.latestDeviceOTAUpdates()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -111,10 +138,39 @@ func (c *Server) handleAdminDevices(w http.ResponseWriter, r *http.Request) {
 		if ds.LastHeartbeatJSON != "" {
 			d.Status = json.RawMessage(ds.LastHeartbeatJSON)
 		}
+		if u, err := c.deviceUpdate(ds.DeviceID, latest, progress); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		} else {
+			d.Update = u
+		}
 		out = append(out, d)
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{"devices": out})
+}
+
+// deviceUpdate builds the fleet-view update summary for one device. Returns
+// nil when no release has ever been published, so the dashboard simply omits
+// the column rather than claiming a device is up to date against nothing.
+func (c *Server) deviceUpdate(deviceID string, latest *ota.Manifest, progress map[string]deviceOTAProgress) (*adminUpdate, error) {
+	if latest == nil {
+		return nil, nil
+	}
+	u := &adminUpdate{LatestVersion: latest.Version}
+	if p, ok := progress[deviceID]; ok {
+		u.State, u.ProgressPct, u.Error, u.ReleaseID = p.State, p.ProgressPct, p.Error, p.ReleaseID
+	}
+	plan, err := c.store.otaPlan(deviceID)
+	if err != nil {
+		return nil, err
+	}
+	if plan != nil {
+		u.Available = true
+		u.TargetVersion = plan.Release.Manifest.Version
+		u.ReleaseID = plan.Release.Manifest.ID
+	}
+	return u, nil
 }
 
 // handleAdminDeviceHeartbeats returns a device's stored heartbeat history in

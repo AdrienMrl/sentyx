@@ -239,3 +239,54 @@ func (s *store) updateOTADeviceStatus(deviceID string, st ota.DeviceStatus, raw 
 	}
 	return tx.Commit()
 }
+
+// latestOTARelease returns the highest-sequence published release of a type,
+// or nil when nothing has been published yet. This is the fleet's "latest
+// available firmware" — releases are the durable record; there is no separate
+// latest-version row to drift out of sync.
+func (s *store) latestOTARelease(t ota.ReleaseType) (*ota.Manifest, error) {
+	var manifest string
+	err := s.db.QueryRow(`SELECT manifest_json FROM ota_releases
+		WHERE release_type = ? ORDER BY sequence DESC LIMIT 1`, t).Scan(&manifest)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var m ota.Manifest
+	if err := json.Unmarshal([]byte(manifest), &m); err != nil {
+		return nil, err
+	}
+	return &m, nil
+}
+
+type deviceOTAProgress struct {
+	ReleaseID   string
+	State       string
+	ProgressPct int
+	Error       string
+	UpdatedAtMs int64
+}
+
+// latestDeviceOTAUpdates returns each device's most recently reported update
+// status, keyed by device ID. One query for the whole fleet.
+func (s *store) latestDeviceOTAUpdates() (map[string]deviceOTAProgress, error) {
+	rows, err := s.db.Query(`SELECT u.device_id, u.release_id, u.state, u.progress_pct, u.error, u.updated_at
+		FROM ota_device_updates u
+		WHERE u.updated_at = (SELECT MAX(x.updated_at) FROM ota_device_updates x WHERE x.device_id = u.device_id)`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]deviceOTAProgress{}
+	for rows.Next() {
+		var id string
+		var p deviceOTAProgress
+		if err := rows.Scan(&id, &p.ReleaseID, &p.State, &p.ProgressPct, &p.Error, &p.UpdatedAtMs); err != nil {
+			return nil, err
+		}
+		out[id] = p
+	}
+	return out, rows.Err()
+}

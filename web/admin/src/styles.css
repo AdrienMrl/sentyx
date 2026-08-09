@@ -105,7 +105,7 @@ h1::before { content: '▚ '; color: var(--accent); }
 .fleet { display: grid; gap: 10px; }
 .unit {
   display: grid;
-  grid-template-columns: 14px 1.4fr 1fr 1fr 1fr 1fr 1fr;
+  grid-template-columns: 14px 1.4fr 1fr 1fr 1fr 1fr 1fr 1.1fr;
   gap: 16px; align-items: center;
   padding: 14px 18px;
   background: var(--surface-1); border: 1px solid var(--edge);
@@ -123,6 +123,10 @@ h1::before { content: '▚ '; color: var(--accent); }
 .metric { font-family: var(--mono); font-size: 13px; color: var(--text-secondary); }
 .metric b { display: block; font-size: 10px; font-weight: 400; text-transform: uppercase; letter-spacing: 0.12em; color: var(--text-muted); }
 .metric.alarm { color: var(--status-bad); }
+/* Firmware column: pending/busy earn attention, up-to-date stays quiet. */
+.metric.update.pending { color: var(--status-warn); }
+.metric.update.busy { color: var(--accent); }
+.metric.update.ok { color: var(--text-muted); }
 .empty { color: var(--text-muted); font-family: var(--mono); font-size: 13px; padding: 40px 0; text-align: center; }
 
 /* ---------- device detail ---------- */

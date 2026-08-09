@@ -4,6 +4,31 @@ import { api } from './api'
 import ErrBox from './ErrBox'
 import { fmtAgo, fmtBytes, fmtUptime, pctFree } from './format'
 
+// In-flight OTA states, in the order the updater reports them. Anything here
+// means "working on it"; anything else is a terminal outcome.
+const RUNNING = ['offered', 'downloading', 'waiting-safe', 'installing', 'rebooting']
+
+// UpdateBadge renders one unit's firmware-update situation. Renders nothing
+// when no release has ever been published — there is no "up to date" to claim
+// against an empty release list.
+function UpdateBadge({ update }) {
+  if (!update) return null
+  const { available, state, targetVersion, latestVersion, progressPct } = update
+  let cls = 'ok'
+  let text = `up to date · ${latestVersion}`
+  if (state === 'failed' || state === 'rolled-back') {
+    cls = 'alarm'
+    text = `${state} · ${targetVersion || latestVersion}`
+  } else if (RUNNING.includes(state)) {
+    cls = 'busy'
+    text = `${state}${progressPct ? ` ${progressPct}%` : ''} → ${targetVersion || latestVersion}`
+  } else if (available) {
+    cls = 'pending'
+    text = `update available → ${targetVersion}`
+  }
+  return <span className={`metric update ${cls}`}><b>firmware</b>{text}</span>
+}
+
 // Fleet view: one row per registered Pi, refreshed every 15 s.
 export default function Fleet() {
   const [devices, setDevices] = useState(null)
@@ -53,6 +78,7 @@ export default function Fleet() {
               <span className="metric">
                 <b>agent</b>{hb.agentVersion || '—'} · up {fmtUptime(hb.uptimeSec)}
               </span>
+              <UpdateBadge update={d.update} />
             </Link>
           )
         })}
