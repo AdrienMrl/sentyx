@@ -39,3 +39,6 @@ experiments/tesla-clip/tesla-clip
 experiments/tesla-clip/dashcam
 experiments/tesla-fleet-auth/tesla-fleet-auth
 experiments/tesla-signaling/tesla-signaling
+
+# Local Netlify folder
+.netlify

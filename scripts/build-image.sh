@@ -166,6 +166,10 @@ sudo install -m 755 "$INPUTS/teslcam-agent" "$MNT/usr/local/bin/teslcam-agent"
 sudo install -m 755 "$INPUTS/teslcam-lte" "$MNT/usr/local/bin/teslcam-lte"
 sudo install -m 644 "$PROJECT_DIR/scripts/teslcam-agent-pi4.service" \
   "$MNT/etc/systemd/system/teslcam-agent.service"
+sudo install -m 755 "$PROJECT_DIR/scripts/teslcam-power-evidence" \
+  "$MNT/usr/local/sbin/teslcam-power-evidence"
+sudo install -m 644 "$PROJECT_DIR/scripts/teslcam-power-evidence.service" \
+  "$MNT/etc/systemd/system/teslcam-power-evidence.service"
 sudo rm -rf "$MNT/tmp/scorer-src"
 sudo cp -r "$PROJECT_DIR/tools/camera-scorer" "$MNT/tmp/scorer-src"
 sudo install -m 644 "$INPUTS/authorized_keys" "$MNT/tmp/authorized_keys"
@@ -202,6 +206,10 @@ rm -rf /tmp/scorer-src /tmp/scorer-build
 
 # USB device-mode gadget support (same as install-agent.sh setup).
 printf '\n# teslcam: USB device-mode gadget support\ndtoverlay=dwc2,dr_mode=peripheral\n' \
+  >> /boot/firmware/config.txt
+# Preserve kernel panic and console tails across reset. systemd-pstore moves
+# captures from /sys/fs/pstore into /var/lib/systemd/pstore on the next boot.
+printf '# teslcam: persistent crash evidence\ndtoverlay=ramoops,console-size=16384\n' \
   >> /boot/firmware/config.txt
 printf 'disable_splash=1\nboot_delay=0\n' >> /boot/firmware/config.txt
 printf 'dwc2\nlibcomposite\n' >> /etc/modules
@@ -376,7 +384,12 @@ TMP="$OUT.tmp"
   wg show wg1 latest-handshakes 2>/dev/null || echo "wg1 not up"
   echo
   echo "== power =="
+  echo "reset: $(vcgencmd get_rsts 2>/dev/null)"
   vcgencmd get_throttled 2>/dev/null
+  echo "watchdog bootstatus: $(cat /sys/class/watchdog/watchdog0/bootstatus 2>/dev/null || echo unavailable)"
+  echo
+  echo "== power evidence =="
+  tail -20 /var/lib/teslcam/power-evidence.log 2>/dev/null || echo "(none)"
   echo
   echo "== journal: last errors this boot =="
   journalctl -p err -b --no-pager -n 20 -o short-monotonic 2>/dev/null
@@ -708,7 +721,8 @@ UNIT
 
 systemctl enable ssh bluetooth teslcam-firstboot teslcam-agent \
   teslcam-lte-guard teslcam-lte-watchdog.timer teslcam-wg-provision \
-  teslcam-boot-report.service teslcam-boot-report.timer
+  teslcam-boot-report.service teslcam-boot-report.timer \
+  teslcam-power-evidence.service systemd-pstore.service
 
 # Boot-time trims. NetworkManager-wait-online would stall boot on the (usual)
 # no-connectivity cold start in the car; the agent spools offline anyway.

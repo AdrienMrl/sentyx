@@ -110,6 +110,13 @@ if ! grep -q '^dtoverlay=dwc2' "$CONFIG"; then
 else
   echo "dwc2 overlay already in $CONFIG"
 fi
+if ! grep -q '^dtoverlay=ramoops' "$CONFIG"; then
+  printf '\n# teslcam: persistent crash evidence\ndtoverlay=ramoops,console-size=16384\n' >> "$CONFIG"
+  echo "added ramoops crash-log overlay to $CONFIG"
+  NEED_REBOOT=1
+else
+  echo "ramoops overlay already in $CONFIG"
+fi
 for mod in dwc2 libcomposite; do
   if ! grep -qx "$mod" /etc/modules; then
     echo "$mod" >> /etc/modules
@@ -145,14 +152,18 @@ if [[ "$NEED_REBOOT" == 1 ]]; then
 fi
 EOF
 
-  say "installing systemd unit"
+  say "installing systemd units and power-evidence recorder"
   scp -q "$ROOT/scripts/teslcam-agent-pi4.service" "$HOST:/tmp/teslcam-agent.service"
+  scp -q "$ROOT/scripts/teslcam-power-evidence" "$HOST:/tmp/teslcam-power-evidence"
+  scp -q "$ROOT/scripts/teslcam-power-evidence.service" "$HOST:/tmp/teslcam-power-evidence.service"
   run_sudo <<'EOF'
 set -euo pipefail
 install -m 644 /tmp/teslcam-agent.service /etc/systemd/system/teslcam-agent.service
-rm -f /tmp/teslcam-agent.service
+install -m 755 /tmp/teslcam-power-evidence /usr/local/sbin/teslcam-power-evidence
+install -m 644 /tmp/teslcam-power-evidence.service /etc/systemd/system/teslcam-power-evidence.service
+rm -f /tmp/teslcam-agent.service /tmp/teslcam-power-evidence /tmp/teslcam-power-evidence.service
 systemctl daemon-reload
-systemctl enable teslcam-agent
+systemctl enable teslcam-agent teslcam-power-evidence.service systemd-pstore.service
 echo "unit installed and enabled (start happens on deploy)"
 EOF
 

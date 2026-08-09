@@ -1,0 +1,14 @@
+[Unit]
+Description=Persist TeslaCam boot and power-reset evidence
+After=local-fs.target
+Before=teslcam-agent.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/teslcam-power-evidence boot
+ExecStop=/usr/local/sbin/teslcam-power-evidence shutdown
+RemainAfterExit=yes
+TimeoutStopSec=15s
+
+[Install]
+WantedBy=multi-user.target
