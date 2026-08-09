@@ -97,8 +97,15 @@ class DeviceViewModel(
         }
     }
 
-    /** Installs the pending firmware update, then invokes [onComplete] (e.g. onBack). */
-    fun installFirmware(onComplete: () -> Unit) {
+    /**
+     * Schedules the pending firmware update. This only asks the backend to
+     * deliver it — the device downloads, verifies and installs on its own, and
+     * only once it isn't recording. [firmwareInstalling] therefore covers just
+     * the request round-trip; the install itself is reported through
+     * [DeviceUiState.firmwareUpdate] as the device makes progress, so the screen
+     * stays put rather than navigating away on a completion that hasn't happened.
+     */
+    fun installFirmware() {
         if (_transient.value.firmwareInstalling) return
         val target = state.value.firmwareUpdate?.newVersion
         _transient.update { it.copy(firmwareInstalling = true) }
@@ -107,12 +114,12 @@ class DeviceViewModel(
                 device.installFirmwareUpdate()
                 toasts.show(
                     ToastData(
-                        title = "Firmware updated",
-                        subtitle = target?.let { "Now running $it" } ?: "Update complete",
+                        title = "Update scheduled",
+                        subtitle = target?.let { "$it installs when your car isn't recording" }
+                            ?: "It installs when your car isn't recording",
                         tone = ToastTone.Success,
                     ),
                 )
-                onComplete()
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Throwable) {

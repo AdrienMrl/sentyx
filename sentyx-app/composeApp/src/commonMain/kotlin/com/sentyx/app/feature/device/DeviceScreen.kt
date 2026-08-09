@@ -101,8 +101,11 @@ fun DeviceScreen(
         HealthGrid(snapshot)
 
         if (snapshot.firmwareUpdateAvailable) {
+            // Reads as navigation, not as the install itself: the flag also
+            // covers an update already downloading, waiting for the car to stop
+            // recording, or one that failed — the firmware screen says which.
             Box(Modifier.padding(top = 12.dp)) {
-                SxPrimaryButton(text = "Update firmware", onClick = onOpenFirmware)
+                SxPrimaryButton(text = "Firmware update", onClick = onOpenFirmware)
             }
         }
         Box(Modifier.padding(top = 12.dp)) {

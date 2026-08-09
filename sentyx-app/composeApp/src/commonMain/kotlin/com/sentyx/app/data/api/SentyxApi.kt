@@ -100,6 +100,35 @@ class SentyxApi(
     }
 
     /**
+     * Ask the backend to deliver the newest application release to [deviceId].
+     * `POST {base}/v1/devices/{deviceId}/updates/request`, expecting 202 with the
+     * resulting update state.
+     *
+     * This only schedules: the device pulls, verifies the signed manifest and
+     * installs at a safe moment on its own. Repeating the call is harmless (the
+     * server reuses the pending offer). A 404 means nothing installable has been
+     * published, a 409 that the device already runs the newest release — both
+     * surfaced as [SentyxApiException] with a message fit for a toast.
+     */
+    suspend fun requestDeviceUpdate(deviceId: String): DeviceUpdateDto {
+        val response = authed { token ->
+            client.post("$base/v1/devices/$deviceId/updates/request") {
+                header(HttpHeaders.Authorization, "Bearer $token")
+            }
+        }
+        when {
+            response.status == HttpStatusCode.NotFound ->
+                throw SentyxApiException("No firmware update is available to install.")
+            response.status == HttpStatusCode.Conflict ->
+                throw SentyxApiException("This device already runs the newest firmware.")
+            !response.status.isSuccess() -> throw SentyxApiException(
+                "Firmware update request failed (${response.status}): ${response.bodyAsText()}",
+            )
+        }
+        return response.body()
+    }
+
+    /**
      * List all events for the signed-in user, newest-first ordering left to the
      * caller. `GET {base}/events`; a non-2xx response throws [SentyxApiException].
      */
@@ -316,6 +345,31 @@ data class DeviceStatusDto(
     val online: Boolean,
     val lastSeenMs: Long? = null,
     val status: HeartbeatDto? = null,
+    /** Firmware state; absent when nothing has ever been offered to this device. */
+    val update: DeviceUpdateDto? = null,
+)
+
+/**
+ * Server → app firmware state for one device, from `GET /v1/devices/{deviceId}`
+ * and `POST .../updates/request`.
+ *
+ * [available] means a release is targeted at this device and not yet finished
+ * installing. [state] is the device's own last report (`offered`, `downloading`,
+ * `waiting-safe`, `installing`, `rebooting`, `installed`, `rolled-back`,
+ * `failed`) and is empty until it reports anything. The two are independent: a
+ * device can be `rebooting` with the offer already withdrawn.
+ */
+@Serializable
+data class DeviceUpdateDto(
+    val available: Boolean = false,
+    val releaseId: String = "",
+    val version: String = "",
+    val notes: String = "",
+    val campaignId: String = "",
+    val state: String = "",
+    val progressPct: Int = 0,
+    val error: String = "",
+    val updatedAtMs: Long? = null,
 )
 
 /**

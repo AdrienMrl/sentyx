@@ -188,13 +188,13 @@ func (c *Server) handleCreateOTACampaign(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "unknown release", 400)
 		return
 	}
-	raw := make([]byte, 12)
-	if _, err := rand.Read(raw); err != nil {
+	id, err := newCampaignID()
+	if err != nil {
 		http.Error(w, err.Error(), 500)
 		return
 	}
 	now := time.Now().UnixMilli()
-	camp := otaCampaignRecord{ID: "cmp-" + hex.EncodeToString(raw), ReleaseID: req.ReleaseID,
+	camp := otaCampaignRecord{ID: id, ReleaseID: req.ReleaseID,
 		RolloutPercent: req.RolloutPercent, State: "active", Devices: req.DeviceIDs,
 		CreatedAtMs: now, UpdatedAtMs: now}
 	if err := c.store.createOTACampaign(camp); err != nil {
@@ -249,6 +249,150 @@ func (c *Server) handleUpdateOTACampaign(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// deviceUpdateView is the app-facing firmware state of one unit: what (if
+// anything) is on offer for it, and how far the install has got. It is a
+// projection of the same campaign and device-status rows the operator tooling
+// reads — the app never learns about releases through a separate channel.
+type deviceUpdateView struct {
+	// Available means a release is currently targeted at this device and it has
+	// not finished installing it yet.
+	Available   bool   `json:"available"`
+	ReleaseID   string `json:"releaseId,omitempty"`
+	Version     string `json:"version,omitempty"`
+	Notes       string `json:"notes,omitempty"`
+	CampaignID  string `json:"campaignId,omitempty"`
+	State       string `json:"state,omitempty"`
+	ProgressPct int    `json:"progressPct,omitempty"`
+	Error       string `json:"error,omitempty"`
+	UpdatedAtMs int64  `json:"updatedAtMs,omitempty"`
+}
+
+// deviceUpdateView combines the device's desired state (its OTA plan) with its
+// last reported progress. Returns nil when the device has neither — nothing has
+// ever been offered to it, so there is nothing to say.
+func (c *Server) deviceUpdateView(deviceID string) (*deviceUpdateView, error) {
+	plan, err := c.store.otaPlan(deviceID)
+	if err != nil {
+		return nil, err
+	}
+	last, err := c.store.deviceOTAUpdate(deviceID)
+	if err != nil {
+		return nil, err
+	}
+	if plan == nil && last == nil {
+		return nil, nil
+	}
+	v := &deviceUpdateView{}
+	if plan != nil {
+		m := plan.Release.Manifest
+		v.Available = true
+		v.ReleaseID = m.ID
+		v.Version = m.Version
+		v.Notes = m.Metadata["notes"]
+		v.CampaignID = plan.CampaignID
+	}
+	// Progress describes the release it was reported for. A leftover row from an
+	// earlier release must not be shown as progress on the offered one, or the
+	// app would report a fresh offer as already "installed".
+	if last != nil && (plan == nil || last.ReleaseID == v.ReleaseID) {
+		if plan == nil {
+			v.ReleaseID = last.ReleaseID
+		}
+		v.State = last.State
+		v.ProgressPct = last.ProgressPct
+		v.Error = last.Error
+		v.UpdatedAtMs = last.UpdatedAtMs
+	}
+	return v, nil
+}
+
+// handleRequestOTAUpdate lets a device's owner ask, from the app, for the
+// newest installable application release to be delivered to that unit. It does
+// not push anything: it opens a campaign pinned to this one device, after which
+// the unit's own updater pulls it, verifies the Ed25519 manifest against the
+// public key baked into its image, and installs only once recording is idle.
+// The trust model is unchanged — the app is a trigger, never a delivery path.
+//
+// Application releases only. System (APT) releases have no rollback, so a bad
+// one is recovered by WireGuard or a reflash; those stay operator-driven.
+func (c *Server) handleRequestOTAUpdate(w http.ResponseWriter, r *http.Request) {
+	deviceID := r.PathValue("deviceId")
+	if c.cfg.Token != "" {
+		ok, err := c.deviceReadable(authFrom(r.Context()), deviceID)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if !ok {
+			http.Error(w, "not permitted to update this device", http.StatusForbidden)
+			return
+		}
+	}
+	ds, err := c.store.deviceStatus(deviceID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if ds == nil {
+		http.NotFound(w, r)
+		return
+	}
+	// Something already targeted at this unit? Then the request is already
+	// satisfied — tapping "install" twice must not open a second campaign.
+	view, err := c.deviceUpdateView(deviceID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if view != nil && view.Available {
+		writeJSON(w, http.StatusAccepted, view)
+		return
+	}
+	m, err := c.store.latestInstallableAppRelease()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if m == nil {
+		http.Error(w, "no installable application release has been published", http.StatusNotFound)
+		return
+	}
+	// Nothing on offer and the newest release is already installed here: the
+	// device is up to date, which is a conflict rather than a silent no-op.
+	if view != nil && view.ReleaseID == m.ID && view.State == "installed" {
+		http.Error(w, "device already runs the newest release", http.StatusConflict)
+		return
+	}
+	now := time.Now().UnixMilli()
+	id, err := newCampaignID()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	// Pinned to this device at 100%: the cohort hash is bypassed for targeted
+	// campaigns, so no other unit is affected by one user tapping "install".
+	camp := otaCampaignRecord{ID: id, ReleaseID: m.ID, RolloutPercent: 100, State: "active",
+		Devices: []string{deviceID}, CreatedAtMs: now, UpdatedAtMs: now}
+	if err := c.store.createOTACampaign(camp); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	view, err = c.deviceUpdateView(deviceID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, view)
+}
+
+func newCampaignID() (string, error) {
+	raw := make([]byte, 12)
+	if _, err := rand.Read(raw); err != nil {
+		return "", err
+	}
+	return "cmp-" + hex.EncodeToString(raw), nil
 }
 
 func (c *Server) handleOTAPlan(w http.ResponseWriter, r *http.Request) {

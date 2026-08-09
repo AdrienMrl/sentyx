@@ -54,6 +54,8 @@ import com.sentyx.app.domain.model.EventWithMeta
 import com.sentyx.app.domain.model.FeedFilter
 import com.sentyx.app.domain.model.FeedGroup
 import com.sentyx.app.domain.model.FeedState
+import com.sentyx.app.domain.model.FirmwareStage
+import com.sentyx.app.domain.model.FirmwareUpdate
 import com.sentyx.app.domain.model.Severity
 
 /**
@@ -66,6 +68,7 @@ fun EventsFeedScreen(
     vm: EventsFeedViewModel,
     onOpenEvent: (String) -> Unit,
     onOpenDevice: () -> Unit,
+    onOpenFirmware: () -> Unit,
     onGoToTransfers: () -> Unit,
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
@@ -90,6 +93,7 @@ fun EventsFeedScreen(
                     onToggleSearch = vm::toggleSearch,
                 )
                 CarStatusTile(device = state.device, todayCount = state.todayCount, onClick = onOpenDevice)
+                state.firmwareUpdate?.let { FirmwareBanner(update = it, onClick = onOpenFirmware) }
                 if (state.searchOpen) SearchBar()
                 FilterChips(active = state.filter, onPick = vm::setFilter)
             }
@@ -225,6 +229,69 @@ private fun CarStatusTile(device: DeviceSnapshot?, todayCount: Int, onClick: () 
                 StatCell("Today", "$todayCount events", Modifier.weight(1f), divider = true)
             }
         }
+    }
+}
+
+/**
+ * Slim attention banner above the feed when firmware work is pending. It is the
+ * one thing on this screen that isn't about events, so it stays a single row —
+ * enough to notice and tap, not enough to compete with the car tile. Tapping
+ * opens the firmware screen, where the install actually happens.
+ *
+ * It covers the whole life of an update, not just the offer: an install that is
+ * waiting for the car to stop recording, or one that failed and was reverted,
+ * are exactly the states a user would otherwise never discover.
+ */
+@Composable
+private fun FirmwareBanner(update: FirmwareUpdate, onClick: () -> Unit) {
+    val failed = update.stage == FirmwareStage.Failed || update.stage == FirmwareStage.RolledBack
+    val accent = if (failed) SxColors.RedDeep else SxColors.Bronze
+    val tint = if (failed) SxColors.UrgentBg else SxColors.AttentionBg
+    val shape = RoundedCornerShape(14.dp)
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(shape)
+            .background(tint)
+            .border(1.dp, accent.copy(alpha = 0.25f), shape)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 13.dp, vertical = 11.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(11.dp),
+    ) {
+        Box(
+            Modifier.size(26.dp).clip(CircleShape).background(accent.copy(alpha = 0.14f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(if (failed) "⚠" else "⬆", fontSize = 13.sp)
+        }
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(
+                if (update.stage == FirmwareStage.Available) {
+                    "Firmware ${update.newVersion} available"
+                } else {
+                    update.stage.label
+                },
+                color = SxColors.Ink,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.ExtraBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                update.detailLine,
+                color = SxColors.InkSecondary,
+                fontSize = 11.5.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        Text(
+            if (update.actionable) "Install" else "View",
+            color = accent,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Bold,
+        )
     }
 }
 

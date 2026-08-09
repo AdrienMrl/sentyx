@@ -261,12 +261,52 @@ func (s *store) latestOTARelease(t ota.ReleaseType) (*ota.Manifest, error) {
 	return &m, nil
 }
 
+// latestInstallableAppRelease returns the highest-sequence application release
+// whose artifact has actually been uploaded, or nil when there is none.
+// latestOTARelease answers "what is the newest release"; this answers "what
+// could a unit install right now" — a release whose metadata is published but
+// whose artifact upload is still pending would only fail on the device.
+func (s *store) latestInstallableAppRelease() (*ota.Manifest, error) {
+	var manifest string
+	err := s.db.QueryRow(`SELECT manifest_json FROM ota_releases
+		WHERE release_type = ? AND artifact_path IS NOT NULL AND artifact_path <> ''
+		ORDER BY sequence DESC LIMIT 1`, ota.ReleaseApplication).Scan(&manifest)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var m ota.Manifest
+	if err := json.Unmarshal([]byte(manifest), &m); err != nil {
+		return nil, err
+	}
+	return &m, nil
+}
+
 type deviceOTAProgress struct {
 	ReleaseID   string
 	State       string
 	ProgressPct int
 	Error       string
 	UpdatedAtMs int64
+}
+
+// deviceOTAUpdate returns one device's most recently reported update status, or
+// nil when it has never reported one. The single-device counterpart of
+// latestDeviceOTAUpdates, for the per-device status document the app polls.
+func (s *store) deviceOTAUpdate(deviceID string) (*deviceOTAProgress, error) {
+	var p deviceOTAProgress
+	err := s.db.QueryRow(`SELECT release_id, state, progress_pct, error, updated_at
+		FROM ota_device_updates WHERE device_id = ? ORDER BY updated_at DESC LIMIT 1`, deviceID).
+		Scan(&p.ReleaseID, &p.State, &p.ProgressPct, &p.Error, &p.UpdatedAtMs)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &p, nil
 }
 
 // latestDeviceOTAUpdates returns each device's most recently reported update

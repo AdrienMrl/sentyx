@@ -1,11 +1,15 @@
 package com.sentyx.app.data.device
 
 import com.sentyx.app.data.api.DeviceStatusDto
+import com.sentyx.app.data.api.DeviceUpdateDto
 import com.sentyx.app.data.api.HeartbeatDto
 import com.sentyx.app.domain.model.DeviceCondition
+import com.sentyx.app.domain.model.FirmwareStage
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class DeviceStatusMappingTest {
@@ -43,13 +47,19 @@ class DeviceStatusMappingTest {
         sentryActive = sentryActive,
     )
 
-    private fun status(online: Boolean, lastSeenMs: Long?, st: HeartbeatDto?) = DeviceStatusDto(
+    private fun status(
+        online: Boolean,
+        lastSeenMs: Long?,
+        st: HeartbeatDto?,
+        update: DeviceUpdateDto? = null,
+    ) = DeviceStatusDto(
         deviceId = "raspberrypi",
         name = "Garage Pi",
         registeredAtMs = 1_752_600_000_000,
         online = online,
         lastSeenMs = lastSeenMs,
         status = st,
+        update = update,
     )
 
     @Test
@@ -162,5 +172,134 @@ class DeviceStatusMappingTest {
     @Test
     fun diagnosticsEmptyWhenNoHeartbeat() {
         assertTrue(buildDiagnostics(null).isEmpty())
+    }
+
+    // ---- Firmware updates ---------------------------------------------------
+
+    @Test
+    fun noUpdateBlockMeansNothingPending() {
+        assertNull(mapFirmwareUpdate(status(true, now, heartbeat())))
+    }
+
+    @Test
+    fun offeredUpdateSurfacesVersionsAndNotes() {
+        val dto = status(
+            true, now, heartbeat(agentVersion = "2026.8.1"),
+            DeviceUpdateDto(available = true, releaseId = "app-9", version = "2026.8.9", notes = "Faster scoring."),
+        )
+        val update = assertNotNull(mapFirmwareUpdate(dto))
+
+        assertEquals(FirmwareStage.Available, update.stage)
+        assertEquals("2026.8.1", update.currentVersion)
+        assertEquals("2026.8.9", update.newVersion)
+        assertEquals("Faster scoring.", update.summary)
+        assertTrue(update.actionable)
+        assertFalse(update.inProgress)
+
+        // The snapshot's version line stops claiming "current" once one is pending.
+        val snap = mapDeviceSnapshot(dto, "Garage Pi", now)
+        assertTrue(snap.firmwareUpdateAvailable)
+        assertEquals("2026.8.1 → 2026.8.9", snap.firmwareVersion)
+    }
+
+    @Test
+    fun missingReleaseNotesAreNotInvented() {
+        val dto = status(true, now, heartbeat(), DeviceUpdateDto(available = true, version = "2026.8.9"))
+        val update = assertNotNull(mapFirmwareUpdate(dto))
+        assertTrue(update.summary.contains("No release notes"))
+    }
+
+    @Test
+    fun waitingForSafeMomentIsInFlightNotActionable() {
+        val dto = status(
+            true, now, heartbeat(),
+            DeviceUpdateDto(available = true, version = "2026.8.9", state = "waiting-safe", progressPct = 100),
+        )
+        val update = assertNotNull(mapFirmwareUpdate(dto))
+
+        assertEquals(FirmwareStage.WaitingSafe, update.stage)
+        assertTrue(update.inProgress)
+        assertFalse(update.actionable)
+        assertTrue(update.summary.contains("isn't recording"))
+    }
+
+    @Test
+    fun rebootingStillShowsEvenThoughOfferIsWithdrawn() {
+        // otaPlan stops offering a release once the device is rebooting into it,
+        // so available is false while the install is very much still happening.
+        val dto = status(
+            true, now, heartbeat(),
+            DeviceUpdateDto(available = false, version = "2026.8.9", state = "rebooting"),
+        )
+        val update = assertNotNull(mapFirmwareUpdate(dto))
+
+        assertEquals(FirmwareStage.Rebooting, update.stage)
+        assertTrue(update.inProgress)
+    }
+
+    @Test
+    fun failedUpdateStaysVisibleAndRetryable() {
+        val dto = status(
+            true, now, heartbeat(agentVersion = "2026.8.1"),
+            DeviceUpdateDto(available = true, version = "2026.8.9", state = "failed", error = "download timed out"),
+        )
+        val update = assertNotNull(mapFirmwareUpdate(dto))
+
+        assertEquals(FirmwareStage.Failed, update.stage)
+        assertTrue(update.actionable)
+        assertEquals("download timed out", update.errorMessage)
+        assertEquals("download timed out", update.detailLine)
+        assertTrue(update.summary.contains("2026.8.1"))
+    }
+
+    @Test
+    fun rolledBackUpdateExplainsTheRevert() {
+        val dto = status(
+            true, now, heartbeat(agentVersion = "2026.8.1"),
+            DeviceUpdateDto(available = true, version = "2026.8.9", state = "rolled-back"),
+        )
+        val update = assertNotNull(mapFirmwareUpdate(dto))
+
+        assertEquals(FirmwareStage.RolledBack, update.stage)
+        assertTrue(update.actionable)
+        assertTrue(update.summary.contains("reverted"))
+    }
+
+    @Test
+    fun completedInstallIsNotAnUpdate() {
+        // Nothing pending: the finished version belongs on the device's version
+        // line, not in a banner telling the user to act.
+        val dto = status(
+            true, now, heartbeat(agentVersion = "2026.8.9"),
+            DeviceUpdateDto(available = false, releaseId = "app-9", state = "installed", progressPct = 100),
+        )
+        assertNull(mapFirmwareUpdate(dto))
+
+        val snap = mapDeviceSnapshot(dto, "Garage Pi", now)
+        assertFalse(snap.firmwareUpdateAvailable)
+        assertEquals("2026.8.9 · current", snap.firmwareVersion)
+    }
+
+    @Test
+    fun downloadProgressIsReportedVerbatim() {
+        val dto = status(
+            true, now, heartbeat(),
+            DeviceUpdateDto(available = true, version = "2026.8.9", state = "downloading", progressPct = 42),
+        )
+        val update = assertNotNull(mapFirmwareUpdate(dto))
+
+        assertEquals(FirmwareStage.Downloading, update.stage)
+        assertEquals(42, update.progressPct)
+        assertTrue(update.detailLine.startsWith("42%"))
+    }
+
+    @Test
+    fun unknownAgentVersionDoesNotFakeACurrentVersion() {
+        val dto = status(
+            true, now, heartbeat(agentVersion = null),
+            DeviceUpdateDto(available = true, version = "2026.8.9"),
+        )
+        assertEquals("Unknown", assertNotNull(mapFirmwareUpdate(dto)).currentVersion)
+        assertEquals("Unknown", mapDeviceSnapshot(dto, "Garage Pi", now).firmwareVersion)
     }
 }

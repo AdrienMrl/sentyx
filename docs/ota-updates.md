@@ -128,6 +128,30 @@ offered the same release again, and each Pi rejects replay or downgrade by
 remembering the highest installed sequence independently for application and
 system releases.
 
+## User-requested updates from the app
+
+The phone app can ask for an update on a device its owner has paired, with
+`POST /v1/devices/<deviceId>/updates/request` (Supabase user JWT, operator
+token, or that device's own token). The server picks the newest **application**
+release that has an artifact uploaded and opens a campaign pinned to that one
+device at 100%. Everything downstream is the operator path unchanged: the unit
+pulls the plan, verifies the Ed25519 manifest against the public key in its
+image, waits for `update-ready`, and rolls back on a failed healthcheck.
+
+- The app is a trigger, never a delivery path — no artifact or key touches it.
+- Repeating the request reuses the pending offer; it cannot open two campaigns.
+- A device already on the newest release gets `409`; nothing installable
+  published yet gets `404`.
+- System (APT) releases are never offered this way — no rollback means recovery
+  is WireGuard or a reflash, so they stay operator-driven.
+- These campaigns show up in `teslcam-ota status` alongside operator ones, and a
+  user retry after a rollback opens a fresh campaign rather than resuming the
+  paused one.
+
+`GET /v1/devices/<deviceId>` carries the matching state back to the app in an
+`update` object (`available`, `version`, `notes`, `state`, `progressPct`,
+`error`), where `state` is the device's own last report.
+
 ## Failure model
 
 - Network loss: retain and resume the partial application download.

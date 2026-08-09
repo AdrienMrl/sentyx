@@ -11,6 +11,7 @@ import com.sentyx.app.domain.model.EventWithMeta
 import com.sentyx.app.domain.model.FeedFilter
 import com.sentyx.app.domain.model.FeedGroup
 import com.sentyx.app.domain.model.FeedState
+import com.sentyx.app.domain.model.FirmwareUpdate
 import com.sentyx.app.domain.model.Severity
 import com.sentyx.app.domain.repository.DeviceRepository
 import com.sentyx.app.domain.repository.EventRepository
@@ -33,6 +34,8 @@ data class EventsFeedUiState(
     /** Groups after applying [filter]; empty unless [feed] is [FeedState.Loaded]. */
     val displayGroups: List<FeedGroup> = emptyList(),
     val device: DeviceSnapshot? = null,
+    /** Non-null while an update is pending, installing, or failed — drives the home banner. */
+    val firmwareUpdate: FirmwareUpdate? = null,
     val filter: FeedFilter = FeedFilter.All,
     val selectMode: Boolean = false,
     val selected: Set<String> = emptySet(),
@@ -63,12 +66,13 @@ class EventsFeedViewModel(
     private val local = MutableStateFlow(FeedLocalUi())
 
     val state: StateFlow<EventsFeedUiState> =
-        combine(events.feed, device.device, local) { feed, dev, ui ->
+        combine(events.feed, device.device, device.firmwareUpdate, local) { feed, dev, firmware, ui ->
             val groups = (feed as? FeedState.Loaded)?.groups ?: emptyList()
             EventsFeedUiState(
                 feed = feed,
                 displayGroups = filterGroups(groups, ui.filter),
                 device = dev,
+                firmwareUpdate = firmware,
                 filter = ui.filter,
                 selectMode = ui.selectMode,
                 selected = ui.selected,

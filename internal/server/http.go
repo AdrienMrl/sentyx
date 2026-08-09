@@ -31,6 +31,7 @@ import (
 //	GET  /v1/devices/<deviceId>                                   a device's registration + latest heartbeat
 //	GET  /v1/devices/<deviceId>/updates/plan                      desired signed OTA release
 //	POST /v1/devices/<deviceId>/updates/status                    OTA progress/result
+//	POST /v1/devices/<deviceId>/updates/request                   owner asks for the newest app release
 //	POST /v1/ota/releases                                         publish signed release metadata
 //	PUT  /v1/ota/releases/<releaseId>/artifact                    upload a release artifact
 //	POST /v1/ota/campaigns                                        start a progressive rollout
@@ -54,6 +55,7 @@ func (c *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/devices/{deviceId}", c.handleDeviceStatus)
 	mux.HandleFunc("GET /v1/devices/{deviceId}/updates/plan", c.handleOTAPlan)
 	mux.HandleFunc("POST /v1/devices/{deviceId}/updates/status", c.handleOTAStatus)
+	mux.HandleFunc("POST /v1/devices/{deviceId}/updates/request", c.handleRequestOTAUpdate)
 	mux.HandleFunc("POST /v1/ota/releases", c.handleCreateOTARelease)
 	mux.HandleFunc("GET /v1/ota/releases/{releaseId}", c.handleGetOTARelease)
 	mux.HandleFunc("PUT /v1/ota/releases/{releaseId}/artifact", c.handlePutOTAArtifact)
@@ -505,14 +507,20 @@ func (c *Server) handleDeviceStatus(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	update, err := c.deviceUpdateView(deviceID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	online := ds.LastHeartbeatAtMs > 0 && time.Now().UnixMilli()-ds.LastHeartbeatAtMs < 90_000
 	resp := struct {
-		DeviceID       string          `json:"deviceId"`
-		Name           string          `json:"name"`
-		RegisteredAtMs int64           `json:"registeredAtMs"`
-		Online         bool            `json:"online"`
-		LastSeenMs     int64           `json:"lastSeenMs,omitempty"`
-		Status         json.RawMessage `json:"status"`
+		DeviceID       string            `json:"deviceId"`
+		Name           string            `json:"name"`
+		RegisteredAtMs int64             `json:"registeredAtMs"`
+		Online         bool              `json:"online"`
+		LastSeenMs     int64             `json:"lastSeenMs,omitempty"`
+		Status         json.RawMessage   `json:"status"`
+		Update         *deviceUpdateView `json:"update,omitempty"`
 	}{
 		DeviceID:       ds.DeviceID,
 		Name:           ds.Name,
@@ -520,6 +528,7 @@ func (c *Server) handleDeviceStatus(w http.ResponseWriter, r *http.Request) {
 		Online:         online,
 		LastSeenMs:     ds.LastHeartbeatAtMs,
 		Status:         json.RawMessage("null"),
+		Update:         update,
 	}
 	if ds.LastHeartbeatJSON != "" {
 		resp.Status = json.RawMessage(ds.LastHeartbeatJSON)

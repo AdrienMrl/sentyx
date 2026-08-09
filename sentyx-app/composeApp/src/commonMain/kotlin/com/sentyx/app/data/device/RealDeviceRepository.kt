@@ -5,12 +5,14 @@ import com.sentyx.app.core.storage.KeyValueStore
 import com.sentyx.app.core.storage.StorageKeys
 import com.sentyx.app.data.api.DeviceNotFoundException
 import com.sentyx.app.data.api.DeviceStatusDto
+import com.sentyx.app.data.api.DeviceUpdateDto
 import com.sentyx.app.data.api.HeartbeatDto
 import com.sentyx.app.data.api.SentyxApi
 import com.sentyx.app.domain.model.ConnectionTestStep
 import com.sentyx.app.domain.model.DeviceCondition
 import com.sentyx.app.domain.model.DeviceSnapshot
 import com.sentyx.app.domain.model.DiagnosticEntry
+import com.sentyx.app.domain.model.FirmwareStage
 import com.sentyx.app.domain.model.FirmwareUpdate
 import com.sentyx.app.domain.repository.DeviceRepository
 import kotlinx.coroutines.CancellationException
@@ -45,8 +47,15 @@ class RealDeviceRepository(
     private val _diagnostics = MutableStateFlow<List<DiagnosticEntry>>(emptyList())
     override val diagnostics: StateFlow<List<DiagnosticEntry>> = _diagnostics.asStateFlow()
 
-    // No OTA pipeline yet, so no update is ever offered.
-    override val firmwareUpdate: StateFlow<FirmwareUpdate?> = MutableStateFlow(null)
+    private val _firmwareUpdate = MutableStateFlow<FirmwareUpdate?>(null)
+    override val firmwareUpdate: StateFlow<FirmwareUpdate?> = _firmwareUpdate.asStateFlow()
+
+    /**
+     * Last agent version seen in a heartbeat, so scheduling an update can label
+     * the "from" side without waiting for the next poll. Null until the device
+     * has reported at least once.
+     */
+    private var installedVersion: String? = null
 
     init {
         scope.launch { pollLoop() }
@@ -58,6 +67,7 @@ class RealDeviceRepository(
             if (deviceId == null) {
                 _device.value = null
                 _diagnostics.value = emptyList()
+                _firmwareUpdate.value = null
             } else {
                 fetch(deviceId)
             }
@@ -71,10 +81,13 @@ class RealDeviceRepository(
             val name = store.getString(StorageKeys.DEVICE_NAME) ?: dto.name
             _device.value = mapDeviceSnapshot(dto, name, currentEpochMillis())
             _diagnostics.value = buildDiagnostics(dto.status)
+            installedVersion = dto.status?.agentVersion
+            _firmwareUpdate.value = mapFirmwareUpdate(dto)
         } catch (e: DeviceNotFoundException) {
             // The backend doesn't know this device (yet) — surface "no device".
             _device.value = null
             _diagnostics.value = emptyList()
+            _firmwareUpdate.value = null
         } catch (e: CancellationException) {
             throw e
         } catch (e: Throwable) {
@@ -121,10 +134,18 @@ class RealDeviceRepository(
         return steps
     }
 
+    /**
+     * Asks the backend to deliver the newest release to this device. It returns
+     * as soon as the update is scheduled, not when it is installed: the device
+     * pulls, verifies and installs on its own, and the poll loop reports how far
+     * it has got. The server's reply is applied immediately so the UI moves off
+     * "available" without waiting for the next tick.
+     */
     override suspend fun installFirmwareUpdate() {
-        // firmwareUpdate is always null (no OTA yet), so this is never reachable
-        // from the UI; fail loudly if something calls it anyway.
-        throw UnsupportedOperationException("Firmware updates are not implemented yet.")
+        val deviceId = store.getString(StorageKeys.DEVICE_ID)
+            ?: throw IllegalStateException("No device is paired.")
+        val update = api.requestDeviceUpdate(deviceId)
+        _firmwareUpdate.value = mapFirmwareUpdate(update, installedVersion)
     }
 
     override suspend fun restart() {
@@ -142,6 +163,8 @@ class RealDeviceRepository(
         store.remove(StorageKeys.DEVICE_NAME)
         _device.value = null
         _diagnostics.value = emptyList()
+        _firmwareUpdate.value = null
+        installedVersion = null
     }
 
     companion object {
@@ -211,7 +234,13 @@ internal fun mapDeviceSnapshot(dto: DeviceStatusDto, deviceName: String, nowMs: 
         }
     } ?: "Unknown"
 
-    val firmwareVersion = st?.agentVersion?.let { "$it · current" } ?: "Unknown"
+    val update = mapFirmwareUpdate(dto)
+
+    val firmwareVersion = when {
+        st?.agentVersion == null -> "Unknown"
+        update != null -> "${st.agentVersion} → ${update.newVersion}"
+        else -> "${st.agentVersion} · current"
+    }
 
     val signalStrength = st?.wifiSignalPct?.let { p ->
         when {
@@ -243,7 +272,7 @@ internal fun mapDeviceSnapshot(dto: DeviceStatusDto, deviceName: String, nowMs: 
         powerStatus = powerStatus,
         temperatureStatus = temperatureStatus,
         firmwareVersion = firmwareVersion,
-        firmwareUpdateAvailable = false,
+        firmwareUpdateAvailable = update != null,
         uploadBacklog = backlog,
         bleConnected = false,
         wifiConnected = online,
@@ -254,6 +283,82 @@ internal fun mapDeviceSnapshot(dto: DeviceStatusDto, deviceName: String, nowMs: 
         issues = issues,
         signalStrength = signalStrength,
     )
+}
+
+/**
+ * Map the server's firmware block onto a [FirmwareUpdate], or null when there is
+ * nothing for the user to act on or watch: no release has ever been offered to
+ * this device, or the last one finished and nothing newer is pending. A finished
+ * install is not an "update" — it shows up as the device's current version.
+ *
+ * A failed or reverted install stays non-null on purpose: the user should see
+ * that it didn't take, and be able to retry.
+ */
+internal fun mapFirmwareUpdate(dto: DeviceStatusDto): FirmwareUpdate? =
+    mapFirmwareUpdate(dto.update, dto.status?.agentVersion)
+
+internal fun mapFirmwareUpdate(update: DeviceUpdateDto?, installedVersion: String?): FirmwareUpdate? {
+    if (update == null) return null
+    val stage = firmwareStage(update) ?: return null
+    val current = installedVersion ?: "Unknown"
+    // Blank rather than "Unknown": the version is only unknown before the device
+    // has ever reported, at which point there is no offer to label either.
+    val next = update.version.ifBlank { "the newest version" }
+    val error = update.error.ifBlank { null }
+
+    val summary = when (stage) {
+        FirmwareStage.Available ->
+            update.notes.ifBlank { "No release notes were published for this version." }
+        FirmwareStage.Requested ->
+            "Scheduled. Your device will pick it up on its next check-in."
+        FirmwareStage.Downloading ->
+            "Downloading to your device. It keeps recording throughout."
+        FirmwareStage.WaitingSafe ->
+            "Downloaded and verified. It installs the next time your car isn't recording, " +
+                "so this can sit here for a while — nothing is wrong."
+        FirmwareStage.Installing ->
+            "Installing on your device."
+        FirmwareStage.Rebooting ->
+            "Restarting your device. It's offline for about a minute."
+        FirmwareStage.Failed ->
+            "The update didn't complete. Your device is still on $current and still recording."
+        FirmwareStage.RolledBack ->
+            "The update was installed, failed its health check, and was reverted automatically. " +
+                "Your device is back on $current and still recording."
+    }
+
+    val detailLine = when {
+        error != null -> error
+        update.progressPct in 1..99 -> "${update.progressPct}% · ${stage.label}"
+        stage == FirmwareStage.Available -> "Installs when recording is idle · device restarts once"
+        else -> stage.label
+    }
+
+    return FirmwareUpdate(
+        currentVersion = current,
+        newVersion = next,
+        summary = summary,
+        detailLine = detailLine,
+        stage = stage,
+        progressPct = update.progressPct,
+        errorMessage = error,
+    )
+}
+
+/**
+ * The device's own reported state wins over the offer flag: a unit can be
+ * mid-reboot with the offer already withdrawn. Null means "nothing to show".
+ */
+private fun firmwareStage(update: DeviceUpdateDto): FirmwareStage? = when (update.state) {
+    "offered" -> FirmwareStage.Requested
+    "downloading" -> FirmwareStage.Downloading
+    "waiting-safe" -> FirmwareStage.WaitingSafe
+    "installing" -> FirmwareStage.Installing
+    "rebooting" -> FirmwareStage.Rebooting
+    "failed" -> FirmwareStage.Failed
+    "rolled-back" -> FirmwareStage.RolledBack
+    "installed" -> if (update.available) FirmwareStage.Available else null
+    else -> if (update.available) FirmwareStage.Available else null
 }
 
 /** Real diagnostics rows from the heartbeat; unknown metrics are omitted rather than faked. */
