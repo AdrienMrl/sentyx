@@ -658,14 +658,29 @@ table inet lte_guard {
 }
 NFT
 
-# The Pi has no RTC. Use fixed-address NTP peers whose traffic is routed through
-# LTE above, so TLS and event timestamps work after a cold boot with no Wi-Fi.
-# Keeping literal addresses avoids needing working DNS before the clock exists.
+# The Pi has no RTC, so the clock must come from somewhere on every cold boot.
+# Three independent sources, because any one of them can be unavailable:
+#
+#   1. Bluetooth  — the paired app sends its own clock in the onboarding config
+#                   (DeviceConfig.NowUnixMs). Needs no internet whatsoever, so
+#                   it is the only source that works on a network that blocks
+#                   NTP or on a unit with no working WAN at all.
+#   2. Wi-Fi      — the DNS-resolved pool below, over whatever default route
+#                   exists.
+#   3. LTE        — the two literal Cloudflare addresses, policy-routed into
+#                   table 101 above. Literals because DNS may not work before
+#                   the clock does.
+#
+# All NTP peers live in ONE NTP= list on purpose. FallbackNTP= is consulted
+# only when no NTP servers are configured at all, so the previous layout
+# (literals in NTP=, pool in FallbackNTP=) meant the pool was never tried and
+# clock sync depended entirely on a working, paid LTE plan — a unit on healthy
+# Wi-Fi could not set its clock, which blocked onboarding outright.
 mkdir -p /etc/systemd/timesyncd.conf.d
 cat > /etc/systemd/timesyncd.conf.d/50-teslcam-lte.conf <<'TIMESYNC'
 [Time]
-NTP=162.159.200.1 162.159.200.123
-FallbackNTP=0.debian.pool.ntp.org 1.debian.pool.ntp.org 2.debian.pool.ntp.org 3.debian.pool.ntp.org
+NTP=162.159.200.1 162.159.200.123 0.debian.pool.ntp.org 1.debian.pool.ntp.org 2.debian.pool.ntp.org 3.debian.pool.ntp.org
+FallbackNTP=0.debian.pool.ntp.org 1.debian.pool.ntp.org
 ConnectionRetrySec=10
 TIMESYNC
 

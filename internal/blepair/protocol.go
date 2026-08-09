@@ -159,6 +159,15 @@ type DeviceConfig struct {
 	Timezone     string `json:"timezone,omitempty"`
 	VehicleModel string `json:"vehicleModel,omitempty"`
 	Nickname     string `json:"nickname,omitempty"`
+
+	// NowUnixMs is the app's wall-clock time when it wrote this config. A unit
+	// with no RTC boots at its image build date, so every HTTPS request —
+	// including the connection test two lines later — fails certificate
+	// validation until something corrects the clock. NTP cannot always do it:
+	// on a network that blocks UDP 123, or with a dead LTE plan, it never
+	// arrives. The app always can, over a link that needs no internet at all.
+	// Optional so an older app still onboards (it just falls back to NTP).
+	NowUnixMs int64 `json:"nowUnixMs,omitempty"`
 }
 
 func parseDeviceConfig(payload []byte) (DeviceConfig, error) {

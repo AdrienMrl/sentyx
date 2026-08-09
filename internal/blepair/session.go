@@ -40,15 +40,17 @@ type connTester interface {
 // sessionDeps are the side-effecting collaborators, injected so the state
 // machine is unit-testable without hardware.
 type sessionDeps struct {
-	Sink       configSink
-	Tester     connTester
-	Restart    func() // invoked after the final done notify
-	Notify     func(Status)
-	NotifyWifi func([]byte)  // pushes one framed Wi-Fi result chunk
-	Wifi       wifi.Manager  // nil when Wi-Fi management is unavailable
-	Health     func() Health // nil omits the inline health summary
-	Logf       func(format string, args ...any)
-	Identity   deviceInfo
+	Sink        configSink
+	Tester      connTester
+	Clock       clockSetter // nil = never set the clock from a peer
+	ClockMarker string      // where a time daemon records a confirmed clock
+	Restart     func()      // invoked after the final done notify
+	Notify      func(Status)
+	NotifyWifi  func([]byte)  // pushes one framed Wi-Fi result chunk
+	Wifi        wifi.Manager  // nil when Wi-Fi management is unavailable
+	Health      func() Health // nil omits the inline health summary
+	Logf        func(format string, args ...any)
+	Identity    deviceInfo
 }
 
 // session is the onboarding state machine driven by GATT callbacks.
@@ -211,8 +213,35 @@ func (s *session) HandleConfigFrame(frame []byte) error {
 	s.persisted = false
 	s.state = stateConfigSaved
 	s.deps.Logf("blepair: config received (server %s, device name %q)", cfg.ServerURL, cfg.DeviceName)
+	s.applyPeerClockLocked(cfg)
 	s.notifyLocked(Status{State: s.state, OK: true})
 	return nil
+}
+
+// applyPeerClockLocked sets the system clock from the app's timestamp when the
+// unit has no confirmed time of its own. This is the only time source that
+// works with no internet at all, so it runs before the connection test rather
+// than as a fallback after it fails.
+func (s *session) applyPeerClockLocked(cfg DeviceConfig) {
+	if s.deps.Clock == nil {
+		return
+	}
+	peer := time.Time{}
+	if cfg.NowUnixMs > 0 {
+		peer = time.UnixMilli(cfg.NowUnixMs).UTC()
+	}
+	when, ok, why := acceptPeerTime(time.Now().UTC(), peer, clockSyncedAt(s.deps.ClockMarker))
+	if !ok {
+		if why != "" && cfg.NowUnixMs > 0 {
+			s.deps.Logf("blepair: not applying app-supplied time: %s", why)
+		}
+		return
+	}
+	if err := s.deps.Clock.Set(when); err != nil {
+		s.deps.Logf("blepair: applying app-supplied time: %v", err)
+		return
+	}
+	s.deps.Logf("blepair: clock set from app to %s (no confirmed time source yet)", when.Format(time.RFC3339))
 }
 
 // test accepts the command and hands the work to a goroutine.

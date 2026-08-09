@@ -56,3 +56,44 @@ func awaitClock(marker string, limit, poll time.Duration) bool {
 	}
 	return false
 }
+
+// ---------------------------------------------------------------- setting it
+
+// imageEpoch is the earliest time this build will believe from a peer. A unit
+// with no RTC boots at roughly its image build date, so anything at or before
+// that is either the unset clock itself or a peer trying to roll the unit
+// backwards; neither is a usable time. Updated when the image base moves.
+var imageEpoch = time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+
+// maxClockSkew bounds how far ahead of the peer's claim we accept, so a wrong
+// or hostile value cannot park the unit decades in the future where every
+// certificate looks expired instead of not-yet-valid.
+const maxClockSkew = 10 * 365 * 24 * time.Hour
+
+// clockSetter applies a time to the system clock. Injected so tests never
+// touch the host's clock.
+type clockSetter interface {
+	Set(time.Time) error
+}
+
+// acceptPeerTime decides whether a peer-supplied timestamp should be applied,
+// given what the unit currently believes. It returns the time to set and true,
+// or the zero time and false with a reason for the log.
+//
+// The peer here is the paired app: it already hands over the server token, so
+// it is trusted at least this much. The bounds exist to catch nonsense (a
+// phone with its own broken clock, a replayed payload), not to defend against
+// a peer we would otherwise obey.
+func acceptPeerTime(now, peer time.Time, alreadySynced bool) (time.Time, bool, string) {
+	switch {
+	case alreadySynced:
+		return time.Time{}, false, "clock already confirmed by a time server"
+	case peer.IsZero():
+		return time.Time{}, false, "no time supplied"
+	case peer.Before(imageEpoch):
+		return time.Time{}, false, "supplied time predates the image build"
+	case peer.After(now.Add(maxClockSkew)):
+		return time.Time{}, false, "supplied time is implausibly far ahead"
+	}
+	return peer, true, ""
+}

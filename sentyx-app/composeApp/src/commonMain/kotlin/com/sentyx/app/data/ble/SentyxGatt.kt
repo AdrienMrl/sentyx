@@ -188,6 +188,16 @@ data class ConfigDto(
     val timezone: String? = null,
     val vehicleModel: String? = null,
     val nickname: String? = null,
+    /**
+     * The phone's wall-clock time in Unix milliseconds. A unit has no
+     * battery-backed clock, so it boots believing its image build date and
+     * every HTTPS request — including the connection test run moments after
+     * this write — fails certificate validation until something corrects it.
+     * NTP cannot always do that: a network may block UDP 123, and an LTE plan
+     * may be out of data. This link needs no internet at all, so it is the one
+     * time source that is always available during onboarding.
+     */
+    val nowUnixMs: Long? = null,
 )
 
 /** Control characteristic command (write). */

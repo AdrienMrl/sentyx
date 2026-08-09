@@ -14,6 +14,7 @@ import com.sentyx.app.domain.model.OnboardingPermission
 import com.sentyx.app.domain.model.ScanState
 import com.sentyx.app.domain.model.WifiNetwork
 import com.sentyx.app.domain.repository.PairingService
+import kotlinx.datetime.Clock
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.TimeoutCancellationException
@@ -294,6 +295,10 @@ class BlePairingService(
                 timezone = timezone.ifBlank { null },
                 vehicleModel = vehicleModel.ifBlank { null },
                 nickname = nickname?.ifBlank { null },
+                // The unit has no RTC; without this it runs the connection test
+                // believing it is still its image build date, and TLS rejects
+                // the server certificate as not yet valid.
+                nowUnixMs = Clock.System.now().toEpochMilliseconds(),
             ),
         ).encodeToByteArray()
 

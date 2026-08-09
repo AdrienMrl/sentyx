@@ -110,12 +110,16 @@ func Run(ctx context.Context, cfg Config) error {
 
 	g := newGattServer(conn, cfg.Adapter, cfg.Name, cfg.Logf)
 	sess := newSession(sessionDeps{
-		Sink:    store,
-		Tester:  newHTTPConnTester(cfg.DeviceID),
-		Wifi:    cfg.Wifi,
-		Restart: cfg.Restart,
-		Health:  func() Health { return healthOf(cfg, provisioned, started) },
-		Logf:    cfg.Logf,
+		Sink:   store,
+		Tester: newHTTPConnTester(cfg.DeviceID),
+		// Peer-supplied time is the only clock source that works with no
+		// internet at all (see DeviceConfig.NowUnixMs).
+		Clock:       systemClock{marker: timesyncMarker},
+		ClockMarker: timesyncMarker,
+		Wifi:        cfg.Wifi,
+		Restart:     cfg.Restart,
+		Health:      func() Health { return healthOf(cfg, provisioned, started) },
+		Logf:        cfg.Logf,
 		Notify: func(st Status) {
 			b, _ := json.Marshal(st)
 			g.notify(servicePath+"/char2", b)
