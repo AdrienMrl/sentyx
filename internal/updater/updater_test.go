@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -259,7 +260,9 @@ func newTestUpdater(t *testing.T, server, socket string, pub ed25519.PublicKey, 
 		Hardware: "pi4", OSCodename: "trixie", StateDir: filepath.Join(root, "state"),
 		ReleasesDir: filepath.Join(root, "releases"), CurrentLink: filepath.Join(root, "current"),
 		ReadinessSocket: socket, PollInterval: time.Hour, SafePoll: time.Millisecond,
-		HealthTimeout: time.Second, Runner: run, BootID: func() (string, error) { return "boot-a", nil },
+		HealthTimeout: time.Second, AgentSilence: time.Hour,
+		CarAttached: func() (bool, error) { return true, nil },
+		Runner:      run, BootID: func() (string, error) { return "boot-a", nil },
 		Logf: func(string, ...any) {}})
 	if err != nil {
 		t.Fatal(err)
@@ -285,3 +288,79 @@ func appTar(t *testing.T) []byte {
 type stringWriter struct{ b *strings.Builder }
 
 func (w *stringWriter) Write(p []byte) (int, error) { return w.b.WriteString(string(p)) }
+
+func TestWaitSafeFallsBackToUDCWhenAgentIsDead(t *testing.T) {
+	pub, _, _ := ed25519.GenerateKey(rand.Reader)
+	u := newTestUpdater(t, "http://unreachable.invalid", filepath.Join(t.TempDir(), "no-agent.sock"), pub, &fakeRunner{})
+	u.cfg.AgentSilence = 5 * time.Millisecond
+	u.cfg.CarAttached = func() (bool, error) { return false, nil }
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := u.waitSafe(ctx); err != nil {
+		t.Fatalf("waitSafe with dead agent and detached car: %v", err)
+	}
+}
+
+func TestWaitSafeStaysBlockedWhileCarAttached(t *testing.T) {
+	pub, _, _ := ed25519.GenerateKey(rand.Reader)
+	u := newTestUpdater(t, "http://unreachable.invalid", filepath.Join(t.TempDir(), "no-agent.sock"), pub, &fakeRunner{})
+	u.cfg.AgentSilence = time.Millisecond
+	u.cfg.CarAttached = func() (bool, error) { return true, nil }
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	if err := u.waitSafe(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("waitSafe proceeded while a USB host is attached: %v", err)
+	}
+}
+
+func TestSystemRebootRechecksReadinessBeforeRebooting(t *testing.T) {
+	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
+	m := ota.Manifest{V: 1, ID: "sys-recheck", Type: ota.ReleaseSystem, Version: "2026.08.4", Sequence: 4,
+		Hardware: []string{"pi4"}, OSCodename: "trixie",
+		System: &ota.SystemPlan{Packages: []ota.Package{{Name: "linux-image", Version: "1.0"}}, Reboot: true}}
+	plan := signedPlan(t, m, priv)
+	server, _ := planServer(t, plan, nil)
+	defer server.Close()
+
+	// Readiness is safe until the final apt install runs, then the car
+	// "starts writing": the reboot must wait rather than fire.
+	var recording atomic.Bool
+	dir := t.TempDir()
+	socket := filepath.Join(dir, "ready.sock")
+	ctx, cancelReady := context.WithCancel(context.Background())
+	defer cancelReady()
+	go updateready.Run(ctx, updateready.Config{SocketPath: socket,
+		Recording: recording.Load, Backlog: func() int { return 0 }})
+	for i := 0; i < 100; i++ {
+		if _, err := os.Stat(socket); err == nil {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+
+	run := &hookedRunner{hook: func(command string) {
+		if strings.Contains(command, "apt-get -y -o") {
+			recording.Store(true)
+		}
+	}}
+	u := newTestUpdater(t, server.URL, socket, pub, run)
+	checkCtx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	if err := u.CheckOnce(checkCtx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("CheckOnce = %v, want deadline exceeded while waiting to reboot", err)
+	}
+	if strings.Contains(run.joined(), "systemctl reboot") {
+		t.Fatalf("rebooted while the car was recording:\n%s", run.joined())
+	}
+}
+
+type hookedRunner struct {
+	fakeRunner
+	hook func(command string)
+}
+
+func (h *hookedRunner) Run(ctx context.Context, name string, args ...string) error {
+	err := h.fakeRunner.Run(ctx, name, args...)
+	h.hook(name + " " + strings.Join(args, " "))
+	return err
+}

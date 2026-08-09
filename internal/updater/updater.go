@@ -41,10 +41,18 @@ type Config struct {
 	MaxJitter       time.Duration
 	SafePoll        time.Duration
 	HealthTimeout   time.Duration
-	HTTPClient      *http.Client
-	Runner          Runner
-	BootID          func() (string, error)
-	Logf            func(string, ...any)
+	// AgentSilence is how long the readiness socket must be continuously
+	// unreachable before the updater falls back to asking the kernel via
+	// CarAttached. A dead agent does not stop the kernel gadget — the car may
+	// still be writing — so silence alone never means safe.
+	AgentSilence time.Duration
+	// CarAttached reports whether a USB host is currently attached to any
+	// device controller (see UDCAttached). Consulted only after AgentSilence.
+	CarAttached   func() (bool, error)
+	HTTPClient    *http.Client
+	Runner        Runner
+	BootID        func() (string, error)
+	Logf          func(string, ...any)
 }
 
 type Updater struct {
@@ -68,6 +76,10 @@ func New(cfg Config) (*Updater, error) {
 		return nil, errors.New("updater: state, release, current-link and readiness paths are required")
 	case cfg.PollInterval <= 0, cfg.SafePoll <= 0, cfg.HealthTimeout <= 0:
 		return nil, errors.New("updater: poll, safe-poll and health timeouts must be positive")
+	case cfg.AgentSilence <= 0:
+		return nil, errors.New("updater: AgentSilence must be positive")
+	case cfg.CarAttached == nil:
+		return nil, errors.New("updater: CarAttached probe is required")
 	case cfg.Logf == nil:
 		return nil, errors.New("updater: Logf is required")
 	case cfg.BootID == nil:
@@ -189,6 +201,11 @@ func (u *Updater) finalizePendingBoot(ctx context.Context) error {
 		return fmt.Errorf("read boot ID: %w", err)
 	}
 	if bootID == p.BootID {
+		// The scheduled reboot never happened (e.g. the updater restarted
+		// first). Re-check readiness before retrying it.
+		if err := u.waitSafe(ctx); err != nil {
+			return err
+		}
 		u.report(ctx, plan, "rebooting", 95, nil)
 		if err := u.cfg.Runner.Run(ctx, "systemctl", "reboot"); err != nil {
 			return err
@@ -482,10 +499,12 @@ func (u *Updater) waitSafe(ctx context.Context) error {
 	client := &http.Client{Transport: &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 		return (&net.Dialer{}).DialContext(ctx, "unix", u.cfg.ReadinessSocket)
 	}}, Timeout: 5 * time.Second}
+	var silentSince time.Time
 	for {
 		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, "http://unix/ready", nil)
 		resp, err := client.Do(req)
 		if err == nil {
+			silentSince = time.Time{}
 			var state struct {
 				Safe bool `json:"safe"`
 			}
@@ -493,6 +512,24 @@ func (u *Updater) waitSafe(ctx context.Context) error {
 			resp.Body.Close()
 			if decodeErr == nil && resp.StatusCode == 200 && state.Safe {
 				return nil
+			}
+		} else {
+			// The agent is not answering. A crashed agent must not block its
+			// own fix forever, but the kernel gadget outlives the agent and
+			// the car may still be writing — so only proceed once the agent
+			// has been silent for AgentSilence AND no USB host is attached.
+			if silentSince.IsZero() {
+				silentSince = time.Now()
+			}
+			if time.Since(silentSince) >= u.cfg.AgentSilence {
+				attached, probeErr := u.cfg.CarAttached()
+				switch {
+				case probeErr != nil:
+					u.cfg.Logf("ota: readiness fallback UDC probe: %v", probeErr)
+				case !attached:
+					u.cfg.Logf("ota: agent readiness socket silent for %s and no USB host attached; treating as safe", time.Since(silentSince).Round(time.Second))
+					return nil
+				}
 			}
 		}
 		t := time.NewTimer(u.cfg.SafePoll)
@@ -503,6 +540,31 @@ func (u *Updater) waitSafe(ctx context.Context) error {
 		case <-t.C:
 		}
 	}
+}
+
+// UDCAttached reports whether any USB device controller currently has a host
+// attached, read straight from the kernel. Every state other than
+// "not attached" (attached, powered, configured, suspended, ...) counts as
+// attached; a missing /sys/class/udc means no controller is bound, so no host
+// can be writing.
+func UDCAttached() (bool, error) {
+	entries, err := os.ReadDir("/sys/class/udc")
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	for _, e := range entries {
+		b, err := os.ReadFile(filepath.Join("/sys/class/udc", e.Name(), "state"))
+		if err != nil {
+			return false, err
+		}
+		if strings.TrimSpace(string(b)) != "not attached" {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func atomicSymlink(target, link string) error {

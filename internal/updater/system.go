@@ -71,6 +71,12 @@ func (u *Updater) installSystem(ctx context.Context, plan *ota.Plan) error {
 		}
 	}
 	if p.Reboot {
+		// The APT transaction can take minutes; the car may have started
+		// writing since the pre-install check. Never reboot mid-recording.
+		u.report(ctx, plan, "waiting-safe", 93, nil)
+		if err := u.waitSafe(ctx); err != nil {
+			return err
+		}
 		bootID, err := u.cfg.BootID()
 		if err != nil {
 			return fmt.Errorf("read boot ID: %w", err)

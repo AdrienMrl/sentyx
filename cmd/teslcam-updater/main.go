@@ -32,6 +32,7 @@ func main() {
 	jitter := flag.Duration("max-jitter", 0, "maximum random polling jitter")
 	safePoll := flag.Duration("safe-poll", 0, "safe-state polling interval")
 	healthTimeout := flag.Duration("health-timeout", 0, "new-agent healthcheck timeout")
+	agentSilence := flag.Duration("agent-silence-safe", 0, "how long the agent readiness socket must be unreachable before the kernel UDC state decides safety")
 	lteIface := flag.String("lte-iface", "", "metered LTE fallback interface")
 	lteDNS := flag.String("lte-dns", "", "DNS resolver used over LTE")
 	lteDialTimeout := flag.Duration("lte-dial-timeout", 0, "per-attempt network timeout")
@@ -62,7 +63,8 @@ func main() {
 		Hardware: *hardware, OSCodename: *osCodename, StateDir: *stateDir,
 		ReleasesDir: *releasesDir, CurrentLink: *currentLink, ReadinessSocket: *readinessSocket,
 		PollInterval: *poll, MaxJitter: *jitter, SafePoll: *safePoll,
-		HealthTimeout: *healthTimeout, HTTPClient: client, Logf: log.Printf,
+		HealthTimeout: *healthTimeout, AgentSilence: *agentSilence,
+		CarAttached: updater.UDCAttached, HTTPClient: client, Logf: log.Printf,
 		BootID: updater.LinuxBootID,
 	})
 	if err != nil {
