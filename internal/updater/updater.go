@@ -339,9 +339,15 @@ func (u *Updater) installApplication(ctx context.Context, plan *ota.Plan) error 
 		os.RemoveAll(stage)
 		return err
 	}
-	if st, err := os.Stat(filepath.Join(stage, "teslcam-agent")); err != nil || st.IsDir() {
-		os.RemoveAll(stage)
-		return errors.New("application bundle does not contain teslcam-agent")
+	// Verify the whole runnable set before anything is swapped in. agent.args
+	// matters as much as the binary: the unit reads it as a non-optional
+	// EnvironmentFile, so a bundle without it would leave the agent unable to
+	// start at all, with the previous release already unlinked.
+	for _, required := range []string{"teslcam-agent", ota.BundleArgsName} {
+		if st, err := os.Stat(filepath.Join(stage, required)); err != nil || st.IsDir() {
+			os.RemoveAll(stage)
+			return fmt.Errorf("application bundle does not contain %s", required)
+		}
 	}
 	target := filepath.Join(u.cfg.ReleasesDir, m.ID)
 	old, _ := os.Readlink(u.cfg.CurrentLink)

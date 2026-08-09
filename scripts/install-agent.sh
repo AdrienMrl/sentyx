@@ -271,16 +271,18 @@ cmd_deploy() {
   # Restart note: if the car currently holds the mass-storage LUN, gadget
   # teardown can block the restart for up to systemd's stop timeout — that is
   # expected; don't interrupt it (interrupting churns USB and can drop SSH).
+  scp -q "$ROOT/scripts/agent.args" "$HOST:/tmp/teslcam-agent.args"
   say "installing binary and restarting"
   run_sudo "VERSION=$version" <<'EOF'
 set -euo pipefail
 RELEASE="/opt/teslcam/releases/$VERSION"
 install -d -m 755 "$RELEASE"
 install -m 755 /tmp/teslcam-agent.new "$RELEASE/teslcam-agent"
+install -m 644 /tmp/teslcam-agent.args "$RELEASE/agent.args"
 [ ! -x /usr/local/bin/teslcam-camera-scorer ] || install -m 755 /usr/local/bin/teslcam-camera-scorer "$RELEASE/teslcam-camera-scorer"
 ln -sfn "$RELEASE" /opt/teslcam/current.new
 mv -Tf /opt/teslcam/current.new /opt/teslcam/current
-rm -f /tmp/teslcam-agent.new
+rm -f /tmp/teslcam-agent.new /tmp/teslcam-agent.args
 systemctl restart teslcam-agent
 sleep 2
 systemctl is-active --quiet teslcam-agent || {

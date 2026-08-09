@@ -86,15 +86,17 @@ func bundleApp(args []string) {
 	sequence := fs.Uint64("sequence", 0, "monotonically increasing application sequence")
 	agent := fs.String("agent", "", "linux/arm64 teslcam-agent binary")
 	scorer := fs.String("scorer", "", "teslcam-camera-scorer binary")
+	argsFile := fs.String("args", "", "agent.args shipped with the release (systemd EnvironmentFile)")
 	key := fs.String("key", "", "Ed25519 private key")
 	out := fs.String("out", "", "output .tar.gz path")
 	hardware := fs.String("hardware", "pi4", "comma-separated compatible hardware")
 	osName := fs.String("os", "trixie", "compatible OS codename")
 	fs.Parse(args)
-	if *id == "" || *version == "" || *sequence == 0 || *agent == "" || *scorer == "" || *key == "" || *out == "" {
-		log.Fatal("-id, -version, -sequence, -agent, -scorer, -key and -out are required")
+	if *id == "" || *version == "" || *sequence == 0 || *agent == "" || *scorer == "" || *key == "" || *out == "" || *argsFile == "" {
+		log.Fatal("-id, -version, -sequence, -agent, -scorer, -args, -key and -out are required")
 	}
-	if err := makeAppBundle(*out, map[string]string{"teslcam-agent": *agent, "teslcam-camera-scorer": *scorer}); err != nil {
+	if err := makeAppBundle(*out, map[string]string{"teslcam-agent": *agent,
+		"teslcam-camera-scorer": *scorer, ota.BundleArgsName: *argsFile}); err != nil {
 		log.Fatal(err)
 	}
 	sha, size, err := fileDigest(*out)
@@ -265,7 +267,7 @@ func makeAppBundle(out string, files map[string]string) error {
 	}
 	gz := gzip.NewWriter(f)
 	tw := tar.NewWriter(gz)
-	for _, name := range []string{"teslcam-agent", "teslcam-camera-scorer"} {
+	for _, name := range []string{"teslcam-agent", "teslcam-camera-scorer", ota.BundleArgsName} {
 		src, err := os.Open(files[name])
 		if err != nil {
 			return err
@@ -275,7 +277,11 @@ func makeAppBundle(out string, files map[string]string) error {
 			src.Close()
 			return err
 		}
-		h := &tar.Header{Name: name, Mode: 0o755, Size: st.Size(), ModTime: time.Unix(0, 0)}
+		mode := int64(0o755)
+		if name == ota.BundleArgsName {
+			mode = 0o644 // read by systemd, never executed
+		}
+		h := &tar.Header{Name: name, Mode: mode, Size: st.Size(), ModTime: time.Unix(0, 0)}
 		if err := tw.WriteHeader(h); err != nil {
 			src.Close()
 			return err

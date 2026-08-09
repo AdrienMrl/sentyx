@@ -1,12 +1,18 @@
-# systemd unit for the in-car gadget agent (Pi Zero 2 W).
+# systemd unit for the in-car gadget agent (Pi 4).
 # Install: copy to /etc/systemd/system/, create /etc/teslcam/agent.env with
 # POST_TO=https://api.example.com, put the server's bearer token
 # (from /etc/teslcam/ingest.token on the VPS) in /etc/teslcam/server.token,
 # then: systemctl enable --now teslcam-agent
 # Prereqs on the Pi: dtoverlay=dwc2 in config.txt, backing image at
 # /var/lib/teslcam/backing.img (see testdata/scripts/make-fixture.sh), and
-# ffmpeg/ffprobe with the h264_v4l2m2m encoder. Compression defaults can be
-# overridden with the teslcam-agent -video-* flags.
+# ffmpeg/ffprobe with the h264_v4l2m2m encoder.
+#
+# This unit is deliberately stable: the agent's arguments live in
+# /opt/teslcam/current/agent.args, which ships inside the signed OTA bundle.
+# An application release therefore swaps the binary AND its flags in one
+# symlink flip, and the updater's rollback restores both. Adding an agent flag
+# must NOT mean editing this file, because an OTA release cannot replace a
+# systemd unit — that is what forced a reflash before.
 [Unit]
 Description=teslcam gadget agent (USB mass storage + sentry clip uploader)
 After=network-online.target
@@ -14,41 +20,19 @@ Wants=network-online.target
 
 [Service]
 Type=simple
+# Per-unit identity, written by BLE onboarding. Optional (leading -) because an
+# unprovisioned unit boots with these empty and advertises for onboarding.
 EnvironmentFile=-/etc/teslcam/agent.env
+# Release-level arguments. NOT optional: starting the agent with no arguments
+# would silently run a misconfigured unit (no backing image, no spool, no
+# gadget), so a missing file must fail the unit loudly instead.
+EnvironmentFile=/opt/teslcam/current/agent.args
 ExecStartPre=/sbin/modprobe libcomposite
-ExecStart=/opt/teslcam/current/teslcam-agent \
-  -image /var/lib/teslcam/backing.img \
-  -udc auto \
-  -interval 2s \
-  -stable-polls 3 \
-  -copy-to /var/lib/teslcam/clips \
-  -copy-prefix /TeslaCam/SentryClips \
-  -post-to=${POST_TO} \
-  -device-id=${DEVICE_ID} \
-  -token-file /etc/teslcam/server.token \
-  -spool-db /var/lib/teslcam/spool.db \
-  -spool-max-mb 2048 \
-  -select-clips \
-  -select-metadata-timeout 5m \
-  -camera-scorer /opt/teslcam/current/teslcam-camera-scorer \
-  -video-encoder h264_v4l2m2m \
-  -video-fallback-encoder libx264 \
-  -ble-onboard \
-  -ble-adapter hci0 \
-  -ble-name Sentyx-Pi \
-  -ble-config-dir /etc/teslcam \
-  -heartbeat \
-  -heartbeat-interval 30s \
-  -health-db /var/lib/teslcam/health.db \
-  -health-log-interval 5s \
-  -update-readiness-socket /run/teslcam/update-ready.sock \
-  -blackbox-db /var/lib/teslcam/blackbox.db \
-  -blackbox-poll 2s \
-  -blackbox-write-idle 90s \
-  -blackbox-flush 60s \
-  -lte-iface eth1 \
-  -lte-dns 8.8.8.8:53 \
-  -lte-dial-timeout 10s
+# $TESLCAM_AGENT_ARGS is unquoted on purpose: systemd word-splits a single-$
+# reference into separate arguments. -post-to/-device-id stay here rather than
+# in agent.args because systemd does not expand ${VAR} nested inside an
+# EnvironmentFile value.
+ExecStart=/opt/teslcam/current/teslcam-agent $TESLCAM_AGENT_ARGS -post-to=${POST_TO} -device-id=${DEVICE_ID}
 Restart=on-failure
 RestartSec=5
 

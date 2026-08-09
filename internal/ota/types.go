@@ -17,6 +17,12 @@ import (
 
 const ProtocolVersion = 1
 
+// BundleArgsName is the agent argument file carried inside an application
+// bundle. It sits beside the binaries so the `current` symlink swaps a release
+// and its flags atomically — an OTA release cannot replace a systemd unit, so
+// any flag that lived in the unit could never reach a deployed unit.
+const BundleArgsName = "agent.args"
+
 type ReleaseType string
 
 const (

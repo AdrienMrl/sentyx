@@ -49,8 +49,33 @@ fleet-wide monotonic counter that never resets. Use `app-<version>` /
       -id app-2026.8.1 -version 2026.8.1 -sequence 14 \
       -agent build/teslcam-agent \
       -scorer build/teslcam-camera-scorer \
+      -args scripts/agent.args \
       -key keys/ota-release.private.pem \
       -out build/app-2026.8.1.tar.gz
+
+### Agent flags travel with the release
+
+`scripts/agent.args` ships inside the bundle and installs beside the binaries
+as `/opt/teslcam/current/agent.args`. The systemd unit reads it as a
+**required** `EnvironmentFile` and word-splits `$TESLCAM_AGENT_ARGS` into
+`ExecStart`, so flipping the `current` symlink swaps a release and its flags in
+one step, and the updater's rollback restores both together.
+
+This exists because an application release replaces binaries but **never** the
+systemd unit: while the flags lived in the unit, adding one could not reach a
+unit already in the field without a reflash. Changing a flag is now an ordinary
+application release.
+
+Two rules the tests enforce (`internal/ota/agentargs_test.go`):
+
+- **Per-unit values stay in the unit.** `-post-to`/`-device-id` are expanded by
+  systemd from `/etc/teslcam/agent.env`; systemd does not expand `${VAR}`
+  nested inside an `EnvironmentFile` value, so putting them in `agent.args`
+  would pass the literal text to the agent.
+- **One assignment, one line.** `EnvironmentFile` has no line continuations.
+
+The updater refuses a bundle missing `agent.args` before touching the symlink,
+so a malformed release can never leave a unit unable to start.
 
     teslcam-ota publish \
       -server https://teslcam.example.com \

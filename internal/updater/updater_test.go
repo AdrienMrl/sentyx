@@ -275,8 +275,11 @@ func appTar(t *testing.T) []byte {
 	var b strings.Builder
 	gz := gzip.NewWriter(&stringWriter{&b})
 	tw := tar.NewWriter(gz)
-	for _, name := range []string{"teslcam-agent", "teslcam-camera-scorer"} {
+	for _, name := range []string{"teslcam-agent", "teslcam-camera-scorer", ota.BundleArgsName} {
 		data := []byte("#!/bin/sh\n")
+		if name == ota.BundleArgsName {
+			data = []byte("TESLCAM_AGENT_ARGS=-image /var/lib/teslcam/backing.img\n")
+		}
 		_ = tw.WriteHeader(&tar.Header{Name: name, Mode: 0o755, Size: int64(len(data)), Typeflag: tar.TypeReg})
 		_, _ = tw.Write(data)
 	}
@@ -363,4 +366,90 @@ func (h *hookedRunner) Run(ctx context.Context, name string, args ...string) err
 	err := h.fakeRunner.Run(ctx, name, args...)
 	h.hook(name + " " + strings.Join(args, " "))
 	return err
+}
+
+// appTarWithout builds a bundle missing one member, to prove the updater
+// refuses it rather than unlinking a working release first.
+func appTarWithout(t *testing.T, omit string) []byte {
+	t.Helper()
+	var b strings.Builder
+	gz := gzip.NewWriter(&stringWriter{&b})
+	tw := tar.NewWriter(gz)
+	for _, name := range []string{"teslcam-agent", "teslcam-camera-scorer", ota.BundleArgsName} {
+		if name == omit {
+			continue
+		}
+		data := []byte("#!/bin/sh\n")
+		_ = tw.WriteHeader(&tar.Header{Name: name, Mode: 0o755, Size: int64(len(data)), Typeflag: tar.TypeReg})
+		_, _ = tw.Write(data)
+	}
+	tw.Close()
+	gz.Close()
+	return []byte(b.String())
+}
+
+// The agent's flags now ship with the release, so the symlink flip swaps the
+// binary and its arguments together — the property that makes a flag change
+// deliverable over OTA at all.
+func TestApplicationReleaseShipsAgentArgsBesideTheBinary(t *testing.T) {
+	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
+	artifact := appTar(t)
+	sum := sha256.Sum256(artifact)
+	m := ota.Manifest{V: 1, ID: "app-args", Type: ota.ReleaseApplication, Version: "2026.8.3", Sequence: 9,
+		Hardware: []string{"pi4"}, OSCodename: "trixie",
+		ArtifactSHA256: hex.EncodeToString(sum[:]), ArtifactSize: int64(len(artifact))}
+	plan := signedPlan(t, m, priv)
+	server, _ := planServer(t, plan, artifact)
+	defer server.Close()
+	socket, cancelReady := readySocket(t)
+	defer cancelReady()
+	u := newTestUpdater(t, server.URL, socket, pub, &fakeRunner{})
+	if err := u.CheckOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	active, err := filepath.EvalSymlinks(u.cfg.CurrentLink)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"teslcam-agent", ota.BundleArgsName} {
+		if _, err := os.Stat(filepath.Join(active, want)); err != nil {
+			t.Fatalf("%s missing from the activated release: %v", want, err)
+		}
+	}
+}
+
+// A bundle without agent.args must be rejected before the symlink moves: the
+// unit reads it as a non-optional EnvironmentFile, so activating one would
+// leave the agent unable to start with the old release already gone.
+func TestApplicationReleaseWithoutArgsIsRejectedBeforeActivation(t *testing.T) {
+	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
+	artifact := appTarWithout(t, ota.BundleArgsName)
+	sum := sha256.Sum256(artifact)
+	m := ota.Manifest{V: 1, ID: "app-noargs", Type: ota.ReleaseApplication, Version: "2026.8.4", Sequence: 10,
+		Hardware: []string{"pi4"}, OSCodename: "trixie",
+		ArtifactSHA256: hex.EncodeToString(sum[:]), ArtifactSize: int64(len(artifact))}
+	plan := signedPlan(t, m, priv)
+	server, _ := planServer(t, plan, artifact)
+	defer server.Close()
+	socket, cancelReady := readySocket(t)
+	defer cancelReady()
+	run := &fakeRunner{}
+	u := newTestUpdater(t, server.URL, socket, pub, run)
+	old := filepath.Join(u.cfg.ReleasesDir, "old")
+	if err := os.MkdirAll(old, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(old, u.cfg.CurrentLink); err != nil {
+		t.Fatal(err)
+	}
+	if err := u.CheckOnce(context.Background()); err == nil {
+		t.Fatal("a bundle with no agent.args was accepted")
+	}
+	target, err := os.Readlink(u.cfg.CurrentLink)
+	if err != nil || target != old {
+		t.Fatalf("current link = %q, want the previous release %q left untouched", target, old)
+	}
+	if strings.Contains(run.joined(), "restart teslcam-agent") {
+		t.Fatalf("agent was restarted for a rejected bundle:\n%s", run.joined())
+	}
 }

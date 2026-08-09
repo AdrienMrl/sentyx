@@ -171,6 +171,10 @@ sudo chmod +x "$MNT/usr/sbin/policy-rc.d"
 
 say "staging build inputs into image"
 sudo install -D -m 755 "$INPUTS/teslcam-agent" "$MNT/opt/teslcam/releases/$VERSION/teslcam-agent"
+# Agent flags live with the release, not in the systemd unit, so a later OTA
+# can change them (see scripts/agent.args and docs/ota-updates.md).
+sudo install -D -m 644 "$PROJECT_DIR/scripts/agent.args" \
+  "$MNT/opt/teslcam/releases/$VERSION/agent.args"
 sudo install -m 755 "$INPUTS/teslcam-updater" "$MNT/usr/local/bin/teslcam-updater"
 sudo install -m 755 "$INPUTS/teslcam-lte" "$MNT/usr/local/bin/teslcam-lte"
 sudo install -m 644 "$PROJECT_DIR/scripts/teslcam-agent-pi4.service" \
