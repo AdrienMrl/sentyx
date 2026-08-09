@@ -57,7 +57,31 @@ backfilled heartbeats, and the power-evidence log:
     re-powered the port.
 13. **Enable the hardware watchdog** (`RuntimeWatchdogSec=15s`) — no freeze
     observed yet, but it's free insurance for the failure mode we can't log.
+14. **Make agent flags OTA-updatable** — an application release ships only
+    binaries into `/opt/teslcam/releases/<id>/` and flips the `current`
+    symlink; it never touches `/etc/systemd/system/teslcam-agent.service`. So
+    any change needing a new flag (e.g. adding `-blackbox-*` to a unit flashed
+    without it) currently requires SSH, a reflash, or a system release whose
+    `postInstall` rewrites the unit as root. Fix: move the arguments out of the
+    unit into an `agent.args` file shipped **inside** the signed bundle, with a
+    permanently stable unit:
 
-**Suggested order:** 2, 7, 8 are quick wins to do now; 1 decides the shape of
+        EnvironmentFile=/opt/teslcam/current/agent.args
+        ExecStart=/opt/teslcam/current/teslcam-agent $TESLCAM_AGENT_ARGS
+
+    The symlink flip then swaps binary and flags atomically, and the existing
+    rollback covers both — no root shell in manifests, no new failure surface
+    in the updater, and flags can never drift from the binary expecting them.
+    Per-unit identity (`POST_TO`, `DEVICE_ID`, tokens) stays in
+    `/etc/teslcam/agent.env`, which BLE onboarding provisions and updates must
+    preserve. The unit should hard-fail if `agent.args` is missing rather than
+    starting with an empty argument list.
+
+    Known debt until this lands: `teslcam-pi4-2026.8.2-1-g76123ff.img` was
+    built before the blackbox merge, so units flashed from it run without
+    blackbox logging regardless of how many application updates they receive.
+
+**Suggested order:** 14 before the next field flash (it is the one change that
+makes every later flag change shippable); 2, 7, 8 are quick wins; 1 decides the shape of
 9; 5, 6 stop the backlog from ever recreating the incident's conditions;
 3, 4, 11 make the next occurrence diagnosable in minutes.
