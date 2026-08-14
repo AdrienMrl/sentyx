@@ -11,6 +11,7 @@
 #   scripts/teslcam.sh healthcheck      first-boot check over BLE + USB (no network)
 #   scripts/teslcam.sh unit [diskN]     flash -> wait for boot -> healthcheck, unattended
 #   scripts/teslcam.sh verify [host]    health-check a flashed unit over SSH
+#   scripts/teslcam.sh confirm [device] prove provisioning: fresh heartbeat on the server
 #
 # Options: --yes (never prompt; CI), --no-color, --plain (no cursor control),
 #          --host <h> (default target for verify), --image <path>
@@ -652,7 +653,16 @@ do_flash() {
     return 1
   fi
   confirm "hand off to scripts/flash-image.sh now?" || { info "skipped"; return 1; }
-  scripts/flash-image.sh "$image"
+  scripts/flash-image.sh "$image" || return 1
+
+  # A flashed card is NOT a working unit. Provisioning happens later over BLE
+  # and has failed silently before (stuck clock -> TLS -> connection test).
+  # Nothing but a fresh heartbeat in the production server proves it.
+  printf '\n'
+  warn "flashed, but the unit is UNPROVISIONED until BLE onboarding completes"
+  warn "after pairing in the app, prove it: $(basename "$0") confirm <device-id>"
+  warn "do NOT install the unit in the car before confirm passes"
+  return 0
 }
 
 # ════════════════════════════════════════════════════════════ phase: verify
@@ -664,8 +674,9 @@ do_verify() {
 
   local out="$STATE_DIR/verify.out"
   if ! ssh -o ConnectTimeout=10 -o BatchMode=yes -o StrictHostKeyChecking=accept-new \
-       "$host" 'bash -s' > "$out" 2>&1 <<'REMOTE'
+       "$host" 'bash -s' "$(date +%s)" > "$out" 2>&1 <<'REMOTE'
 set -uo pipefail
+CONTROLLER_NOW="${1:-}"
 p() { echo "V-OK $*"; }
 f() { echo "V-FAIL $*"; }
 w() { echo "V-WARN $*"; }
@@ -746,12 +757,15 @@ else
   w "no advertising instance — expected only if the unit is already provisioned"
 fi
 
-# --- provisioning state
+# --- provisioning state. Unprovisioned is a warning, never a pass: a unit in
+# this state records but uploads nothing, and looks identical to a healthy one
+# from the outside (Aug 2026: 4 days dark in the car). Only `confirm` — a
+# fresh heartbeat in the production server — proves provisioning end-to-end.
 if [ -s /etc/teslcam/agent.env ] && grep -qE '^POST_TO=.+' /etc/teslcam/agent.env; then
   p "provisioned (POST_TO set)"
   [ -s /etc/teslcam/server.token ] && p "server token present" || f "provisioned but no server.token"
 else
-  p "unprovisioned — awaiting BLE onboarding (expected on a fresh unit)"
+  w "UNPROVISIONED — records locally but uploads NOTHING; onboard via app, then prove it: teslcam.sh confirm"
 fi
 
 # --- remote access tunnel (/etc/wireguard is 0700, so every probe needs sudo)
@@ -774,6 +788,20 @@ else
 fi
 [ -f /boot/firmware/teslcam-wg1.conf ] && f "wg config still on FAT boot partition (private key readable)" \
   || p "no wg private key left on the boot partition"
+
+# --- clock sanity against the controller's clock. A unit clock stuck at the
+# image-build date fails TLS ("certificate not yet valid"), which silently
+# aborts BLE onboarding at the connection-test step. Catch it by magnitude,
+# not just by NTPSynchronized: the skew names the failure precisely.
+if [ -n "$CONTROLLER_NOW" ]; then
+  UNIT_NOW="$(date +%s)"
+  SKEW=$(( UNIT_NOW - CONTROLLER_NOW )); [ "$SKEW" -lt 0 ] && SKEW=$(( -SKEW ))
+  if [ "$SKEW" -gt 300 ]; then
+    f "unit clock is $(date) — ${SKEW}s off the controller; TLS (and so provisioning) will fail"
+  else
+    p "unit clock within ${SKEW}s of the controller"
+  fi
+fi
 
 # --- clock synchronization. The fixed peers have destination-specific policy
 # rules through LTE, so this must work after a cold boot without Wi-Fi while
@@ -824,6 +852,70 @@ REMOTE
   done < "$out"
   [ "$seen" = 0 ] && bad "verify produced no results from $host"
   return 0
+}
+
+# ═══════════════════════════════════════════════════════════ phase: confirm
+# The only proof that provisioning worked is a fresh heartbeat in the
+# production server: it exercises the whole chain at once — agent.env written,
+# clock sane (TLS), network up, token accepted. Everything short of that can
+# and has failed silently (Aug 2026: BLE pairing "succeeded" while the
+# connection test died on a stuck clock, and the unit spent 4 days in the car
+# recording but dark). Flashing + onboarding is not done until this passes.
+do_confirm() {
+  local device="${1:-}" timeout="${2:-600}"
+  phase "confirm provisioning  ${device:-any device}"
+
+  local server="${TESLCAM_SERVER:-https://teslcam.161-35-232-246.sslip.io}"
+  local token_file="$PROJECT_DIR/.secrets/operator.token"
+  if [ ! -s "$token_file" ]; then
+    bad "no operator token at $token_file — cannot ask the server"
+    return 1
+  fi
+  local token; token="$(cat "$token_file")"
+
+  info "waiting for a heartbeat at $server (agent sends one every 30s)"
+  info "device must be paired in the app first; Ctrl-C aborts"
+
+  local waited=0 fresh=""
+  while [ "$waited" -le "$timeout" ]; do
+    fresh="$(curl -s --max-time 10 -H "Authorization: Bearer $token" \
+        "$server/admin/api/devices" 2>/dev/null \
+      | python3 -c '
+import json, sys, time
+device = sys.argv[1]
+try:
+    devices = json.load(sys.stdin).get("devices", [])
+except Exception:
+    sys.exit(0)  # transient fetch/parse error: keep polling
+now_ms = time.time() * 1000
+for d in devices:
+    did = d.get("deviceId")
+    if device and did != device:
+        continue
+    last = d.get("lastSeenMs")
+    if last and (now_ms - last) / 1000 < 90:
+        print(did, int((now_ms - last) / 1000))
+        break
+' "$device")"
+    [ -n "$fresh" ] && break
+    sleep 15
+    waited=$((waited + 15))
+  done
+
+  if [ -n "$fresh" ]; then
+    ok "device ${fresh% *} heartbeat ${fresh#* }s ago — provisioning proven end-to-end"
+    return 0
+  fi
+
+  bad "no fresh heartbeat after ${timeout}s — the unit is NOT provisioned; do not install it in the car"
+  info "every known way this fails silently, most likely first:"
+  info "  clock stuck at image-build date -> TLS 'certificate not yet valid' kills the"
+  info "    onboarding connection test (check: verify <host> reports clock skew)"
+  info "  LTE SIM out of data -> NTP never syncs (NTP is pinned to the LTE peers)"
+  info "  Wi-Fi creds sent during pairing are for the wrong network (phone hotspot)"
+  info "  agent.env still empty because the app's connection test failed after pairing"
+  info "dig in with: $(basename "$0") verify <host>   (SSH) or healthcheck (BLE+USB)"
+  return 1
 }
 
 # ═════════════════════════════════════════════════════════════════ verdict
@@ -956,6 +1048,13 @@ cmd_unit(){
 
   phase "healthcheck"
   "$PROJECT_DIR/scripts/healthcheck-unit.sh" --yes
+  local hc=$?
+
+  printf '\n'
+  warn "the unit is UNPROVISIONED until BLE onboarding completes"
+  warn "after pairing in the app, prove it: $(basename "$0") confirm <device-id>"
+  warn "do NOT install the unit in the car before confirm passes"
+  return $hc
 }
 
 # Whole removable disks, by the same predicate flash-image.sh uses (the
@@ -979,6 +1078,7 @@ cmd_verify()  { banner
                 local h="${1:-$DEFAULT_HOST}"
                 [ -n "$h" ] || h="$(prompt_value 'unit to verify (ssh host, e.g. pi or 10.8.0.2)')"
                 do_verify "$h"; verdict none; }
+cmd_confirm() { banner; do_confirm "${1:-}" 600; }
 cmd_pipeline(){
   banner
   do_doctor || { verdict none; return 1; }
@@ -1010,6 +1110,14 @@ cmd_pipeline(){
     PASS=0; FAIL=0; WARN=0; : > "$FAILED_LOG"; : > "$WARNED_LOG"
     do_verify "$h"; verdict none
   fi
+  printf '\n'
+  # The pipeline is only over when the server has heard the unit. Skipping
+  # this is how a half-provisioned unit ends up dark in the car for days.
+  if confirm "confirm provisioning against the production server now?"; then
+    do_confirm "" 600 || return 1
+  else
+    warn "pipeline stops UNCONFIRMED — run '$(basename "$0") confirm' after onboarding"
+  fi
 }
 
 interactive() {
@@ -1027,6 +1135,7 @@ interactive() {
       "healthcheck      first-boot check over BLE + USB (no network needed)" \
       "unit             flash a card, wait for boot, healthcheck (unattended)" \
       "verify unit      health-check a flashed Pi over SSH" \
+      "confirm unit     prove provisioning: fresh heartbeat on the server" \
       "doctor           check this machine and the Lima VM" \
       "quit" || return 0
     PASS=0; FAIL=0; WARN=0; : > "$FAILED_LOG"; : > "$WARNED_LOG"; STEP_N=0
@@ -1039,8 +1148,9 @@ interactive() {
       6) cmd_healthcheck ;;
       7) cmd_unit ;;
       8) cmd_verify ;;
-      9) cmd_doctor ;;
-      10|0) return 0 ;;
+      9) cmd_confirm ;;
+      10) cmd_doctor ;;
+      11|0) return 0 ;;
     esac
     [ -t 0 ] || return 0
     confirm "back to the menu?" || return 0
@@ -1057,7 +1167,7 @@ while [ $# -gt 0 ]; do
     --plain)    USE_COLOR=0; USE_CURSOR=0; init_caps ;;
     --host)     shift; DEFAULT_HOST="${1:-}"; [ -n "$DEFAULT_HOST" ] || die "--host needs a value" ;;
     --image)    shift; IMAGE_OVERRIDE="${1:-}"; [ -f "$IMAGE_OVERRIDE" ] || die "no such image: ${1:-}" ;;
-    -h|--help)  sed -n '2,21p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help)  sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     -*)         die "unknown option: $1" ;;
     *)          if [ -z "$CMD" ]; then CMD="$1"; else ARGS="$1"; fi ;;
   esac
@@ -1074,6 +1184,7 @@ case "${CMD:-}" in
   healthcheck) cmd_healthcheck ;;
   unit)       cmd_unit "$ARGS" ;;
   verify)     cmd_verify "$ARGS" ;;
+  confirm)    cmd_confirm "$ARGS" ;;
   pipeline)   cmd_pipeline ;;
   *)          die "unknown command: $CMD (try --help)" ;;
 esac
