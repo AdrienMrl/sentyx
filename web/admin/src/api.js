@@ -33,4 +33,13 @@ export const api = {
     request(`/admin/api/devices/${encodeURIComponent(deviceId)}/blackbox?sinceMs=${sinceMs}`),
   events: () => request('/events'),
   event: (id) => request(`/events/${encodeURIComponent(id)}`),
+  // Starts a single-device rollout: a campaign pinned to this device at 100%.
+  // The updater picks it up on its next poll; progress comes back through
+  // /admin/api/devices as update.{state,progressPct,error}.
+  startUpdate: (releaseId, deviceId) =>
+    request('/v1/ota/campaigns', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ releaseId, rolloutPercent: 100, deviceIds: [deviceId] }),
+    }),
 }

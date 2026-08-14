@@ -3,6 +3,7 @@ import { Link, useParams } from 'react-router-dom'
 import { api } from './api'
 import Chart from './Chart'
 import ErrBox from './ErrBox'
+import Firmware from './Firmware'
 import { fmtAgo, fmtBytes, fmtDur, fmtUptime, pctFree } from './format'
 
 const RANGES = [
@@ -119,6 +120,8 @@ export default function Device() {
         <div className={`stat ${hb.recordingNow ? 'good' : ''}`}><b>recording</b><span>{hb.recordingNow ? 'REC ●' : 'idle'}</span></div>
         <div className="stat"><b>agent</b><span>{hb.agentVersion || '—'}</span></div>
       </div>
+
+      <Firmware device={device} />
 
       <div className="rangebar">
         {RANGES.map((r) => (
