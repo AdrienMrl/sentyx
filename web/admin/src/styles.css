@@ -288,3 +288,10 @@ pre.json {
   overflow-wrap: anywhere;
 }
 .fwerr .fwbtn { margin-left: auto; flex-shrink: 0; }
+.fwqueued {
+  margin-top: 10px; font-family: var(--mono); font-size: 11px;
+  color: var(--text-secondary); background: var(--surface-2);
+  border: 1px solid var(--edge); border-radius: 3px; padding: 8px 12px;
+}
+.fwqueued b { color: var(--text-primary); }
+.fwbtn:disabled { opacity: 0.5; cursor: default; }

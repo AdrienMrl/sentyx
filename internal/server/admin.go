@@ -132,7 +132,13 @@ type adminDevice struct {
 // installed) — not merely that a newer release exists somewhere.
 type adminUpdate struct {
 	LatestVersion string `json:"latestVersion,omitempty"`
-	Available     bool   `json:"available"`
+	// LatestReleaseID is always the newest published release — what an
+	// "install latest" action must target. ReleaseID below is NOT that: it
+	// reflects the device's current plan or last attempt, so pointing an
+	// install at it re-offers whatever just failed (which is how the
+	// dashboard once re-pushed a known-bad bundle three times).
+	LatestReleaseID string `json:"latestReleaseId,omitempty"`
+	Available       bool   `json:"available"`
 	TargetVersion string `json:"targetVersion,omitempty"`
 	ReleaseID     string `json:"releaseId,omitempty"`
 	State         string `json:"state,omitempty"`
@@ -195,7 +201,7 @@ func (c *Server) deviceUpdate(deviceID string, latest *ota.Manifest, progress ma
 	if latest == nil {
 		return nil, nil
 	}
-	u := &adminUpdate{LatestVersion: latest.Version}
+	u := &adminUpdate{LatestVersion: latest.Version, LatestReleaseID: latest.ID}
 	if p, ok := progress[deviceID]; ok {
 		u.State, u.ProgressPct, u.Error, u.ReleaseID = p.State, p.ProgressPct, p.Error, p.ReleaseID
 	}

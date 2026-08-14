@@ -23,50 +23,58 @@ const LABEL = {
   'rolled-back': 'rolled back — the previous release was restored after a failed healthcheck',
 }
 
-// Firmware card for one device: shows running vs latest, triggers a pinned
-// single-device campaign, and follows the install with a progress bar. Polls
-// fast (4s) only while an update is actually moving; otherwise it rides the
-// parent's normal refresh.
+// Firmware card for one device, driven by server state, not local optimism:
+//   active install  -> progress bar from the updater's reported state
+//   plan pending    -> QUEUED (campaign exists; unit installs on next poll)
+//   behind latest   -> INSTALL button, targeting latestReleaseId — never the
+//                      releaseId of the current plan/last attempt, which is
+//                      how a failed bundle once got re-offered three times
+//   same version    -> UP TO DATE
+// Every API failure renders in the card; nothing is swallowed.
 export default function Firmware({ device }) {
   const [update, setUpdate] = useState(device.update || null)
-  const [busy, setBusy] = useState(false) // between click and first poll
+  const [busy, setBusy] = useState(false) // POST in flight
+  const [justQueued, setJustQueued] = useState(false)
   const [err, setErr] = useState('')
   const timer = useRef(null)
 
   useEffect(() => { setUpdate(device.update || null) }, [device])
 
   const active = update && RUNNING.includes(update.state)
+  const pending = update && !active && update.available
 
+  // Poll fast while anything is in motion; otherwise ride the parent refresh.
   useEffect(() => {
-    if (!active && !busy) return undefined
+    if (!active && !pending && !justQueued) return undefined
     const poll = () => {
       api.devices()
         .then((d) => {
           const me = d.devices.find((x) => x.deviceId === device.deviceId)
-          if (me) {
-            setUpdate(me.update || null)
-            if (me.update && me.update.state) setBusy(false)
-          }
+          if (me) setUpdate(me.update || null)
         })
-        .catch(() => {})
+        .catch((e) => setErr(e.message))
     }
     timer.current = setInterval(poll, 4000)
     return () => clearInterval(timer.current)
-  }, [active, busy, device.deviceId])
+  }, [active, pending, justQueued, device.deviceId])
 
   if (!update) return null // no release ever published — nothing to offer
   const running = device.status?.agentVersion
-  const { available, latestVersion, targetVersion, releaseId, state, progressPct, error } = update
+  const { latestVersion, latestReleaseId, targetVersion, state, progressPct, error } = update
+  const upToDate = running && running === latestVersion && !active && !pending
 
   const start = () => {
+    if (!latestReleaseId) { setErr('server did not report a latest release id — refresh?'); return }
     setErr('')
     setBusy(true)
-    api.startUpdate(releaseId, device.deviceId)
-      .catch((e) => { setErr(e.message); setBusy(false) })
+    api.startUpdate(latestReleaseId, device.deviceId)
+      .then(() => { setJustQueued(true) })
+      .catch((e) => setErr(`could not start update: ${e.message}`))
+      .finally(() => setBusy(false))
   }
 
   const pct = active ? Math.min(99, Math.max(FLOOR[state] || 0, progressPct || 0)) : state === 'done' ? 100 : 0
-  const upToDate = running && running === latestVersion && !active
+  const failed = state === 'failed' || state === 'rolled-back'
 
   return (
     <div className="fwcard">
@@ -77,32 +85,44 @@ export default function Firmware({ device }) {
           {latestVersion && <> · latest <b>{latestVersion}</b></>}
         </span>
         {upToDate && <span className="badge good">UP TO DATE</span>}
-        {available && !active && !busy && (
-          <button className="fwbtn" onClick={start}>
-            INSTALL {targetVersion || latestVersion}
+        {pending && !justQueued && <span className="badge state">QUEUED → {targetVersion || latestVersion}</span>}
+        {!active && !pending && !upToDate && !busy && (
+          <button className="fwbtn" onClick={start} disabled={busy}>
+            INSTALL {latestVersion}
           </button>
         )}
-        {busy && !active && <span className="badge state">STARTING…</span>}
+        {busy && <span className="badge state">STARTING…</span>}
       </div>
 
-      {(active || busy || state === 'done' || state === 'failed' || state === 'rolled-back') && (
+      {justQueued && !active && (
+        <div className="fwqueued">
+          campaign created for <b>{latestVersion}</b> — the unit picks it up on its next
+          updater poll (≤15 min) and the bar below starts moving
+        </div>
+      )}
+
+      {(active || pending || state === 'done' || failed) && (
         <div className="fwprogress">
           <div className="fwbar">
             <div
-              className={`fwfill ${state === 'failed' || state === 'rolled-back' ? 'bad' : ''} ${active && (state === 'waiting-safe' || busy) ? 'pulse' : ''}`}
-              style={{ width: `${state === 'failed' || state === 'rolled-back' ? 100 : pct}%` }}
+              className={`fwfill ${failed ? 'bad' : ''} ${(active && state === 'waiting-safe') || pending ? 'pulse' : ''}`}
+              style={{ width: `${failed ? 100 : pending ? 2 : pct}%` }}
             />
           </div>
           <div className="fwstate">
-            <span className={`badge ${state === 'done' ? 'good' : state === 'failed' || state === 'rolled-back' ? 'alarm' : 'state'}`}>
-              {(state || 'starting').toUpperCase()}{active ? ` ${pct}%` : ''}
+            <span className={`badge ${state === 'done' ? 'good' : failed ? 'alarm' : 'state'}`}>
+              {(active || failed || state === 'done' ? state : 'queued').toUpperCase()}{active ? ` ${pct}%` : ''}
             </span>
-            <span className="note">{LABEL[state] || 'waiting for the updater’s next poll (≤15 min)'}</span>
+            <span className="note">
+              {active || failed || state === 'done'
+                ? LABEL[state]
+                : 'waiting for the unit’s next updater poll (≤15 min)'}
+            </span>
           </div>
-          {(state === 'failed' || state === 'rolled-back') && (
+          {failed && (
             <div className="fwerr">
               {error || 'no error detail reported'}
-              <button className="fwbtn" onClick={start}>RETRY</button>
+              <button className="fwbtn" onClick={start}>RETRY WITH {latestVersion}</button>
             </div>
           )}
         </div>

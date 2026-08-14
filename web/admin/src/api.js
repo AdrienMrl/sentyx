@@ -9,9 +9,15 @@ async function request(path, opts = {}) {
   const resp = await fetch(path, { credentials: 'same-origin', ...opts })
   if (resp.status === 401 || resp.status === 403) {
     onAuthError()
-    throw new Error('not authenticated')
+    throw new Error('not authenticated — session expired?')
   }
-  if (!resp.ok) throw new Error(`${path}: HTTP ${resp.status}`)
+  if (!resp.ok) {
+    // Surface the server's own words: "HTTP 400" alone has sent people
+    // hunting through server logs for what the response body already said.
+    let detail = ''
+    try { detail = (await resp.text()).trim().slice(0, 300) } catch { /* body unreadable */ }
+    throw new Error(`${path}: HTTP ${resp.status}${detail ? ` — ${detail}` : ''}`)
+  }
   if (resp.status === 204) return null
   return resp.json()
 }
