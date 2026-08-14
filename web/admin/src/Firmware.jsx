@@ -74,7 +74,9 @@ export default function Firmware({ device }) {
   }
 
   const pct = active ? Math.min(99, Math.max(FLOOR[state] || 0, progressPct || 0)) : state === 'done' ? 100 : 0
-  const failed = state === 'failed' || state === 'rolled-back'
+  // A terminal failure describes the LAST attempt. Once a new plan is queued
+  // it must not present as the current situation — it demotes to a footnote.
+  const failed = (state === 'failed' || state === 'rolled-back') && !pending
 
   return (
     <div className="fwcard">
@@ -124,6 +126,9 @@ export default function Firmware({ device }) {
               {error || 'no error detail reported'}
               <button className="fwbtn" onClick={start}>RETRY WITH {latestVersion}</button>
             </div>
+          )}
+          {pending && (state === 'failed' || state === 'rolled-back') && error && (
+            <div className="fwprev">previous attempt {state}: {error}</div>
           )}
         </div>
       )}
