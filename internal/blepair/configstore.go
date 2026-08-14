@@ -44,14 +44,41 @@ func envQuote(v string) string {
 	return `"` + strings.NewReplacer(`"`, ``, "\n", " ").Replace(v) + `"`
 }
 
+// writeFileAtomic makes the write both atomic AND durable. Atomic alone
+// (write tmp + rename) is not enough on a device that loses power without
+// warning: ext4 delays data allocation, so after a cut the journal can replay
+// the rename while the contents were never flushed — leaving a zero-length
+// file. That exact failure produced an empty server.token in Aug 2026: the
+// unit was unplugged seconds after onboarding and went into the car with a
+// crash-looping agent. Hence fsync the file before the rename and the
+// directory after it; only then is the write guaranteed to survive a cut.
 func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
 	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, mode); err != nil {
+	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, mode)
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(data); err != nil {
+		f.Close()
+		os.Remove(tmp)
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		f.Close()
+		os.Remove(tmp)
+		return err
+	}
+	if err := f.Close(); err != nil {
+		os.Remove(tmp)
 		return err
 	}
 	if err := os.Rename(tmp, path); err != nil {
 		os.Remove(tmp)
 		return err
+	}
+	if d, err := os.Open(filepath.Dir(path)); err == nil {
+		d.Sync()
+		d.Close()
 	}
 	return nil
 }

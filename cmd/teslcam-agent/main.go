@@ -17,7 +17,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"flag"
 	"log"
 	"net/http"
@@ -211,12 +210,19 @@ func main() {
 	}
 	token, err := tokenfile.Read(*tokenFile)
 	if err != nil {
-		// With BLE onboarding enabled, the token file legitimately does not
-		// exist yet on an unprovisioned device — onboarding writes it. Any
-		// other token-file error (or a missing file without onboarding) stays
-		// fatal.
-		if *bleOnboard && errors.Is(err, os.ErrNotExist) {
-			log.Printf("token file %s missing (unprovisioned); running without auth until BLE onboarding completes", *tokenFile)
+		// With BLE onboarding enabled, ANY token failure — missing (a fresh
+		// unit), empty (truncated by a power cut mid-provisioning, seen Aug
+		// 2026), or unreadable — degrades to the unprovisioned mode: the
+		// gadget still records for the car, uploads stay off, and BLE
+		// re-onboarding can repair the credentials. Exiting here would take
+		// recording down with it: the agent crash-loops, no gadget exists,
+		// and the car reports a missing drive. Recording must never depend
+		// on upload credentials being intact.
+		//
+		// Without onboarding there is no in-field repair path, so a broken
+		// token stays fatal to fail loudly at deploy time.
+		if *bleOnboard {
+			log.Printf("token unusable (%v); running unprovisioned — recording only, re-onboard via BLE to restore uploads", err)
 			token = ""
 		} else {
 			log.Fatal(err)
