@@ -14,7 +14,7 @@ import com.sentyx.app.domain.model.OnboardingPermission
 import com.sentyx.app.domain.model.ScanState
 import com.sentyx.app.domain.model.WifiNetwork
 import com.sentyx.app.domain.repository.PairingService
-import kotlinx.datetime.Clock
+import kotlin.time.Clock
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.TimeoutCancellationException
