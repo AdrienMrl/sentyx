@@ -16,9 +16,9 @@ type TokenUsage struct {
 	TotalTokens  int64  `json:"total_tokens"`
 }
 
-// AnalysisResult is an Analyzer's output for one clip.
+// AnalysisResult is an Analyzer's output for one analysis run.
 type AnalysisResult struct {
-	VerdictJSON      []byte      // single JSON object; must contain "threat_level"
+	VerdictJSON      []byte      // single JSON object; must contain "threat" (legacy: "threat_level")
 	Usage            *TokenUsage // nil if the analyzer does not report usage
 	EstimatedCostUSD *float64    // nil when provider/model pricing is unknown
 }
@@ -31,21 +31,36 @@ type AnalysisClip struct {
 	Name string
 }
 
-// Analyzer produces a verdict for one clip. Implementations must honor ctx
-// cancellation; the caller bounds each run with a timeout.
+// Analyzer produces one verdict for an event from one or more simultaneous
+// camera clips of it (best-ranked first, never empty). Implementations must
+// honor ctx cancellation; the caller bounds each run with a timeout.
 type Analyzer interface {
-	Analyze(ctx context.Context, clip AnalysisClip) (*AnalysisResult, error)
+	Analyze(ctx context.Context, clips []AnalysisClip) (*AnalysisResult, error)
 }
 
-// cmdAnalyzer runs an external command with the clip path appended as the
-// last argument. The command must print a single JSON verdict object to
-// stdout; a top-level "usage" key, if present, is extracted as TokenUsage.
+// cmdAnalyzer runs an external command with the clip paths appended as the
+// last arguments (best-ranked first). The command must print a single JSON
+// verdict object to stdout; a top-level "usage" key, if present, is extracted
+// as TokenUsage.
 type cmdAnalyzer struct {
 	argv []string
 }
 
-func (a cmdAnalyzer) Analyze(ctx context.Context, clip AnalysisClip) (*AnalysisResult, error) {
-	args := append(append([]string{}, a.argv[1:]...), clip.Path)
+// NewCmdAnalyzer exposes the external-command analyzer to callers outside the
+// server — the benchmark runs it to score a model this repo has no Go client
+// for, without a server in the loop.
+func NewCmdAnalyzer(argv []string) (Analyzer, error) {
+	if len(argv) == 0 {
+		return nil, fmt.Errorf("server: analyzer command is empty")
+	}
+	return cmdAnalyzer{argv: argv}, nil
+}
+
+func (a cmdAnalyzer) Analyze(ctx context.Context, clips []AnalysisClip) (*AnalysisResult, error) {
+	args := append([]string{}, a.argv[1:]...)
+	for _, clip := range clips {
+		args = append(args, clip.Path)
+	}
 	cmd := exec.CommandContext(ctx, a.argv[0], args...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr

@@ -119,12 +119,17 @@ func fileByName(files []FileInfo, name string) *FileInfo {
 	return nil
 }
 
-// verdictEventSecond reads event_timestamp_seconds from a stored verdict,
-// yielding 0 when it is absent or the verdict does not parse.
+// verdictEventSecond reads the event's start second from a stored verdict,
+// yielding 0 when it is absent or the verdict does not parse. Verdicts stored
+// before 2026-08 carry the legacy event_timestamp_seconds name instead.
 func verdictEventSecond(analysisJSON string) int {
 	var v struct {
+		StartSeconds         int `json:"start_seconds"`
 		EventTimestampSecond int `json:"event_timestamp_seconds"`
 	}
 	json.Unmarshal([]byte(analysisJSON), &v)
+	if v.StartSeconds != 0 {
+		return v.StartSeconds
+	}
 	return v.EventTimestampSecond
 }

@@ -25,16 +25,15 @@ type fakeAPI struct {
 	pollsRemaining  atomic.Int32 // how many GETs still return PROCESSING
 	generateFails   atomic.Int32 // how many generateContent calls 503 first
 	deleted         atomic.Bool
-	mediaRes        atomic.Value // observe generationConfig.mediaResolution seen (string)
+	mediaRes        atomic.Value // generationConfig.mediaResolution seen (string)
 	displayName     atomic.Value // logical filename sent to the Files API
-	judgeMaxOutput  atomic.Int64 // judge generationConfig.maxOutputTokens seen
+	maxOutput       atomic.Int64 // generationConfig.maxOutputTokens seen
+	thinkingLevel   atomic.Value // generationConfig.thinkingConfig.thinkingLevel seen (string)
 	schemaDescribed atomic.Bool  // every response schema property has a description
-	judgeSawLog     atomic.Bool  // judge prompt contained the observation text
+	generateCalls   atomic.Int32 // generateContent calls seen
+	partsSeen       atomic.Int32 // parts in the last generateContent call
+	promptText      atomic.Value // text part of the last generateContent call (string)
 }
-
-// observationLog is what the fake observe call returns; the judge call must
-// receive it verbatim inside its prompt.
-const observationLog = "At 00:48 the person leans toward the camera and reaches past the frame edge."
 
 func (f *fakeAPI) handler() http.Handler {
 	mux := http.NewServeMux()
@@ -104,39 +103,37 @@ func (f *fakeAPI) handler() http.Handler {
 			http.Error(w, "unexpected contents shape", http.StatusBadRequest)
 			return
 		}
-		if _, hasSchema := req.GenerationConfig["responseSchema"]; !hasSchema {
-			// Stage 1 (observe): video part + directed-description text part,
-			// free-text output.
-			if len(req.Contents[0].Parts) != 2 {
-				http.Error(w, "observe call should have video+text parts", http.StatusBadRequest)
-				return
-			}
-			mr, _ := req.GenerationConfig["mediaResolution"].(string)
-			f.mediaRes.Store(mr)
-			fmt.Fprintf(w, `{
-				"candidates": [{"content": {"parts": [{"text": %q}]}, "finishReason": "STOP"}],
-				"usageMetadata": {"promptTokenCount": 15000, "candidatesTokenCount": 300, "thoughtsTokenCount": 100, "totalTokenCount": 15400}
-			}`, observationLog)
+		parts := req.Contents[0].Parts
+		if len(parts) < 2 {
+			http.Error(w, "analysis call should have video part(s) + text part", http.StatusBadRequest)
 			return
 		}
-		// Stage 2 (judge): text-only prompt carrying the observation log,
-		// schema-constrained JSON verdict.
-		if len(req.Contents[0].Parts) != 1 {
-			http.Error(w, "judge call should have a single text part", http.StatusBadRequest)
+		for _, p := range parts[:len(parts)-1] {
+			if _, ok := p["fileData"]; !ok {
+				http.Error(w, "non-final parts must be video fileData", http.StatusBadRequest)
+				return
+			}
+		}
+		text, _ := parts[len(parts)-1]["text"].(string)
+		if text == "" {
+			http.Error(w, "final part must be the text prompt", http.StatusBadRequest)
 			return
 		}
 		if req.GenerationConfig["responseMimeType"] != "application/json" {
 			http.Error(w, "missing responseMimeType", http.StatusBadRequest)
 			return
 		}
-		if _, hasMedia := req.GenerationConfig["mediaResolution"]; hasMedia {
-			http.Error(w, "judge call must not send mediaResolution", http.StatusBadRequest)
-			return
-		}
-		text, _ := req.Contents[0].Parts[0]["text"].(string)
-		f.judgeSawLog.Store(strings.Contains(text, observationLog))
+		f.generateCalls.Add(1)
+		f.partsSeen.Store(int32(len(parts)))
+		f.promptText.Store(text)
+		mr, _ := req.GenerationConfig["mediaResolution"].(string)
+		f.mediaRes.Store(mr)
 		if max, ok := req.GenerationConfig["maxOutputTokens"].(float64); ok {
-			f.judgeMaxOutput.Store(int64(max))
+			f.maxOutput.Store(int64(max))
+		}
+		if thinking, ok := req.GenerationConfig["thinkingConfig"].(map[string]any); ok {
+			level, _ := thinking["thinkingLevel"].(string)
+			f.thinkingLevel.Store(level)
 		}
 		described := true
 		schema, _ := req.GenerationConfig["responseSchema"].(map[string]any)
@@ -151,9 +148,10 @@ func (f *fakeAPI) handler() http.Handler {
 			}
 		}
 		f.schemaDescribed.Store(described)
+		verdictText := `{\"description\":\"A person approached the car and lingered by the driver door.\",\"contact\":false,\"start_seconds\":12,\"end_seconds\":18,\"threat\":\"low\"}`
 		fmt.Fprint(w, `{
-			"candidates": [{"content": {"parts": [{"text": "{\"concern_detected\":true,\"threat_level\":\"low\",\"what_happened\":\"A person approached the car.\",\"evidence\":\"The person stopped beside the door.\",\"recommended_action\":\"Review the footage.\",\"event_timestamp_seconds\":12}"}]}, "finishReason": "STOP"}],
-			"usageMetadata": {"promptTokenCount": 500, "candidatesTokenCount": 120, "thoughtsTokenCount": 80, "totalTokenCount": 700}
+			"candidates": [{"content": {"parts": [{"text": "`+verdictText+`"}]}, "finishReason": "STOP"}],
+			"usageMetadata": {"promptTokenCount": 15000, "candidatesTokenCount": 300, "thoughtsTokenCount": 100, "totalTokenCount": 15400}
 		}`)
 	})
 	mux.HandleFunc("DELETE /v1beta/files/abc123", func(w http.ResponseWriter, r *http.Request) {
@@ -187,26 +185,25 @@ func TestAnalyze(t *testing.T) {
 	api.pollsRemaining.Store(2) // exercise the PROCESSING poll loop
 	c, clip := newTestClient(t, api)
 
-	res, err := c.Analyze(context.Background(), server.AnalysisClip{Path: clip, Name: filepath.Base(clip)})
+	res, err := c.Analyze(context.Background(), []server.AnalysisClip{{Path: clip, Name: filepath.Base(clip)}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	var verdict struct {
-		ThreatLevel string `json:"threat_level"`
+		Threat string `json:"threat"`
 	}
 	if err := json.Unmarshal(res.VerdictJSON, &verdict); err != nil {
 		t.Fatalf("verdict not JSON: %v", err)
 	}
-	if verdict.ThreatLevel != "low" {
-		t.Errorf("threat_level = %q, want low", verdict.ThreatLevel)
+	if verdict.Threat != "low" {
+		t.Errorf("threat = %q, want low", verdict.Threat)
 	}
 	u := res.Usage
 	if u == nil {
 		t.Fatal("no usage returned")
 	}
-	// Two stages: observe (15000 prompt, 300+100 output) + judge
-	// (500 prompt, 120+80 output), summed.
-	if u.Model != "test-model" || u.PromptTokens != 15500 || u.OutputTokens != 600 || u.TotalTokens != 16100 {
+	// One call: 15000 prompt, 300+100 output.
+	if u.Model != "test-model" || u.PromptTokens != 15000 || u.OutputTokens != 400 || u.TotalTokens != 15400 {
 		t.Errorf("usage = %+v", *u)
 	}
 	if got := api.uploadedBytes.Load(); got != int64(len("fake mp4 bytes")) {
@@ -218,27 +215,72 @@ func TestAnalyze(t *testing.T) {
 	if got, _ := api.mediaRes.Load().(string); got != "" {
 		t.Errorf("mediaResolution sent without being configured: %q", got)
 	}
-	if got := api.judgeMaxOutput.Load(); got != 2048 {
-		t.Errorf("judge maxOutputTokens = %d, want 2048", got)
+	if got := api.maxOutput.Load(); got != 16384 {
+		t.Errorf("maxOutputTokens = %d, want 16384", got)
 	}
 	if !api.schemaDescribed.Load() {
 		t.Error("response schema properties are missing descriptions")
 	}
-	if !api.judgeSawLog.Load() {
-		t.Error("judge prompt did not contain the observation log")
+	if got := api.generateCalls.Load(); got != 1 {
+		t.Errorf("generateContent calls = %d, want 1", got)
+	}
+	if got := api.partsSeen.Load(); got != 2 {
+		t.Errorf("parts = %d, want video+text", got)
+	}
+	if text, _ := api.promptText.Load().(string); strings.Contains(text, "clips") {
+		t.Errorf("single-clip prompt uses the multi-clip wording: %q", text)
+	}
+}
+
+func TestAnalyzeTwoClips(t *testing.T) {
+	api := &fakeAPI{t: t}
+	c, clip := newTestClient(t, api)
+	second := filepath.Join(filepath.Dir(clip), "2026-07-04_10-01-31-back.mp4")
+	if err := os.WriteFile(second, []byte("fake mp4 bytes"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := c.Analyze(context.Background(), []server.AnalysisClip{
+		{Path: clip, Name: filepath.Base(clip)},
+		{Path: second, Name: filepath.Base(second)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Still one call, now with two video parts ahead of the text prompt.
+	if got := api.generateCalls.Load(); got != 1 {
+		t.Errorf("generateContent calls = %d, want 1", got)
+	}
+	if got := api.partsSeen.Load(); got != 3 {
+		t.Errorf("parts = %d, want 2 videos + text", got)
+	}
+	if text, _ := api.promptText.Load().(string); !strings.Contains(text, "simultaneous") {
+		t.Errorf("multi-clip prompt does not explain the simultaneous angles: %q", text)
+	}
+	if u := res.Usage; u == nil || u.PromptTokens != 15000 || u.OutputTokens != 400 || u.TotalTokens != 15400 {
+		t.Errorf("usage = %+v", res.Usage)
 	}
 }
 
 func TestValidateVerdictRejectsSemanticErrors(t *testing.T) {
-	valid := `{"concern_detected":false,"threat_level":"none","what_happened":"No concerning activity.","evidence":"No one approached the vehicle.","recommended_action":"Ignore.","event_timestamp_seconds":0}`
+	valid := `{"description":"No one approached the vehicle.","contact":false,"start_seconds":0,"end_seconds":10,"threat":"none"}`
 	if _, err := validateVerdict([]byte(valid)); err != nil {
 		t.Fatalf("valid verdict rejected: %v", err)
 	}
 	for name, input := range map[string]string{
-		"missing field":      `{"concern_detected":false,"threat_level":"none"}`,
-		"inconsistent":       strings.Replace(valid, `"threat_level":"none"`, `"threat_level":"low"`, 1),
-		"negative timestamp": strings.Replace(valid, `"event_timestamp_seconds":0`, `"event_timestamp_seconds":-1`, 1),
-		"unknown field":      strings.TrimSuffix(valid, "}") + `,"extra":true}`,
+		"missing field": `{"description":"x","threat":"none"}`,
+		// contact is the field the benchmark scores, so a verdict that omits
+		// it must fail rather than be stored as a silent false.
+		"missing contact": strings.Replace(valid, `"contact":false,`, "", 1),
+		"invalid threat":  strings.Replace(valid, `"threat":"none"`, `"threat":"catastrophic"`, 1),
+		// medium was dropped so the model's levels match the dataset's.
+		"medium threat":     strings.Replace(valid, `"threat":"none"`, `"threat":"medium"`, 1),
+		"empty description": strings.Replace(valid, `"No one approached the vehicle."`, `"  "`, 1),
+		"negative start":    strings.Replace(valid, `"start_seconds":0`, `"start_seconds":-1`, 1),
+		"end before start":  strings.Replace(valid, `"end_seconds":10`, `"end_seconds":-10`, 1),
+		"unknown field":     strings.TrimSuffix(valid, "}") + `,"extra":true}`,
+		// closer_look is gone; a model that still sends one must not be stored.
+		"closer_look": strings.TrimSuffix(valid, "}") + `,"closer_look":{"start_seconds":3,"end_seconds":9,"reason":"x"}}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := validateVerdict([]byte(input)); err == nil {
@@ -253,6 +295,13 @@ func TestEstimatedStandardCostUSD(t *testing.T) {
 	if got := estimatedStandardCostUSD(u); got == nil || *got != 10.50 {
 		t.Fatalf("cost = %v, want 10.50", got)
 	}
+	// 3.6 and 3.7 Flash share a rate until 2027-01-01; see the pricing switch.
+	for _, model := range []string{"gemini-3.6-flash", "gemini-3.7-flash"} {
+		u.Model = model
+		if got := estimatedStandardCostUSD(u); got == nil || *got != 4.50 {
+			t.Fatalf("%s cost = %v, want 4.50", model, got)
+		}
+	}
 	u.Model = "unknown-model"
 	if got := estimatedStandardCostUSD(u); got != nil {
 		t.Fatalf("unknown model cost = %v, want nil", *got)
@@ -261,19 +310,14 @@ func TestEstimatedStandardCostUSD(t *testing.T) {
 
 func TestGenerationConfigUsesModernThinkingControlForGemini3(t *testing.T) {
 	c := &Client{model: "gemini-3.5-flash"}
-	cfg := c.judgeGenerationConfig()
+	cfg := c.generationConfig()
 	thinking, _ := cfg["thinkingConfig"].(map[string]any)
-	if thinking["thinkingLevel"] != "low" {
+	if thinking["thinkingLevel"] != "medium" {
 		t.Fatalf("thinkingConfig = %#v", thinking)
 	}
 	c.model = "gemini-2.5-flash"
-	if _, ok := c.judgeGenerationConfig()["thinkingConfig"]; ok {
+	if _, ok := c.generationConfig()["thinkingConfig"]; ok {
 		t.Fatal("thinkingLevel sent to an older model family")
-	}
-	// The observe pass keeps the API-default thinking level: the two-stage
-	// design was validated with it, and forcing LOW there is untested.
-	if _, ok := c.observeGenerationConfig()["thinkingConfig"]; ok {
-		t.Fatal("observe pass must not override the default thinking level")
 	}
 }
 
@@ -285,10 +329,10 @@ func TestAnalyzeExtensionlessBlobUsesLogicalName(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err := c.Analyze(context.Background(), server.AnalysisClip{
+	_, err := c.Analyze(context.Background(), []server.AnalysisClip{{
 		Path: extensionless,
 		Name: "2026-07-04_10-01-31-front.mp4",
-	})
+	}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -302,7 +346,7 @@ func TestAnalyzeMediaResolutionLow(t *testing.T) {
 	c, clip := newTestClient(t, api)
 	c.mediaResolution = "MEDIA_RESOLUTION_LOW"
 
-	if _, err := c.Analyze(context.Background(), server.AnalysisClip{Path: clip, Name: filepath.Base(clip)}); err != nil {
+	if _, err := c.Analyze(context.Background(), []server.AnalysisClip{{Path: clip, Name: filepath.Base(clip)}}); err != nil {
 		t.Fatal(err)
 	}
 	if got, _ := api.mediaRes.Load().(string); got != "MEDIA_RESOLUTION_LOW" {
@@ -331,11 +375,11 @@ func TestAnalyzeRetriesTransientErrors(t *testing.T) {
 	c, clip := newTestClient(t, api)
 	c.retryBackoff = time.Millisecond
 
-	res, err := c.Analyze(context.Background(), server.AnalysisClip{Path: clip, Name: filepath.Base(clip)})
+	res, err := c.Analyze(context.Background(), []server.AnalysisClip{{Path: clip, Name: filepath.Base(clip)}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Usage == nil || res.Usage.TotalTokens != 16100 {
+	if res.Usage == nil || res.Usage.TotalTokens != 15400 {
 		t.Errorf("usage = %+v", res.Usage)
 	}
 }
@@ -347,7 +391,7 @@ func TestAnalyzeBadKeyFailsFast(t *testing.T) {
 	c.retryBackoff = time.Millisecond
 
 	start := time.Now()
-	if _, err := c.Analyze(context.Background(), server.AnalysisClip{Path: clip, Name: filepath.Base(clip)}); err == nil {
+	if _, err := c.Analyze(context.Background(), []server.AnalysisClip{{Path: clip, Name: filepath.Base(clip)}}); err == nil {
 		t.Fatal("expected error with bad API key")
 	}
 	if time.Since(start) > time.Second {

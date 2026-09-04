@@ -45,45 +45,69 @@ func (c *Server) analyzeEvent(ctx context.Context, eventID string, logf func(str
 	if selectionErr != nil {
 		logf("camera selection metadata for %s is invalid; using Tesla fallback: %v", eventID, selectionErr)
 	}
-	clip, err := selectClipRanked(files, ev.EventTS, ev.Camera, rankedCameras)
+	clips, err := selectClipsRanked(files, ev.EventTS, ev.Camera, rankedCameras, analyzeClipLimit)
 	if err != nil {
 		fail("", err)
 		return
 	}
+	// The best-ranked clip stays the event's single clip of record
+	// (analyzed_clip drives playback and thumbnails); further angles only
+	// inform the verdict.
+	clip := clips[0]
 	if err := c.store.setAnalysis(eventID, "running", clip.Name, "", "", "", nil); err != nil {
 		logf("marking %s running: %v", eventID, err)
 	}
 
 	clipPath := filepath.Join(c.cfg.DataDir, clip.StoredPath)
-	logf("analyzing %s clip %s", eventID, clip.Name)
+	analysisClips := make([]AnalysisClip, len(clips))
+	names := make([]string, len(clips))
+	for i, cl := range clips {
+		analysisClips[i] = AnalysisClip{Path: filepath.Join(c.cfg.DataDir, cl.StoredPath), Name: cl.Name}
+		names[i] = cl.Name
+	}
+	logf("analyzing %s clips %s", eventID, strings.Join(names, ", "))
 	runCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
-	res, err := c.analyzer.Analyze(runCtx, AnalysisClip{Path: clipPath, Name: clip.Name})
+	res, err := c.analyzer.Analyze(runCtx, analysisClips)
 	if err != nil {
 		fail(clip.Name, err)
 		return
 	}
 
+	// The Gemini analyzer emits the current verdict shape (threat,
+	// description, start_seconds); the legacy names remain as fallbacks for
+	// external -analyze commands still emitting the pre-2026-08 shape.
 	var parsed struct {
+		Threat               string `json:"threat"`
+		Description          string `json:"description"`
+		StartSeconds         int    `json:"start_seconds"`
 		ThreatLevel          string `json:"threat_level"`
 		WhatHappened         string `json:"what_happened"`
-		RecommendedAction    string `json:"recommended_action"`
 		EventTimestampSecond int    `json:"event_timestamp_seconds"`
 	}
 	if err := json.Unmarshal(res.VerdictJSON, &parsed); err != nil {
 		fail(clip.Name, fmt.Errorf("verdict is not a JSON object: %w\nverdict: %s", err, truncate(string(res.VerdictJSON), 2000)))
 		return
 	}
-	if err := c.store.setAnalysis(eventID, "done", clip.Name, parsed.ThreatLevel, string(res.VerdictJSON), "", res.Usage); err != nil {
+	if parsed.Threat == "" {
+		parsed.Threat = parsed.ThreatLevel
+	}
+	if parsed.Description == "" {
+		parsed.Description = parsed.WhatHappened
+	}
+	if parsed.StartSeconds == 0 {
+		parsed.StartSeconds = parsed.EventTimestampSecond
+	}
+	if err := c.store.setAnalysis(eventID, "done", clip.Name, parsed.Threat, string(res.VerdictJSON), "", res.Usage); err != nil {
 		logf("storing analysis for %s: %v", eventID, err)
 		return
 	}
-	logf("event %s analyzed: threat_level=%s (clip %s)", eventID, parsed.ThreatLevel, clip.Name)
+	logf("event %s analyzed: threat=%s (clip %s)", eventID, parsed.Threat, clip.Name)
 
 	// A thumbnail failure is logged and swallowed: the verdict is already
 	// stored, and the read endpoint falls back to the uploaded thumb.png.
 	thumbCtx, cancelThumb := context.WithTimeout(ctx, 30*time.Second)
-	if err := generateEventThumb(thumbCtx, c.cfg.FFmpegPath, c.cfg.DataDir, eventID, clipPath, parsed.EventTimestampSecond); err != nil {
+	if err := generateEventThumb(thumbCtx, c.cfg.FFmpegPath, c.cfg.DataDir, eventID, clipPath, parsed.StartSeconds); err != nil {
 		logf("generating thumbnail for %s: %v", eventID, err)
 	}
 	cancelThumb()
@@ -92,7 +116,7 @@ func (c *Server) analyzeEvent(ctx context.Context, eventID string, logf func(str
 	if c.notifier != nil {
 		frameCtx, cancelFrame := context.WithTimeout(ctx, 30*time.Second)
 		var frameErr error
-		framePath, frameErr = extractEventFrame(frameCtx, c.cfg.FFmpegPath, clipPath, parsed.EventTimestampSecond)
+		framePath, frameErr = extractEventFrame(frameCtx, c.cfg.FFmpegPath, clipPath, parsed.StartSeconds)
 		cancelFrame()
 		if frameErr != nil {
 			logf("extracting notification frame for %s: %v", eventID, frameErr)
@@ -104,18 +128,17 @@ func (c *Server) analyzeEvent(ctx context.Context, eventID string, logf func(str
 	// The verdict is now durably stored, so a delivery failure below is logged
 	// and swallowed — neither path must ever fail the analysis flow.
 	n := Notification{
-		EventID:           eventID,
-		ThreatLevel:       parsed.ThreatLevel,
-		WhatHappened:      parsed.WhatHappened,
-		RecommendedAction: parsed.RecommendedAction,
-		City:              ev.City,
-		Camera:            prettyClipCamera(clip.Name),
-		EventTS:           ev.EventTS,
-		Verbose:           c.cfg.DebugNotifications,
-		VerdictJSON:       res.VerdictJSON,
-		Usage:             res.Usage,
-		EstimatedCostUSD:  res.EstimatedCostUSD,
-		FramePath:         framePath,
+		EventID:          eventID,
+		ThreatLevel:      parsed.Threat,
+		WhatHappened:     parsed.Description,
+		City:             ev.City,
+		Camera:           prettyClipCamera(clip.Name),
+		EventTS:          ev.EventTS,
+		Verbose:          c.cfg.DebugNotifications,
+		VerdictJSON:      res.VerdictJSON,
+		Usage:            res.Usage,
+		EstimatedCostUSD: res.EstimatedCostUSD,
+		FramePath:        framePath,
 	}
 	c.notify(ctx, n, logf)
 	c.dispatchPush(ctx, ev.DeviceID, n, logf)
@@ -205,26 +228,54 @@ func cameraName(code string) string {
 	}
 }
 
-// selectClip picks the clip to analyze: from the trigger camera's clips, the
-// latest one starting at or before the event timestamp (the minute the
-// trigger happened in); failing that, the camera's latest clip; failing
-// that, any camera's latest clip.
+// analyzeClipLimit bounds how many camera angles of one event are analyzed
+// together: the uploads are recall-biased, but each extra angle costs a full
+// stage-1 video pass, and two angles cover the overwhelming majority of
+// genuine multi-camera events.
+const analyzeClipLimit = 2
+
+// selectClip picks the single best clip to analyze: from the trigger
+// camera's clips, the latest one starting at or before the event timestamp
+// (the minute the trigger happened in); failing that, the camera's latest
+// clip; failing that, any camera's latest clip.
 func selectClip(files []FileInfo, eventTS, cameraCode string) (*FileInfo, error) {
-	return selectClipRanked(files, eventTS, cameraCode, nil)
+	clips, err := selectClipsRanked(files, eventTS, cameraCode, nil, 1)
+	if err != nil {
+		return nil, err
+	}
+	return clips[0], nil
 }
 
 // selectClipRanked honors the Pi's measured camera rank when available. The
 // Tesla camera code remains only a backwards-compatible fallback for agents
 // that do not upload camera-selection.json.
 func selectClipRanked(files []FileInfo, eventTS, cameraCode string, rankedCameras []string) (*FileInfo, error) {
-	for _, camera := range rankedCameras {
+	clips, err := selectClipsRanked(files, eventTS, cameraCode, rankedCameras, 1)
+	if err != nil {
+		return nil, err
+	}
+	return clips[0], nil
+}
+
+// selectClipsRanked returns up to limit clips to analyze together, one per
+// camera, best-ranked first. Camera preference order is the Pi's measured
+// rank, then Tesla's trigger-camera hint as a fallback for agents that do
+// not upload camera-selection.json. If no preferred camera has a usable
+// clip, the newest clip of any camera is the single result.
+func selectClipsRanked(files []FileInfo, eventTS, cameraCode string, rankedCameras []string, limit int) ([]*FileInfo, error) {
+	var clips []*FileInfo
+	seenCamera := map[string]bool{}
+	for _, camera := range append(append([]string{}, rankedCameras...), cameraName(cameraCode)) {
+		if len(clips) == limit || seenCamera[camera] {
+			continue
+		}
+		seenCamera[camera] = true
 		if clip := selectCameraClip(files, eventTS, camera); clip != nil {
-			return clip, nil
+			clips = append(clips, clip)
 		}
 	}
-	cam := cameraName(cameraCode)
-	if clip := selectCameraClip(files, eventTS, cam); clip != nil {
-		return clip, nil
+	if len(clips) > 0 {
+		return clips, nil
 	}
 
 	var bestAny *FileInfo
@@ -236,7 +287,7 @@ func selectClipRanked(files []FileInfo, eventTS, cameraCode string, rankedCamera
 		}
 	}
 	if bestAny != nil {
-		return bestAny, nil
+		return []*FileInfo{bestAny}, nil
 	}
 	return nil, fmt.Errorf("event has no clips to analyze (%d files)", len(files))
 }
@@ -292,7 +343,10 @@ func parseCameraSelection(data []byte) ([]string, error) {
 	if err := json.Unmarshal(data, &meta); err != nil {
 		return nil, err
 	}
-	if meta.Version != 1 || len(meta.Ranked) == 0 {
+	// Version 1 (NanoDet-era scorer) and version 2 (keyframe pixel-change
+	// scorer) share this wire shape; only the score semantics differ, and the
+	// server consumes rank order alone.
+	if (meta.Version != 1 && meta.Version != 2) || len(meta.Ranked) == 0 {
 		return nil, fmt.Errorf("unsupported or empty camera selection metadata")
 	}
 	seen := map[string]bool{}

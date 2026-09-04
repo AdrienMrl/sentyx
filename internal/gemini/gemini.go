@@ -1,8 +1,7 @@
 // Package gemini analyzes sentry clips natively with the Gemini API: it
-// uploads the clip via the Files API, waits for processing, runs a two-stage
-// analysis (a free-text observation pass over the video, then a
-// schema-constrained JSON verdict over that log), and reports combined token
-// usage for cost accounting. It is the production replacement for the
+// uploads each clip via the Files API, waits for processing, runs one
+// schema-constrained analysis call over all clips, and reports token usage
+// for cost accounting. It is the production replacement for the
 // experiments/gemini/analyze-video.ts subprocess.
 package gemini
 
@@ -13,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -23,96 +23,102 @@ import (
 	"github.com/AdrienMrl/teslcam/internal/server"
 )
 
-// Analysis runs in two stages. A single schema-constrained call reliably
-// under-attends to the video: it emits a plausible one-line gist ("person
-// walks by") without examining proximity or hand movements, and no prompt
-// wording, thinking level, or media resolution fixes that in one shot
-// (verified against a real missed window-tampering event, 2026-07-23).
-// Stage 1 asks only for a directed free-text observation log — the open-ended
-// output is what makes the model actually look. Stage 2 judges that log
-// against the threat rubric without re-sending the video.
-const observePrompt = `This clip comes from a camera mounted ON a parked car (Tesla Sentry Mode /
-TeslaCam: the front, back, or a side "repeater" camera). The car itself is mostly
-out of frame — at most a sliver of its own bodywork shows along a frame edge — so
-treat proximity to the CAMERA as proximity to the car.
+// The prompt's job is the contact call, and it attacks the two failure modes
+// the benchmark surfaced (run 20260815T205805Z vs 20260816T004158Z): calling a
+// door resting against the panel "very close, no impact", and calling a
+// pedestrian squeezing past "brushing against the side". So it pins the
+// decision to one observable — did the gap reach zero at closest approach —
+// and names both traps explicitly. Benchmarked with internal/bench; edit only
+// with a before/after run.
+func analyzePrompt(clipCount int) string {
+	intro := "This is one Tesla Sentry Mode camera clip from a parked car."
+	if clipCount > 1 {
+		intro = `These are simultaneous Tesla Sentry Mode clips of one event from different
+cameras on the same parked car.`
+	}
+	return intro + ` The camera is mounted on the car itself.
 
-Describe everything that happens in the clip in chronological detail with
-timestamps: every person, vehicle, and action. For each person, pay particular
-attention to how close they get to the camera, what their hands are doing, and
-whether they ever lean toward, reach toward, or make contact with the car or
-anything near the frame edges.`
+Decide whether anything physically touched the car: a person, a door, a cart,
+another vehicle, an animal — anything.
 
-const judgePrompt = `You are a security analyst reviewing footage from a Tesla vehicle's
-Sentry Mode / TeslaCam system. This camera activates when the parked car detects a
-potential threat nearby. You are given a detailed chronological observation log of
-the clip instead of the video itself.
+Critical: the exact point of touch is usually NOT visible in the frame. The
+camera sits on the car's body, so an object touching the car does it at the
+edge of or below the image, often while blocking the view. You will almost
+never see the touch itself — you must infer it from motion:
 
-Report any nefarious, threatening, or concerning activity directed at the vehicle
-or its surroundings. The camera is mounted on the parked car, so a person who gets
-close to the camera, leans or reaches toward it, or makes contact near a frame
-edge is doing so to the car. Consider things like:
-- Someone touching, hitting, kicking, keying, or otherwise damaging the vehicle
-- Attempted break-in, theft, or tampering (door handles, windows, wheels, charge port)
-- A person loitering, casing the vehicle, or behaving suspiciously
-- Vandalism, weapons, or violence
-- Vehicle collisions or hit-and-run
+- A car door swings open toward this car and its arc STOPS while the occupant
+  is still getting in or out: the door stopped because it met this car. That
+  is contact. A door that swings, stops short, and swings back without pausing
+  did not touch.
+- A person squeezing into or out of an adjacent car through a partially
+  opened door, in a space too tight for the door to open fully: what stopped
+  that door is this car. Contact.
+- Another vehicle positioned against this car — its body meeting the bottom
+  or edge of the frame, bumper to bumper, closer than any driver would park —
+  or the image jolting as that vehicle arrives or leaves: contact.
+- An object's motion ends against the car's position and it stays there — a
+  resting door, a leaning person, a foot or hand placed down: contact.
 
-Return the requested verdict. Keep each text field to one short sentence of at most
-20 words. Set event_timestamp_seconds to the moment that best shows the activity
-described in what_happened, measured from the start of the clip, using the log's
-timestamps. Set concern_detected to false exactly when threat_level is none. Be
-precise and do not speculate beyond what the observation log supports.
+Do not infer contact from proximity alone: people frequently walk or squeeze
+past within inches and touch nothing. Passing close with uninterrupted motion
+is NOT contact, and "probably brushed it" is not an observation — unless you
+saw motion stop against the car, something rest or press on it, or the image
+jolt, answer no contact.
 
-Observation log of the clip:
+threat: "none" if nothing touched the car and nothing threatened it; "low" for
+light contact without damage risk (a touch, a brush, a foot, a resting door);
+"high" for forceful or potentially damaging contact (a door swung into the
+car, a collision, a strike) or deliberate interference with it.`
+}
 
-`
+func verdictProperties() map[string]any {
+	return map[string]any{
+		"description": map[string]any{
+			"type":        "STRING",
+			"description": "What happened in the clip, one or two sentences.",
+		},
+		// Contact is asked for separately from threat because the two come
+		// apart: a door tapping the panel is contact that barely threatens
+		// anything, and a shouted threat from the sidewalk is the reverse.
+		// Answering it explicitly is also what the benchmark scores — a
+		// verdict that only reports severity cannot be checked for the thing
+		// the model is worst at, which is seeing the touch at all.
+		"contact": map[string]any{
+			"type":        "BOOLEAN",
+			"description": "Did anything physically touch the car — a person, a door, a cart, an animal, anything?",
+		},
+		"start_seconds": map[string]any{
+			"type":        "INTEGER",
+			"description": "When the event begins, seconds from clip start.",
+		},
+		"end_seconds": map[string]any{
+			"type":        "INTEGER",
+			"description": "When the event ends, seconds from clip start.",
+		},
+		"threat": map[string]any{
+			"type":        "STRING",
+			"enum":        []string{"none", "low", "high"},
+			"description": "Severity of any threat or damage to the car.",
+		},
+	}
+}
 
 // verdictSchema constrains the model to the verdict object the server stores.
 var verdictSchema = map[string]any{
-	"type": "OBJECT",
-	"properties": map[string]any{
-		"concern_detected": map[string]any{
-			"type":        "BOOLEAN",
-			"description": "Whether visible activity warrants the owner's attention.",
-		},
-		"threat_level": map[string]any{
-			"type":        "STRING",
-			"enum":        []string{"none", "low", "medium", "high"},
-			"description": "Severity of the visible activity; use none when concern_detected is false.",
-		},
-		"what_happened": map[string]any{
-			"type":        "STRING",
-			"description": "One factual sentence, at most 20 words, describing what happened.",
-		},
-		"evidence": map[string]any{
-			"type":        "STRING",
-			"description": "One factual sentence, at most 20 words, naming the decisive visual evidence.",
-		},
-		"recommended_action": map[string]any{
-			"type":        "STRING",
-			"description": "One brief action for the owner, such as ignore, review footage, or contact police.",
-		},
-		"event_timestamp_seconds": map[string]any{
-			"type":        "INTEGER",
-			"description": "Seconds from clip start showing the clearest representative frame of what_happened; avoid title cards and transitions.",
-		},
-	},
-	"required": []string{
-		"concern_detected", "threat_level", "what_happened",
-		"evidence", "recommended_action", "event_timestamp_seconds",
-	},
+	"type":       "OBJECT",
+	"properties": verdictProperties(),
+	"required":   []string{"description", "contact", "start_seconds", "end_seconds", "threat"},
 }
 
 // verdict is deliberately pointer-valued so application validation can
 // distinguish a missing required field from its zero value. The API schema
 // constrains syntax; this type enforces the contract before storage.
 type verdict struct {
-	ConcernDetected   *bool   `json:"concern_detected"`
-	ThreatLevel       *string `json:"threat_level"`
-	WhatHappened      *string `json:"what_happened"`
-	Evidence          *string `json:"evidence"`
-	RecommendedAction *string `json:"recommended_action"`
-	EventTimestampSec *int    `json:"event_timestamp_seconds"`
+	Description  *string `json:"description"`
+	Contact      *bool   `json:"contact"`
+	StartSeconds *int    `json:"start_seconds"`
+	EndSeconds   *int    `json:"end_seconds"`
+	Threat       *string `json:"threat"`
 }
 
 // Client calls the Gemini API directly over REST. It implements
@@ -127,7 +133,7 @@ type Client struct {
 	// field so the API default (1 fps) applies.
 	fps     int
 	baseURL string
-	httpc           *http.Client
+	httpc   *http.Client
 	// pollInterval between Files API state checks and retryBackoff for the
 	// first retry delay; tests shrink both.
 	pollInterval time.Duration
@@ -170,26 +176,35 @@ func New(apiKey, model, mediaResolution string, fps int) (*Client, error) {
 	}, nil
 }
 
-// Analyze uploads the clip, runs the model on it, and returns the verdict
-// plus token usage. The uploaded file is deleted afterwards (best-effort);
-// ctx bounds the whole run.
-func (c *Client) Analyze(ctx context.Context, clip server.AnalysisClip) (*server.AnalysisResult, error) {
-	mimeType, err := clipMIMEType(clip.Name)
-	if err != nil {
-		return nil, err
+// Analyze uploads each clip (simultaneous camera angles of one event,
+// best-ranked first), runs one schema-constrained analysis call over all of
+// them, and returns the verdict plus token usage. Uploaded files are deleted
+// afterwards (best-effort); ctx bounds the whole run.
+func (c *Client) Analyze(ctx context.Context, clips []server.AnalysisClip) (*server.AnalysisResult, error) {
+	if len(clips) == 0 {
+		return nil, errors.New("gemini: no clips to analyze")
 	}
-	file, err := c.uploadFile(ctx, clip.Path, clip.Name, mimeType)
-	if err != nil {
-		return nil, fmt.Errorf("gemini: uploading %s: %w", filepath.Base(clip.Name), err)
-	}
-	defer c.deleteFile(file.Name)
+	files := make([]*geminiFile, len(clips))
+	for i, clip := range clips {
+		mimeType, err := clipMIMEType(clip.Name)
+		if err != nil {
+			return nil, err
+		}
+		file, err := c.uploadFile(ctx, clip.Path, clip.Name, mimeType)
+		if err != nil {
+			return nil, fmt.Errorf("gemini: uploading %s: %w", filepath.Base(clip.Name), err)
+		}
+		defer c.deleteFile(file.Name)
 
-	if err := c.waitActive(ctx, file); err != nil {
-		return nil, fmt.Errorf("gemini: file %s: %w", file.Name, err)
+		if err := c.waitActive(ctx, file); err != nil {
+			return nil, fmt.Errorf("gemini: file %s: %w", file.Name, err)
+		}
+		files[i] = file
 	}
-	verdict, usage, err := c.generate(ctx, file)
+
+	verdict, usage, err := c.analyzeVideos(ctx, files)
 	if err != nil {
-		return nil, fmt.Errorf("gemini: generateContent: %w", err)
+		return nil, fmt.Errorf("gemini: %w", err)
 	}
 	return &server.AnalysisResult{
 		VerdictJSON:      verdict,
@@ -207,8 +222,14 @@ func estimatedStandardCostUSD(usage *server.TokenUsage) *float64 {
 	}
 	var inputPerMillion, outputPerMillion float64
 	switch usage.Model {
-	case "gemini-3.6-flash": // pricing published 2026-07; output cut from 3.5's 9.00
-		inputPerMillion, outputPerMillion = 1.50, 7.50
+	// Both Gemini 3.6 and 3.7 Flash are 0.75/3.75 through 2026-12-31 and
+	// 1.50/7.50 from 2027-01-01. Update BOTH cases then, or /usage will
+	// under-report cost by 2x. (Before 2026-08-13 the 3.6 case wrongly held
+	// the post-2027 rate, so 3.6 costs recorded until then read 2x high.)
+	case "gemini-3.7-flash":
+		inputPerMillion, outputPerMillion = 0.75, 3.75
+	case "gemini-3.6-flash":
+		inputPerMillion, outputPerMillion = 0.75, 3.75
 	case "gemini-3.5-flash": // pricing published 2026-07-09
 		inputPerMillion, outputPerMillion = 1.50, 9.00
 	default:
@@ -336,60 +357,21 @@ func (c *Client) waitActive(ctx context.Context, file *geminiFile) error {
 	return nil
 }
 
-func (c *Client) generate(ctx context.Context, file *geminiFile) ([]byte, *server.TokenUsage, error) {
-	observations, obsUsage, err := c.observe(ctx, file)
-	if err != nil {
-		return nil, nil, fmt.Errorf("observe: %w", err)
+// analyzeVideos runs the schema-constrained analysis call over all uploaded
+// clips at the configured detail level.
+func (c *Client) analyzeVideos(ctx context.Context, files []*geminiFile) ([]byte, *server.TokenUsage, error) {
+	parts := make([]map[string]any, 0, len(files)+1)
+	for _, file := range files {
+		videoPart := map[string]any{"fileData": map[string]any{"fileUri": file.URI, "mimeType": file.MIMEType}}
+		if c.fps > 0 {
+			videoPart["videoMetadata"] = map[string]any{"fps": c.fps}
+		}
+		parts = append(parts, videoPart)
 	}
-	verdictJSON, judgeUsage, err := c.judge(ctx, observations)
-	if err != nil {
-		return nil, nil, fmt.Errorf("judge: %w", err)
-	}
-	usage := &server.TokenUsage{
-		Model:        c.model,
-		PromptTokens: obsUsage.PromptTokens + judgeUsage.PromptTokens,
-		OutputTokens: obsUsage.OutputTokens + judgeUsage.OutputTokens,
-		TotalTokens:  obsUsage.TotalTokens + judgeUsage.TotalTokens,
-	}
-	return verdictJSON, usage, nil
-}
-
-// observe is stage 1: a free-text, attention-directed description of the clip.
-func (c *Client) observe(ctx context.Context, file *geminiFile) (string, *server.TokenUsage, error) {
-	videoPart := map[string]any{"fileData": map[string]any{"fileUri": file.URI, "mimeType": file.MIMEType}}
-	if c.fps > 0 {
-		videoPart["videoMetadata"] = map[string]any{"fps": c.fps}
-	}
+	parts = append(parts, map[string]any{"text": analyzePrompt(len(files))})
 	reqBody, err := json.Marshal(map[string]any{
-		"contents": []map[string]any{{
-			"role":  "user",
-			"parts": []map[string]any{videoPart, {"text": observePrompt}},
-		}},
-		"generationConfig": c.observeGenerationConfig(),
-	})
-	if err != nil {
-		return "", nil, err
-	}
-	text, usage, err := c.generateContent(ctx, reqBody)
-	if err != nil {
-		return "", nil, err
-	}
-	if strings.TrimSpace(text) == "" {
-		return "", nil, errors.New("empty observation log")
-	}
-	return text, usage, nil
-}
-
-// judge is stage 2: the schema-constrained verdict over the observation log.
-// The video is not re-sent — the log carries the evidence, at a fraction of
-// the tokens.
-func (c *Client) judge(ctx context.Context, observations string) ([]byte, *server.TokenUsage, error) {
-	reqBody, err := json.Marshal(map[string]any{
-		"contents": []map[string]any{{
-			"role":  "user",
-			"parts": []map[string]any{{"text": judgePrompt + observations}},
-		}},
-		"generationConfig": c.judgeGenerationConfig(),
+		"contents":         []map[string]any{{"role": "user", "parts": parts}},
+		"generationConfig": c.generationConfig(),
 	})
 	if err != nil {
 		return nil, nil, err
@@ -398,6 +380,8 @@ func (c *Client) judge(ctx context.Context, observations string) ([]byte, *serve
 	if err != nil {
 		return nil, nil, err
 	}
+	// The raw model output, before the verdict is canonicalized.
+	log.Printf("gemini: raw response: %s", text)
 	verdictJSON, err := validateVerdict([]byte(text))
 	if err != nil {
 		return nil, nil, fmt.Errorf("invalid verdict: %w", err)
@@ -460,39 +444,25 @@ func (c *Client) generateContent(ctx context.Context, reqBody []byte) (string, *
 	return text.String(), usage, nil
 }
 
-// observeGenerationConfig is the stage-1 config. The API-default thinking
-// level is deliberate: this is the pass that must actually look at the
-// frames, and it is the configuration the two-stage design was validated
-// with.
-func (c *Client) observeGenerationConfig() map[string]any {
+// generationConfig is the first analysis call's config: schema-constrained
+// JSON straight off the video at the configured (cheap) detail level.
+func (c *Client) generationConfig() map[string]any {
 	genConfig := map[string]any{
-		// A guardrail, not a brevity control: the log for a 60s clip runs a
-		// few hundred tokens, and Gemini's limit includes thinking tokens.
-		"maxOutputTokens": 8192,
+		"responseMimeType": "application/json",
+		"responseSchema":   verdictSchema,
+		// A guardrail, not a brevity control: Gemini's limit includes
+		// internal thinking tokens, and MEDIUM thinking over video needs
+		// real headroom before the small schema-constrained response.
+		"maxOutputTokens": 16384,
 	}
 	if c.mediaResolution != "" {
 		genConfig["mediaResolution"] = c.mediaResolution
 	}
-	return genConfig
-}
-
-// judgeGenerationConfig is the stage-2 config: schema-constrained JSON over a
-// short text log, no media.
-func (c *Client) judgeGenerationConfig() map[string]any {
-	genConfig := map[string]any{
-		"responseMimeType": "application/json",
-		"responseSchema":   verdictSchema,
-		// This is a guardrail rather than the primary brevity control. The
-		// prompt and field descriptions keep normal responses well below it.
-		// Gemini's limit includes internal thinking tokens. Leave enough room
-		// for LOW reasoning plus the small schema-constrained visible response.
-		"maxOutputTokens": 2048,
-	}
 	// Gemini 3 models support thinkingLevel; older model families reject it.
-	// LOW suffices here: the hard perceptual work happened in observe, and
-	// judging a short text log is a narrow classification task.
+	// MEDIUM carries the perceptual work the schema-constrained output would
+	// otherwise skimp on.
 	if strings.HasPrefix(c.model, "gemini-3") {
-		genConfig["thinkingConfig"] = map[string]any{"thinkingLevel": "low"}
+		genConfig["thinkingConfig"] = map[string]any{"thinkingLevel": "medium"}
 	}
 	return genConfig
 }
@@ -516,26 +486,28 @@ func validateVerdict(data []byte) ([]byte, error) {
 		}
 		return nil, fmt.Errorf("trailing data: %w", err)
 	}
-	if v.ConcernDetected == nil || v.ThreatLevel == nil || v.WhatHappened == nil ||
-		v.Evidence == nil || v.RecommendedAction == nil || v.EventTimestampSec == nil {
+	if v.Description == nil || v.Contact == nil || v.StartSeconds == nil || v.EndSeconds == nil || v.Threat == nil {
 		return nil, errors.New("response is missing a required field")
 	}
-	switch *v.ThreatLevel {
-	case "none", "low", "medium", "high":
+	switch *v.Threat {
+	case "none", "low", "high":
 	default:
-		return nil, fmt.Errorf("invalid threat_level %q", *v.ThreatLevel)
+		return nil, fmt.Errorf("invalid threat %q", *v.Threat)
 	}
-	if (*v.ThreatLevel == "none") == *v.ConcernDetected {
-		return nil, errors.New("concern_detected must be false exactly when threat_level is none")
+	if strings.TrimSpace(*v.Description) == "" {
+		return nil, errors.New("description must not be empty")
 	}
-	if strings.TrimSpace(*v.WhatHappened) == "" || strings.TrimSpace(*v.Evidence) == "" ||
-		strings.TrimSpace(*v.RecommendedAction) == "" {
-		return nil, errors.New("text fields must not be empty")
+	if *v.StartSeconds < 0 {
+		return nil, errors.New("start_seconds must not be negative")
 	}
-	if *v.EventTimestampSec < 0 {
-		return nil, errors.New("event_timestamp_seconds must not be negative")
+	if *v.EndSeconds < *v.StartSeconds {
+		return nil, errors.New("end_seconds must not precede start_seconds")
 	}
-	return json.Marshal(v)
+	canonical, err := json.Marshal(v)
+	if err != nil {
+		return nil, err
+	}
+	return canonical, nil
 }
 
 // deleteFile removes an uploaded file. Best-effort: files also expire

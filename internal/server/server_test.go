@@ -93,6 +93,32 @@ func TestSelectClipRankedSkipsMissingCandidate(t *testing.T) {
 	}
 }
 
+func TestSelectClipsRankedTopTwo(t *testing.T) {
+	files := []FileInfo{
+		{Name: "2026-07-04_10-01-00-back.mp4"},
+		{Name: "2026-07-04_10-01-00-right_repeater.mp4"},
+		{Name: "2026-07-04_10-01-00-front.mp4"},
+	}
+	// Top two ranked cameras win; Tesla's hint (6 = right_repeater) is
+	// already covered and must not appear twice.
+	clips, err := selectClipsRanked(files, "2026-07-04T10:01:30", "6",
+		[]string{"back", "right_repeater", "front"}, 2)
+	if err != nil || len(clips) != 2 ||
+		clips[0].Name != "2026-07-04_10-01-00-back.mp4" ||
+		clips[1].Name != "2026-07-04_10-01-00-right_repeater.mp4" {
+		t.Fatalf("top-2 selection = %v, %v", clips, err)
+	}
+	// A ranked camera without a clip is skipped; the hint fills the second
+	// slot.
+	clips, err = selectClipsRanked(files, "2026-07-04T10:01:30", "7",
+		[]string{"front", "left_repeater"}, 2)
+	if err != nil || len(clips) != 2 ||
+		clips[0].Name != "2026-07-04_10-01-00-front.mp4" ||
+		clips[1].Name != "2026-07-04_10-01-00-back.mp4" {
+		t.Fatalf("ranked-miss selection = %v, %v", clips, err)
+	}
+}
+
 func TestParseCameraSelection(t *testing.T) {
 	data, err := json.Marshal(cameraselect.Metadata{
 		Version: 1,
@@ -105,7 +131,13 @@ func TestParseCameraSelection(t *testing.T) {
 	if err != nil || strings.Join(got, ",") != "back,left_pillar" {
 		t.Fatalf("parsed selection = %v, %v", got, err)
 	}
-	for _, bad := range [][]byte{[]byte(`{`), []byte(`{"version":2,"ranked":[]}`)} {
+	// Version 2 (the keyframe pixel-change scorer) shares the wire shape and
+	// must parse — the Pi has shipped it since 2026-07.
+	got, err = parseCameraSelection([]byte(`{"version":2,"ranked":[{"camera":"back"}],"selected":["back"]}`))
+	if err != nil || strings.Join(got, ",") != "back" {
+		t.Fatalf("parsed v2 selection = %v, %v", got, err)
+	}
+	for _, bad := range [][]byte{[]byte(`{`), []byte(`{"version":3,"ranked":[{"camera":"back"}]}`), []byte(`{"version":2,"ranked":[]}`)} {
 		if _, err := parseCameraSelection(bad); err == nil {
 			t.Fatalf("parseCameraSelection(%s) succeeded", bad)
 		}
@@ -160,12 +192,19 @@ type ingestFile struct {
 }
 
 type recordingAnalyzer struct {
-	clip AnalysisClip
+	clips []AnalysisClip
 }
 
-func (a *recordingAnalyzer) Analyze(_ context.Context, clip AnalysisClip) (*AnalysisResult, error) {
-	a.clip = clip
+func (a *recordingAnalyzer) Analyze(_ context.Context, clips []AnalysisClip) (*AnalysisResult, error) {
+	a.clips = clips
 	return &AnalysisResult{VerdictJSON: []byte(`{"threat_level":"low"}`)}, nil
+}
+
+func (a *recordingAnalyzer) clip() AnalysisClip {
+	if len(a.clips) == 0 {
+		return AnalysisClip{}
+	}
+	return a.clips[0]
 }
 
 // putBlob uploads one content-addressed blob and asserts a 200.
@@ -354,13 +393,13 @@ func TestAnalyzePassesLogicalNameForExtensionlessBlob(t *testing.T) {
 	})
 
 	c.analyzeEvent(context.Background(), event, t.Logf)
-	if analyzer.clip.Name != "2026-07-04_10-01-31-front.mp4" {
-		t.Fatalf("logical clip name = %q", analyzer.clip.Name)
+	if analyzer.clip().Name != "2026-07-04_10-01-31-front.mp4" {
+		t.Fatalf("logical clip name = %q", analyzer.clip().Name)
 	}
-	if ext := filepath.Ext(analyzer.clip.Path); ext != "" {
+	if ext := filepath.Ext(analyzer.clip().Path); ext != "" {
 		t.Fatalf("content-addressed blob unexpectedly has extension %q", ext)
 	}
-	if _, err := os.Stat(analyzer.clip.Path); err != nil {
+	if _, err := os.Stat(analyzer.clip().Path); err != nil {
 		t.Fatalf("physical clip path is not readable: %v", err)
 	}
 }
@@ -458,8 +497,7 @@ func TestNotifyOnDoneIsNonFatal(t *testing.T) {
 	if notif.calls != 1 {
 		t.Fatalf("notifier calls = %d, want 1", notif.calls)
 	}
-	if notif.last.ThreatLevel != "high" || notif.last.WhatHappened == "" ||
-		notif.last.RecommendedAction == "" {
+	if notif.last.ThreatLevel != "high" || notif.last.WhatHappened == "" {
 		t.Errorf("notification not populated from verdict: %+v", notif.last)
 	}
 	if notif.last.City != "North Las Vegas" || notif.last.EventTS != "2026-07-04T10:01:31" {

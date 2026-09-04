@@ -120,13 +120,12 @@ func TestNotifySendsFormattedMessage(t *testing.T) {
 	c.baseURL = srv.URL
 
 	err = c.Notify(context.Background(), server.Notification{
-		EventID:           "2026-07-04_10-01-31",
-		ThreatLevel:       "high",
-		WhatHappened:      "person kicked the car <hard> & keyed the door",
-		RecommendedAction: "report to police",
-		City:              "North Las Vegas",
-		Camera:            "left repeater",
-		EventTS:           "2026-07-04T10:01:31",
+		EventID:      "2026-07-04_10-01-31",
+		ThreatLevel:  "high",
+		WhatHappened: "person kicked the car <hard> & keyed the door",
+		City:         "North Las Vegas",
+		Camera:       "left repeater",
+		EventTS:      "2026-07-04T10:01:31",
 	})
 	if err != nil {
 		t.Fatal(err)
