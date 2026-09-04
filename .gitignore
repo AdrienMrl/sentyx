@@ -26,6 +26,11 @@ testdata/fixtures/*.img
 # (large video + contains real GPS/location metadata — never commit)
 testdata/sentry-samples/
 
+# benchmark footage and past runs. bench/dataset.json (the labels) IS
+# committed; the clips it points at are re-fetched with teslcam-bench fetch.
+bench/clips/
+bench/results/
+
 # cloned upstream repos kept for reference (each has its own .git)
 third_party/
 
@@ -48,3 +53,6 @@ experiments/tesla-signaling/tesla-signaling
 keys/
 .secrets/
 *.private.pem
+bench/features/
+bench/analyzers/vjepa/.venv/
+bench/analyzers/vjepa/**/__pycache__/

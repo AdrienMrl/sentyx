@@ -1,0 +1,8 @@
+# Python 3.12 (torch has no 3.14 wheels yet):  uv venv --python 3.12 .venv && uv pip install -r requirements.txt
+torch>=2.4
+transformers>=4.53      # first release with VJEPA2Model / AutoVideoProcessor for V-JEPA 2
+torchvision>=0.19       # the video processor imports it
+pillow>=10
+numpy>=1.26
+imageio-ffmpeg>=0.5     # bundled ffmpeg binary, used only when no ffmpeg is on PATH
+pytest>=8

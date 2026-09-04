@@ -1,0 +1,74 @@
+This is a clip from a fisheye camera mounted ON the body of a parked car
+(Tesla Sentry Mode). Parts of the car the camera is mounted on are visible at
+the frame edges — usually a strip along the bottom, sometimes a dark strip up
+one side. Because of the wide fisheye lens, neighboring parked cars routinely
+look very large in the frame while being a normal parking gap away. Large in
+frame does NOT mean close, and close does NOT mean touching.
+
+Orientation, always true: the camera can NEVER see the car it is mounted on as
+a complete car. The ego car appears ONLY as a cropped near-field strip at a
+frame edge — often dark, blurred, or warped, and it is the CLOSEST surface in
+the image; everything else is behind it. Never label any car visible in the
+frame as the ego car: every complete vehicle you can see is a NEIGHBORING
+vehicle, and a person opening its door, entering it, or sitting in it is
+interacting with that neighbor, not with this car. Start your evidence by
+stating where in the frame the ego-car strip is visible.
+
+Decide whether anything physically TOUCHED this car. The touch point itself is
+almost never visible — the camera sits on the car, so contact happens at the
+frame edge or below it, often while the object blocks the view. You must infer
+contact from motion, and only from these specific observable events:
+
+1. STOPPED ARC: a door from an adjacent vehicle swings open toward this car
+   and its arc STOPS and rests while the occupant continues getting in or out
+   — the door stopped because it met this car. A door that swings open, stops
+   short, and swings back without pausing did not touch. A door HELD wide
+   open toward the camera for many seconds, its edge reaching the frame edge
+   where the ego-car strip is, while its owner climbs in or out, is RESTING
+   on this car: contact. For any adjacent-car door opened toward the camera,
+   track its outer bottom corner frame by frame: if it advances and then
+   holds still — or slides behind the ego-car strip — while the person keeps
+   moving, the door is resting on this car.
+2. EXTREME NEAR-FIELD: an object ARRIVES during the clip and grows until it
+   fills the frame to the bottom edge and corners, its shape warped by the
+   fisheye — far past where any neighboring car normally sits. A vehicle
+   whose rear or side fills essentially the whole frame is pressing against
+   this car. The reverse also proves it: Sentry clips are triggered BY the
+   event, so a clip often begins at the moment of contact — a vehicle that at
+   t=0 ALREADY fills the frame edge to edge (a license plate or body panel
+   huge and centered, far past any normal gap) and then pulls away was
+   resting against this car when the clip began. A neighbor whose full side
+   profile is visible with ground under it is just parked; a panel filling
+   everything with no surroundings visible is pressing.
+3. MOTION ENDS ON THE CAR: a person's movement terminates at this car and
+   they stay — leaning over it, resting against it, sitting on it, placing a
+   hand or foot that bears weight. Their body overlaps the visible ego-car
+   strip at the frame edge while their walking motion has stopped.
+4. JOLT: the image itself jolts, shakes, or shifts at the moment an object
+   arrives at or leaves the car.
+5. OCCLUSION: the ego-car strip is the closest surface in the image, so a
+   moving object (a door edge, a foot, a hand, a bumper) whose leading edge
+   visually slides BEHIND or UNDER the ego-car strip has physically crossed
+   onto this car's body: contact. Static neighbors partially hidden by the
+   strip all along do not count — only an edge that moves into occlusion
+   during the clip.
+
+Everything else is NOT contact. In particular:
+- A person walking or squeezing past at constant, uninterrupted speed is not
+  contact, no matter how close, even if their hand or bag swings near the
+  panel. If the walking never pauses, nothing touched.
+- A neighboring parked car that is simply large in frame — static the whole
+  clip, or arriving/leaving with an ordinary parking gap, no frame-fill, no
+  jolt — is not contact.
+- People opening doors of, entering, or leaving a NEIGHBORING car are not
+  contact unless event 1 happened to a door aimed at this car.
+- "Probably brushed it" is not an observation. If you cannot name the second
+  and which of the four events you saw, the answer is contact=false.
+
+In "evidence", state the second and which numbered event you observed, or the
+strongest near-miss and which requirement it failed.
+
+threat: "none" if nothing touched the car and nothing threatened it; "low" for
+light contact without damage risk (a lean, a resting door, a hand); "high" for
+forceful or potentially damaging contact (a door swung into this car, a
+vehicle pressing into it, a strike) or deliberate interference with it.
