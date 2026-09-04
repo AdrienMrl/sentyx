@@ -115,6 +115,10 @@ SUPABASE_ISSUER=
 # Telegram alerts are off unless TELEGRAM_CHAT_ID is set AND the bot token is
 # written to /etc/teslcam/telegram.token; then: systemctl restart teslcam-server.
 TELEGRAM_CHAT_ID=
+# Device online/offline watchdog alerts. Set to 0 to keep verdict alerts but
+# silence the "unit is OFFLINE / back online" messages (the transitions are
+# still logged and shown on /admin). Empty = enabled.
+TELEGRAM_DEVICE_ALERTS=
 # Adds upload receipts and full Gemini JSON/token/cost messages. The normal
 # frame+description alert is still sent. Requires Telegram configuration.
 TELEGRAM_DEBUG=0
@@ -206,6 +210,17 @@ if [[ -n "${TELEGRAM_CHAT_ID:-}" ]]; then
     exit 1
   fi
   args+=(-telegram-chat-id "$TELEGRAM_CHAT_ID" -telegram-token-file "$token_file")
+  # Device watchdog alerts: on unless explicitly switched off in server.env.
+  if [[ -n "${TELEGRAM_DEVICE_ALERTS:-}" ]]; then
+    case "$TELEGRAM_DEVICE_ALERTS" in
+      0|false) args+=(-telegram-device-alerts=false) ;;
+      1|true)  args+=(-telegram-device-alerts=true) ;;
+      *)
+        echo "teslcam-server-start: TELEGRAM_DEVICE_ALERTS must be 0/1 (or false/true), got '$TELEGRAM_DEVICE_ALERTS'" >&2
+        exit 1
+        ;;
+    esac
+  fi
 fi
 
 # FCM push notifications: opt-in. Pass the flag only when the path is non-empty

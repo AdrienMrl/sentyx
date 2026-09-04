@@ -4,7 +4,7 @@
 // event with Gemini.
 //
 //	GEMINI_API_KEY=... teslcam-server -data ~/teslcam-data \
-//	  -listen 127.0.0.1:8090 -gemini-model gemini-3.6-flash
+//	  -listen 127.0.0.1:8090 -gemini-model gemini-3.7-flash
 package main
 
 import (
@@ -36,6 +36,7 @@ func main() {
 	supabaseIssuer := flag.String("supabase-issuer", "", "expected iss claim of Supabase user JWTs (requires -supabase-jwks-url)")
 	telegramTokenFile := flag.String("telegram-token-file", "", "file holding the Telegram bot token; set (with -telegram-chat-id) to send live alerts on completed analyses")
 	telegramChatID := flag.String("telegram-chat-id", "", "Telegram chat ID to alert on completed analyses; required with -telegram-token-file")
+	telegramDeviceAlerts := flag.Bool("telegram-device-alerts", true, "send device online/offline watchdog alerts to Telegram; false = verdict alerts only")
 	fcmCredentialsFile := flag.String("fcm-credentials-file", "", "Google service-account JSON for FCM HTTP v1 push notifications; empty = push disabled")
 	flag.Parse()
 	if *dataDir == "" || *listen == "" {
@@ -87,7 +88,9 @@ func main() {
 			log.Fatal(err)
 		}
 		notifier = tg
-		alerter = tg // device-watchdog alerts ride the same bot/chat
+		if *telegramDeviceAlerts {
+			alerter = tg // device-watchdog alerts ride the same bot/chat
+		}
 	}
 	telegramDebug := false
 	if raw := os.Getenv("TELEGRAM_DEBUG"); raw != "" {
