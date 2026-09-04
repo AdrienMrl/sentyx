@@ -134,7 +134,7 @@ class SupabaseAuthClient(
             response.status.value == 401 || response.status.value == 403 -> "Not authorized."
             else -> "Authentication failed (${response.status})."
         }
-        return AuthException(friendly)
+        return AuthException(friendly, httpStatus = response.status.value, errorCode = code)
     }
 
     companion object {
@@ -170,8 +170,26 @@ data class SupabaseSession(
     ): Boolean = nowSeconds >= expiresAtEpochSeconds - skewSeconds
 }
 
-/** Raised by [SupabaseAuthClient] with a message safe to show the user. */
-class AuthException(message: String) : Exception(message)
+/**
+ * Raised by [SupabaseAuthClient] with a message safe to show the user.
+ * [httpStatus]/[errorCode] carry the raw GoTrue response so callers can tell a
+ * definitive rejection apart from a transient server failure; both are null for
+ * errors that never got a GoTrue response (e.g. a 2xx with no session in it).
+ */
+class AuthException(
+    message: String,
+    val httpStatus: Int? = null,
+    val errorCode: String? = null,
+) : Exception(message) {
+    /**
+     * True when GoTrue definitively rejected the request (4xx), meaning a retry
+     * with the same credentials cannot succeed. 408 (timeout) and 429
+     * (rate-limit) are transient despite being 4xx.
+     */
+    val isDefinitiveRejection: Boolean
+        get() = httpStatus != null && httpStatus in 400..499 &&
+            httpStatus != 408 && httpStatus != 429
+}
 
 // ---- Wire DTOs ----------------------------------------------------------------
 

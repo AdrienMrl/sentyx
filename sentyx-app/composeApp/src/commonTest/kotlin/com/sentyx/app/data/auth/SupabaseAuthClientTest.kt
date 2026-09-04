@@ -123,6 +123,33 @@ class SupabaseAuthClientTest {
     }
 
     @Test
+    fun revokedRefreshTokenIsADefinitiveRejection() = runTest {
+        val body = """{"code":400,"error_code":"refresh_token_not_found","msg":"Invalid Refresh Token"}"""
+        val ex = assertFailsWith<AuthException> {
+            clientReturning(HttpStatusCode.BadRequest, body).refresh("dead-refresh")
+        }
+        assertTrue(ex.isDefinitiveRejection, "a 400 on refresh must sign the user out")
+        assertEquals(400, ex.httpStatus)
+        assertEquals("refresh_token_not_found", ex.errorCode)
+    }
+
+    @Test
+    fun serverErrorOnRefreshIsNotADefinitiveRejection() = runTest {
+        val ex = assertFailsWith<AuthException> {
+            clientReturning(HttpStatusCode.ServiceUnavailable, """{"msg":"upstream down"}""").refresh("r")
+        }
+        assertTrue(!ex.isDefinitiveRejection, "a 5xx must NOT sign the user out")
+    }
+
+    @Test
+    fun rateLimitOnRefreshIsNotADefinitiveRejection() = runTest {
+        val ex = assertFailsWith<AuthException> {
+            clientReturning(HttpStatusCode.TooManyRequests, """{"msg":"over limit"}""").refresh("r")
+        }
+        assertTrue(!ex.isDefinitiveRejection, "a 429 must NOT sign the user out")
+    }
+
+    @Test
     fun isNearExpiryRespectsSkew() {
         val s = SupabaseSession(
             accessToken = "a", refreshToken = "r",

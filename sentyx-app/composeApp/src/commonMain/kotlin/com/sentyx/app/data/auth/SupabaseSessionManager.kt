@@ -12,9 +12,13 @@ import kotlinx.coroutines.sync.withLock
 /**
  * Owns the current Supabase session: persists it across launches (via
  * [KeyValueStore]), hands out a valid access token to API callers, and refreshes
- * proactively (single-flight) when the token is expired or near expiry. A refresh
- * failure clears the session — the user is effectively signed out and callers
- * observe [session] going null.
+ * proactively (single-flight) when the token is expired or near expiry.
+ *
+ * Only a *definitive* GoTrue rejection of the refresh token (a 4xx such as
+ * `invalid_grant` — retrying can never succeed) clears the session and signs the
+ * user out ([session] goes null). Transient failures — no network, timeouts,
+ * GoTrue 5xx/429 — propagate to the caller and leave the session intact, so a
+ * flaky connection at the wrong moment cannot log the user out.
  *
  * Persistence is synchronous string storage, so the session restored in the
  * constructor is available immediately (the app's startup route decision reads
@@ -50,8 +54,10 @@ class SupabaseSessionManager(
 
     /**
      * A currently-valid access token, refreshing first if the current one is
-     * expired/near expiry. Null when signed out (or when a needed refresh failed,
-     * which also clears the session).
+     * expired/near expiry. Null when signed out — including when a needed
+     * refresh was definitively rejected, which clears the session. Throws on a
+     * transient refresh failure (offline, timeout, GoTrue 5xx), leaving the
+     * session intact for a later retry.
      */
     suspend fun validAccessToken(): String? {
         val s = _session.value ?: return null
@@ -61,7 +67,9 @@ class SupabaseSessionManager(
 
     /**
      * Force a refresh regardless of expiry — used to recover from a server 401.
-     * Returns the new access token, or null if refresh failed (session cleared).
+     * Returns the new access token; null if GoTrue definitively rejected the
+     * refresh token (session cleared). Throws on a transient failure (session
+     * kept).
      */
     suspend fun forceRefresh(): String? {
         val s = _session.value ?: return null
@@ -86,10 +94,16 @@ class SupabaseSessionManager(
             merged.accessToken
         } catch (e: CancellationException) {
             throw e
-        } catch (e: Throwable) {
+        } catch (e: AuthException) {
+            // Sign out only when GoTrue itself rejected the refresh token —
+            // retrying it can never succeed. Anything transient (5xx, 429, or a
+            // 2xx that failed to parse) propagates with the session kept.
+            if (!e.isDefinitiveRejection) throw e
             clearLocal()
             null
         }
+        // Network/engine errors (offline, DNS, timeout) propagate: the request
+        // that needed the token fails, but the session survives for a retry.
     }
 
     // ---- Persistence --------------------------------------------------------
