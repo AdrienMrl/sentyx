@@ -36,8 +36,8 @@ fronted by the existing Caddy install with automatic TLS:
   `status` / `logs`); target override via `TESLCAM_VPS=user@host`.
 - On the VPS: binary at `/usr/local/bin/teslcam-server`, exec'd through the
   config-driven launcher `/usr/local/bin/teslcam-server-start`; config in
-  `/etc/teslcam/server.env` (GEMINI_API_KEY + GEMINI_MODEL=gemini-3.6-flash,
-  GEMINI_MEDIA_RESOLUTION=low set; TELEGRAM_CHAT_ID empty = alerts off;
+  `/etc/teslcam/server.env` (GEMINI_API_KEY + GEMINI_MODEL=gemini-3.7-flash,
+  GEMINI_MEDIA_RESOLUTION=medium, GEMINI_FPS=3 set; TELEGRAM_CHAT_ID empty = alerts off;
   FCM_CREDENTIALS_FILE=/etc/teslcam/fcm-credentials.json points to the FCM
   service-account JSON — set = Android push enabled, empty = push off); data in
   `/var/lib/teslcam`; agent bearer token in `/etc/teslcam/ingest.token`.
@@ -103,6 +103,38 @@ and the serial console provides passwordless root access over the cable.
 without a Pi: runs first-boot provisioning in a chroot and boots the
 userspace via systemd-nspawn in the VM — only the Pi firmware/EEPROM/dwc2/BLE
 hardware paths need the real board.
+
+## Fleet OTA updates
+
+Units update by **pulling** signed releases from the server; full operator
+workflow in `docs/ota-updates.md`. `cmd/teslcam-ota` is the operator CLI
+(`keygen` / `bundle-app` / `sign-system` / `publish` / `campaign`),
+`cmd/teslcam-updater` is a root service on the Pi installed independently of the
+agent, `internal/ota` verifies Ed25519 manifests, and the server exposes
+`/v1/ota`. Releases are CalVer (`2026.8.1`), but ordering is strictly by the
+manifest `sequence` — a fleet-wide monotonic counter, never the version string.
+Rollouts are campaigns with a percentage and optional device pinning; a rollback
+or three failed devices pauses one.
+
+Constraints to know before changing anything here:
+
+- **The signing private key never reaches the repo, a Pi, or the VPS.** Images
+  carry only the public key at `/etc/teslcam/ota-release.pub.pem`.
+- **An application release swaps binaries via the `/opt/teslcam/current` symlink
+  and never touches the systemd unit**, so an agent flag added later cannot
+  reach a unit already in the field — until `agent.args` ships inside the signed
+  bundle (item 14 of `docs/unmount-hardening-plan.md`), a flag change means a
+  reflash.
+- The updater waits on `/run/teslcam/update-ready.sock` so an install never
+  lands mid-recording, and rolls the symlink back on a failed agent healthcheck.
+- System (APT) releases pin exact package versions and have **no** rollback;
+  recovery is WireGuard/SSH or a reflash.
+
+**The app cannot trigger or display updates.** `FirmwareFlowScreen` and
+`OnboardingFirmwareScreen` are driven only by `DemoDeviceRepository`; in the real
+path `RealDeviceRepository.firmwareUpdate` is permanently null,
+`installFirmwareUpdate()` throws, and `BlePairingService.requiredFirmwareUpdate()`
+returns null. OTA is operator-driven from the CLI only.
 
 ## Dev VM (gadget testing without hardware)
 

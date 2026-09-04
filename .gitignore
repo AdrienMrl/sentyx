@@ -56,3 +56,6 @@ keys/
 bench/features/
 bench/analyzers/vjepa/.venv/
 bench/analyzers/vjepa/**/__pycache__/
+
+# reference papers — re-downloadable PDFs, not worth 9 MB in every clone
+fine-tuning/papers/

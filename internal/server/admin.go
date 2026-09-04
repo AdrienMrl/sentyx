@@ -139,11 +139,11 @@ type adminUpdate struct {
 	// dashboard once re-pushed a known-bad bundle three times).
 	LatestReleaseID string `json:"latestReleaseId,omitempty"`
 	Available       bool   `json:"available"`
-	TargetVersion string `json:"targetVersion,omitempty"`
-	ReleaseID     string `json:"releaseId,omitempty"`
-	State         string `json:"state,omitempty"`
-	ProgressPct   int    `json:"progressPct,omitempty"`
-	Error         string `json:"error,omitempty"`
+	TargetVersion   string `json:"targetVersion,omitempty"`
+	ReleaseID       string `json:"releaseId,omitempty"`
+	State           string `json:"state,omitempty"`
+	ProgressPct     int    `json:"progressPct,omitempty"`
+	Error           string `json:"error,omitempty"`
 }
 
 // handleAdminDevices lists every registered device with its latest heartbeat
