@@ -5,6 +5,9 @@ isolated mirror and rescanned before the visibility change. Vehicle identifiers,
 captures, datasets, STL exports and the virtualenv symlink were removed from
 reachable history. Remaining scanner hits are the documented client/app keys. Original history
 is backed up under the ignored .secrets/publication-backup/ directory.
+Author, committer and tagger emails were rewritten to verified GitHub noreply
+addresses for both contributors; future local commits use the owner's noreply
+address. GitHub email privacy protection remains enabled.
 Validation: go test ./... passed; V-JEPA tests: 66 passed. A local virtualenv
 symlink was also removed from version control and covered by ignore rules.
 The repository has no project LICENSE; publication does not select one.
