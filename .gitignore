@@ -56,7 +56,7 @@ keys/
 .secrets/
 *.private.pem
 bench/features/
-bench/analyzers/vjepa/.venv/
+bench/analyzers/vjepa/.venv
 bench/analyzers/vjepa/**/__pycache__/
 
 # reference papers — re-downloadable PDFs, not worth 9 MB in every clone
@@ -91,8 +91,8 @@ service-account*.json
 *.sqlite-wal
 
 # Python environments and caches across all experiment directories.
-.venv/
-venv/
+.venv
+venv
 __pycache__/
 *.py[cod]
 .pytest_cache/
