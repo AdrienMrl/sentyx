@@ -1,7 +1,9 @@
 Publication execution update — 2026-10-02
 The initial audit below is historical. Publication is now authorized by the
-owner. All remote branches/tags and local development history are being
-sanitized in an isolated mirror before the visibility change. Original history
+owner. All remote branches/tags and local development history were sanitized in an
+isolated mirror and rescanned before the visibility change. Vehicle identifiers,
+captures, datasets, STL exports and the virtualenv symlink were removed from
+reachable history. Remaining scanner hits are the documented client/app keys. Original history
 is backed up under the ignored .secrets/publication-backup/ directory.
 Validation: go test ./... passed; V-JEPA tests: 66 passed. A local virtualenv
 symlink was also removed from version control and covered by ignore rules.
@@ -9,8 +11,8 @@ The repository has no project LICENSE; publication does not select one.
 
 PUBLICATION AUDIT — 2026-10-02
 
-Verdict: current-tree cleanup completed; do not publish the existing Git
-history until the vehicle identifiers and Bluetooth captures are purged.
+Initial verdict before the history rewrite: current-tree cleanup completed;
+publication required purging vehicle identifiers and captures from history.
 No confirmed private account/cloud credential was found in reachable history.
 
 Scope and evidence
