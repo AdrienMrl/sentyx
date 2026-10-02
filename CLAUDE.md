@@ -1,156 +1,107 @@
 # teslcam-exp
 
-## Objective
+## Purpose and architecture
 
-Software that emulates a USB mass-storage device for a Tesla and collects Sentry Mode events in real time, so clips can be analyzed (via Gemini, `internal/gemini`) as soon as they're written rather than after manually pulling the drive.
+Collect Tesla Sentry events while the car writes them: Tesla USB → Linux Pi
+mass-storage gadget → WiFi/LTE → Go server → analyzer. Development supports
+macOS and Linux; USB device mode requires an OTG/dual-role controller on the Pi.
+Mac/PC host-only ports cannot emulate this in software.
 
-Must work on macOS and Linux for development; the in-car component requires Linux gadget-mode hardware (e.g. Raspberry Pi Zero 2 W) since USB device-mode requires a UDC that Mac/PC ports don't have.
+- Agent: sparse exFAT LUN via configfs; read-only live/dirty exFAT parsing;
+  durable SQLite upload spool (`-spool-db`, `-spool-max-mb`). `-select-clips`
+  uploads the trigger clip plus metadata; all clips still extract locally.
+- Ingestion: upsert → content-addressed blobs → manifest → explicit finalize.
+  See `docs/ingestion-api.html` and `docs/api-reference.html`.
+- Server: SQLite storage, selected-clip analysis, optional Telegram/FCM alerts.
+  Gemini remains in production (`internal/gemini`); preserve it until a
+  replacement wins. Research is in `bench/analyzers/vjepa/`; follow `goal.md`
+  for the current objective and allowed approaches, not Gemini prompt tuning.
+- The simulator exercises the live reader locally. Space reclamation while
+  the car writes is correctness-sensitive; see teslausb's image cycling.
 
-## Architecture
+## Development
 
-```
-[Tesla] --USB--> [Pi: gadget agent] --WiFi/LTE--> [Server: Mac/Linux] --> [Gemini analyzer (Go, in-process)]
-```
+- Start the server with `scripts/run-server-local.sh`, not bare `go run`.
+  `ANALYZE=1` enables Gemini; `DATA` and `LISTEN` override defaults.
+- End-to-end ingest client: `cmd/teslcam-test/README.md`.
+- Gadget VM: `teslcam-dev.yaml`; use `limactl start|shell|stop teslcam-dev`.
+  The project is mounted read-write at the same path. `dummy_hcd` plus
+  `g_mass_storage` tests the gadget/host loop, not hardware timing or Tesla
+  compatibility. Validate those with a real Pi in the car.
+- Recreated VMs need a stop/start after provisioning to enter the full
+  `linux-image-arm64` kernel; the cloud kernel lacks gadget modules.
 
-- **Gadget agent (Go, runs on Pi)** — exposes a sparse exFAT image as a USB mass-storage LUN via Linux configfs/gadget. The car writes `TeslaCam/SentryClips/...` to it as a normal drive. Uploads are durable (SQLite spool, `-spool-db`/`-spool-max-mb`): events survive reboots and multi-day offline windows, and are re-finalized on reconnect. With `-select-clips`, only the trigger camera's relevant clip (plus `event.json`/`thumb.png`) is uploaded per event (~30x less LTE data); everything still extracts to the local spool.
-- **Live exFAT reader (Go, shared code)** — reads the backing image out-of-band while the car has it mounted; parses exFAT directly (read-only, tolerant of a dirty/in-flight filesystem) to detect new `SentryClips/<timestamp>/` folders as they're written. This is the core custom component — no existing library does live/dirty exFAT reads.
-- **Server (Go, Mac/Linux)** — receives events over the v1 ingestion protocol (upsert → content-addressed blobs → manifest → explicit finalize; see `docs/api-reference.html` and `docs/ingestion-api.html`), stores them (SQLite), analyzes the most relevant clip of each finalized event, and can send Telegram alerts on completed verdicts (`internal/telegram`; enabled by `-telegram-token-file` + `-telegram-chat-id`).
-- **Simulator (Mac/Linux, dev-only)** — a fake "Tesla writer" that writes realistic SentryClips into a local exFAT image, exercising the same live-reader code without a Pi or car. Primary dev loop.
-- **Analyzer (Go, `internal/gemini`)** — native Gemini client (Files API upload + schema-constrained verdict); records per-event token usage in SQLite, aggregated at `GET /usage` for cost accounting. An external command can be substituted via `-analyze` (the original `experiments/gemini/analyze-video.ts` remains as a standalone experiment).
+## Research
 
-## Key constraints
+Read `goal.md` and the existing `bench/research/` record when resuming.
+Keep the dashboard updated throughout work, including delegated experiments:
+log focus before starting, launches, results/failures, meaningful checkpoints,
+dataset changes, decisions, and blockers. The lead owns these updates.
+Write to this checkout even when computation is remote; keep `goal.json`
+aligned with the objective and actual status. A failed experiment does not
+make the overall goal blocked or complete.
 
-- Only SoCs with a dual-role/OTG USB controller (Pi Zero/3/4, etc.) can act as a USB device; Mac and most PC ports are host-only in silicon. This cannot be worked around in software.
-- For Mac-side testing without a Pi: use a Linux VM (UTM/QEMU) with the `dummy_hcd` kernel module, which emulates a full gadget+host USB loop entirely in software. This validates the configfs/gadget setup and the exFAT reader end-to-end, but not real dwc2/dwc3 hardware timing or actual Tesla MCU compatibility — final validation needs a real Pi Zero 2 W plugged into the car.
-- Reclaiming disk space on the backing image while the car may still be writing to it is the trickiest correctness problem (see teslausb's image-cycling approach for prior art).
+Schema and commands: `docs/research-progress.md`.
+Dashboard: `go run ./cmd/teslcam-research` → http://127.0.0.1:8770
+(read-only; refreshes every 30 seconds).
 
-## Production deployment (VPS)
+## Machines and deployment
 
-The server runs on the DigitalOcean droplet `adri@vps` (161.35.232.246, x86_64),
-fronted by the existing Caddy install with automatic TLS:
+- VPS: `adri@vps` / `161.35.232.246` (x86_64), Caddy TLS;
+  public URL `https://teslcam.161-35-232-246.sslip.io`.
+  Use `scripts/deploy-server.sh setup|deploy|status|logs` or `caddy <host>`;
+  override target with `TESLCAM_VPS=user@host`.
+  Config: `/etc/teslcam/server.env`; data: `/var/lib/teslcam`;
+  bearer token: `/etc/teslcam/ingest.token`. Binary/launcher:
+  `/usr/local/bin/teslcam-server` and `teslcam-server-start`.
+  Only `/healthz` is unauthenticated. Empty `TELEGRAM_CHAT_ID` disables alerts;
+  empty `FCM_CREDENTIALS_FILE` disables Android push.
+- Prototype: Pi 4 B at `adri@sentyx.local`, repo `~/code/sentyx`, Go in
+  `/usr/local/go`. Keep CPU load low: glovebox USB supplies roughly 1–2A.
+  `dwc2,dr_mode=peripheral`, `libcomposite`, UDC `fe980000.usb`.
+  `/var/lib/teslcam/backing.img` **must have an MBR and one exFAT partition**;
+  Tesla ignores superfloppy images (`exfat.LocateVolume`). Real-car operation
+  verified on firmware 2026.14. Account for encrypted clips on newer Ryzen MCU
+  firmware before upload; do not assume every MP4 is plaintext.
+- LTE: metered Hologram dongle on `eth1`; agent fallback uses `internal/lte` /
+  `-lte-iface`. **No general default route**: restricted policy table 101
+  provides fallback routing. Preserve the nftables allowlist (server, dongle
+  LAN/DNS, fixed NTP peers) and disabled background updates.
+  See `hardware/lte-dongle.md`.
+- Field SSH: Pi-initiated WireGuard (`wg1`, `10.8.0.0/24`, UDP 51821) to VPS;
+  per-unit keys provisioned at flash time, never baked in. Cloud firewall must
+  allow UDP 51821. See `docs/remote-access-wireguard.md`.
+- GPU PC: `adri@Adri-PC` (verified SSH via `100.97.2.123`; old LAN address `192.168.1.58` is stale), RTX 4070 SUPER **12 GB VRAM**,
+  Ryzen 5 5500, 32 GB RAM. Check availability and disk capacity before use;
+  C: has previously been nearly full.
 
-- **Public base URL: `https://teslcam.161-35-232-246.sslip.io`** (sslip.io needs
-  no DNS; to switch to `teslcam.adrien.uk`, add a DNS-only A record on
-  Cloudflare → 161.35.232.246 and run `scripts/deploy-server.sh caddy teslcam.adrien.uk`).
-- Manage with `scripts/deploy-server.sh` (`setup` / `deploy` / `caddy <host>` /
-  `status` / `logs`); target override via `TESLCAM_VPS=user@host`.
-- On the VPS: binary at `/usr/local/bin/teslcam-server`, exec'd through the
-  config-driven launcher `/usr/local/bin/teslcam-server-start`; config in
-  `/etc/teslcam/server.env` (GEMINI_API_KEY + GEMINI_MODEL=gemini-3.7-flash,
-  GEMINI_MEDIA_RESOLUTION=medium, GEMINI_FPS=3 set; TELEGRAM_CHAT_ID empty = alerts off;
-  FCM_CREDENTIALS_FILE=/etc/teslcam/fcm-credentials.json points to the FCM
-  service-account JSON — set = Android push enabled, empty = push off); data in
-  `/var/lib/teslcam`; agent bearer token in `/etc/teslcam/ingest.token`.
-- `/healthz` is open; every other endpoint requires the bearer token.
+## Field images and OTA
 
-## Prototype hardware (in-car Pi)
+- Build: `scripts/build-image.sh <backing-gb> <authorized-keys-file>` in the
+  Lima VM; output `build/teslcam-pi4-<version>.img.xz`. Pi OS Lite arm64,
+  SD/USB SSD boot, first-boot sparse backing image, BLE secret provisioning.
+  **Never bake secrets into images.** Smoke-test with `scripts/test-image.sh`;
+  firmware/EEPROM/dwc2/BLE still require hardware validation.
+- Flash: `scripts/flash-image.sh`. USB Ethernet and serial development access
+  are enabled by default. For car-bound units use `TESLCAM_DEV_LINK=0`:
+  the composite gadget is not car-validated and serial gives passwordless root.
+- OTA workflow: `docs/ota-updates.md`; operator CLI `cmd/teslcam-ota`, Pi
+  service `cmd/teslcam-updater`, verification `internal/ota`, API `/v1/ota`.
+  Units pull signed releases; order by monotonic manifest `sequence`, never
+  CalVer text. Rollback or three failed devices pauses a campaign.
+- **Signing private keys never reach the repo, Pi, or VPS.** Images carry
+  only `/etc/teslcam/ota-release.pub.pem`.
+- App releases swap `/opt/teslcam/current`, including signed `agent.args`;
+  current Pi 4 image units read it, so flags can change through OTA. Releases
+  do not replace systemd units; older units need migration to this mechanism.
+  Keep per-unit values in `/etc/teslcam/agent.env`; see `docs/ota-updates.md`.
+- Installs wait for `/run/teslcam/update-ready.sock`; failed agent healthchecks
+  roll back the symlink. APT releases pin exact versions and have **no rollback**;
+  recover with WireGuard/SSH or reflash.
+- The Android app cannot display or trigger real OTA updates; firmware screens
+  use `DemoDeviceRepository`. Real OTA is operator CLI only.
 
-Current prototype is a **Pi 4 Model B** at `ssh adri@sentyx.local` (not the Pi Zero 2 W the
-plan targets — power is the constraint: glovebox USB is ~1–2A, keep CPU load low).
-Configured 2026-07: `dtoverlay=dwc2,dr_mode=peripheral` in `/boot/firmware/config.txt`,
-`dwc2`+`libcomposite` in `/etc/modules`; UDC `fe980000.usb`. Backing image at
-`/var/lib/teslcam/backing.img` — **must be MBR-partitioned** (single exFAT
-partition; the Tesla MCU ignores partitionless "superfloppy" images — see
-`exfat.LocateVolume`). Repo cloned at `~/code/sentyx`; Go 1.25.1 in `/usr/local/go`.
-Verified end-to-end against the real car: enumeration, live dirty-exFAT reads of
-in-flight Sentry events, clean gadget teardown. The car writes plaintext MP4s
-(firmware 2026.14; 2026.20+ encrypts by default on Ryzen-MCU cars — design note:
-detect encrypted clips before upload; possible key-broker decrypt-on-Pi later).
+## Communication
 
-An LTE USB dongle (`eth1`, metered — Hologram SIM) provides upload-only
-fallback internet: no default route ever; only the agent's fallback dialer
-(`internal/lte`, `-lte-iface`) can send over it, an nftables allowlist
-restricts eth1 egress to the server, and background update timers are off.
-Full dongle protocol/API + protection design: `hardware/lte-dongle.md`.
-
-Shell access in the field goes over a WireGuard tunnel (`wg1`, `10.8.0.0/24`,
-udp/51821) that the Pi dials out to the VPS, since carrier CGNAT makes the unit
-unreachable inbound; keys are per-unit and provisioned at flash time, never
-baked into the image. Requires inbound UDP 51821 on the DigitalOcean cloud
-firewall. See `docs/remote-access-wireguard.md`.
-
-## Running the server locally
-
-Use `scripts/run-server-local.sh` (not a bare `go run ./cmd/teslcam-server`) —
-it sets sensible dev defaults (data dir, listen addr).
-`ANALYZE=1 scripts/run-server-local.sh` enables Gemini analysis; override
-`DATA=`/`LISTEN=` via env vars.
-
-## Test client
-
-`cmd/teslcam-test` is a CLI that pushes one real clip through the ingest API
-and prints the analyzer result (library code in `internal/testcli`). Use it to
-exercise the server end-to-end; see `cmd/teslcam-test/README.md`.
-
-## Building field-unit images
-
-`scripts/build-image.sh <backing-gb> <authorized-keys-file>` produces a
-flashable golden image (`build/teslcam-pi4-<version>.img.xz`) for new Pi 4
-units — Raspberry Pi OS Lite arm64 (pinned release) with the agent, scorer,
-dwc2 gadget config, and systemd units baked in; no secrets (BLE onboarding
-provisions on first pairing). The same image flashes to SD card or USB SSD
-(PARTUUID boot + EEPROM SD→USB order). Builds inside the Lima dev VM
-(native arm64 chroot); first boot creates the sparse exFAT backing image.
-`scripts/flash-image.sh` interactively flashes it on macOS (external-disk
-detection, hard confirm). The flash script enables the USB development link by
-default, creating `teslcam-gadget-net` and `teslcam-gadget-console` on the boot
-partition so the Pi exposes USB Ethernet and a serial console; over a
-data-capable USB-C cable, SSH is available at `ssh adri@sentyx.local`. Set
-`TESLCAM_DEV_LINK=0 scripts/flash-image.sh ...` to disable it for a car-bound
-unit because the resulting composite gadget is not yet validated with the car,
-and the serial console provides passwordless root access over the cable.
-`scripts/test-image.sh` smoke-tests a built image
-without a Pi: runs first-boot provisioning in a chroot and boots the
-userspace via systemd-nspawn in the VM — only the Pi firmware/EEPROM/dwc2/BLE
-hardware paths need the real board.
-
-## Fleet OTA updates
-
-Units update by **pulling** signed releases from the server; full operator
-workflow in `docs/ota-updates.md`. `cmd/teslcam-ota` is the operator CLI
-(`keygen` / `bundle-app` / `sign-system` / `publish` / `campaign`),
-`cmd/teslcam-updater` is a root service on the Pi installed independently of the
-agent, `internal/ota` verifies Ed25519 manifests, and the server exposes
-`/v1/ota`. Releases are CalVer (`2026.8.1`), but ordering is strictly by the
-manifest `sequence` — a fleet-wide monotonic counter, never the version string.
-Rollouts are campaigns with a percentage and optional device pinning; a rollback
-or three failed devices pauses one.
-
-Constraints to know before changing anything here:
-
-- **The signing private key never reaches the repo, a Pi, or the VPS.** Images
-  carry only the public key at `/etc/teslcam/ota-release.pub.pem`.
-- **An application release swaps binaries via the `/opt/teslcam/current` symlink
-  and never touches the systemd unit**, so an agent flag added later cannot
-  reach a unit already in the field — until `agent.args` ships inside the signed
-  bundle (item 14 of `docs/unmount-hardening-plan.md`), a flag change means a
-  reflash.
-- The updater waits on `/run/teslcam/update-ready.sock` so an install never
-  lands mid-recording, and rolls the symlink back on a failed agent healthcheck.
-- System (APT) releases pin exact package versions and have **no** rollback;
-  recovery is WireGuard/SSH or a reflash.
-
-**The app cannot trigger or display updates.** `FirmwareFlowScreen` and
-`OnboardingFirmwareScreen` are driven only by `DemoDeviceRepository`; in the real
-path `RealDeviceRepository.firmwareUpdate` is permanently null,
-`installFirmwareUpdate()` throws, and `BlePairingService.requiredFirmwareUpdate()`
-returns null. OTA is operator-driven from the CLI only.
-
-## Dev VM (gadget testing without hardware)
-
-A Lima VM defined in `teslcam-dev.yaml` (Debian 13 arm64, full kernel, Go, exfatprogs; ~3 GB on disk). Verified working: `dummy_hcd` + `g_mass_storage` emulate the full USB gadget loop in software — a backing image exposed as a gadget enumerates as `/dev/sda`, mounts, and its writes are readable out-of-band from the raw image.
-
-- `limactl start teslcam-dev` / `limactl shell teslcam-dev` / `limactl stop teslcam-dev`
-- The project dir is mounted read-write at the same path inside the VM.
-- The genericcloud image boots a "cloud" kernel that lacks gadget modules; provisioning installs `linux-image-arm64` and the cloud kernel has been removed. If recreating the VM from the yaml, stop/start once after first boot to enter the full kernel.
-
-## Phased plan
-
-1. exFAT live-reader + Mac-side simulator (no hardware needed)
-2. Pi gadget agent (configfs mass storage, dwc2 overlay, systemd unit)
-3. Server + Gemini integration (SQLite, webhook, push notification)
-4. Hardening (power-cut resilience, read-only rootfs, space reclamation, LTE/hotspot connectivity)
-
-## Personality
-
-Write user-facing explanations in clear, concise language without reducing technical precision. Prefer concrete wording over unexplained jargon. Use established domain terminology when it is the most precise choice, and briefly define it when the intended audience may not know it. Preserve material evidence, constraints, tradeoffs, caveats, and uncertainty. Do not rewrite code, identifiers, commands, quoted text, or prescribed formats merely to satisfy this style rule. Aim for an output of 3-5 sentences max but at your discretion.
+Be clear, concise, and technically precise. Preserve evidence, uncertainty,
+and material constraints; usually aim for 3–5 sentences.

@@ -26,8 +26,8 @@ testdata/fixtures/*.img
 # (large video + contains real GPS/location metadata — never commit)
 testdata/sentry-samples/
 
-# benchmark footage and past runs. bench/dataset.json (the labels) IS
-# committed; the clips it points at are re-fetched with teslcam-bench fetch.
+# Benchmark footage, labels, and runs are local data.
+# Rebuild a dataset with teslcam-bench add/fetch; see bench/README.md.
 bench/clips/
 bench/results/
 
@@ -36,6 +36,8 @@ third_party/
 
 # stray compiled agent binary at repo root (rebuild: go build ./cmd/teslcam-agent)
 /teslcam-agent
+# stray compiled research tracker at repo root (rebuild: go build ./cmd/teslcam-research)
+/teslcam-research
 supabase/.temp/
 
 # experiment build artifacts (module-named binaries)
@@ -59,3 +61,135 @@ bench/analyzers/vjepa/**/__pycache__/
 
 # reference papers — re-downloadable PDFs, not worth 9 MB in every clone
 fine-tuning/papers/
+
+# Local environment variants (examples remain publishable).
+.env.*
+*.env.*
+!.env.example
+!*.env.example
+
+# Private keys, credentials, packet captures, and local state.
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.token
+*-service-account*.json
+service-account*.json
+*.btsnoop
+*.pcap
+*.pcapng
+*.mitm
+*.log
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+*.sqlite-shm
+*.sqlite-wal
+
+# Python environments and caches across all experiment directories.
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+
+# Local assistant state and scratch output.
+.claude/
+/tmp/
+/work/
+/output/
+/purchase-note.txt
+/calib/out/
+
+# Private field imports, derived footage, and generated experiment artifacts.
+/bench/incoming/
+/bench/reports/
+/bench/clips-removed/
+bench/experiments/**/*.jpg
+bench/experiments/**/*.jpeg
+bench/experiments/**/*.png
+bench/experiments/**/*.webp
+bench/experiments/**/*.npy
+bench/experiments/**/*.npz
+bench/experiments/**/*.pt
+bench/experiments/**/*.pth
+bench/experiments/**/*.safetensors
+# Unreal simulator and training-data project are local-only.
+/sim/unreal/
+
+# Private PEM keys; public verification keys may be committed.
+*.pem
+!*.pub.pem
+!*public-key.pem
+!*.public.pem
+
+# Finder resource forks.
+._*
+
+# Dataset collections and label/manifests (source code remains publishable).
+datasets/
+dataset*.json
+*-dataset.json
+*.parquet
+*.arrow
+*.tfrecord
+*.tfrecords
+*.hdf5
+*.h5
+
+# Research outputs and downloaded reference pages, rather than experiment code.
+bench/experiments/**/*.json
+bench/experiments/**/*.jsonl
+bench/experiments/**/*.csv
+/bench/research/papers/
+
+# Model weights, feature arrays, archives, and disk images.
+*.npy
+*.npz
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.onnx
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.gz
+*.xz
+*.7z
+*.img
+*.iso
+*.qcow2
+
+# Generated CAD exports, concept renders, and binary 3D assets.
+*.stl
+*.step
+*.stp
+*.fbx
+*.blend
+*.glb
+*.gltf
+*.uasset
+*.umap
+cad/concepts/**/*.png
+cad/concepts/**/*.jpg
+cad/concepts/**/*.jpeg
+
+# Other captured media.
+*.mov
+*.mkv
+*.avi
+*.webm
+*.m4v
+*.wav
+*.mp3
+
+# Local research runs include one-off scripts with embedded private datasets.
+# Reusable analyzer implementations live in bench/analyzers/.
+/bench/experiments/

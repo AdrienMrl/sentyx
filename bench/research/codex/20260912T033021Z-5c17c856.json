@@ -1,0 +1,19 @@
+{
+  "id": "20260912T033021Z-5c17c856",
+  "time": "2026-09-12T03:30:21.75127Z",
+  "model": "gpt-6-astra",
+  "context": "Reach \u003c5% false positive and \u003c50% false negative on contact detection with a frozen V-JEPA 2.1 encoder plus a small trained head, on a high-quality mixed synthetic+real dataset.",
+  "images": [
+    "/tmp/audit_deep/yt-yfddzdfctcw-tesla-sentry-mode-deterred-thieves.png"
+  ],
+  "prompt": "You are re-auditing an ambiguous dataset label, blind to any model score. The attached image is a dense contact sheet of 48 frames sampled evenly across one Tesla Sentry Mode clip, ordered left-to-right then top-to-bottom (chronological, 6 columns x 8 rows). A previous 16-frame pass could not tell whether anything touched the car. Decide now; if contact is even momentary or partial, say so. Reply with exactly:\nVERDICT: contact | no_contact | indeterminate\nCLOSEST_MOMENT: frame number(s) of nearest approach or contact (1-48), else none\nACTOR: who or what is involved, or none\nVISIBILITY: anything occluded, off-camera, or between frames\nCONFIDENCE: low | medium | high\nEVIDENCE: one or two sentences naming what is visible",
+  "response": "VERDICT: contact\nCLOSEST_MOMENT: 10-22\nACTOR: Person in a dark jacket beside the white car\nVISIBILITY: Hand-to-handle interface is partly obscured by the hand and limited resolution; sampled frames cannot establish continuous contact.\nCONFIDENCE: high\nEVIDENCE: The person reaches toward the white car’s door handle and visibly places their hand against or around it across multiple frames. The hand subsequently withdraws as the person walks away.",
+  "duration_sec": 13.475015208,
+  "exit_code": 0,
+  "session_id": "01a093aa-533d-7210-94f0-9c2c2e3638dd",
+  "rollout_path": "/Users/adri/.codex/sessions/2026/09/11/rollout-2026-09-11T21-30-08-01a093aa-533d-7210-94f0-9c2c2e3638dd.jsonl",
+  "tags": [
+    "label-audit",
+    "deep"
+  ]
+}

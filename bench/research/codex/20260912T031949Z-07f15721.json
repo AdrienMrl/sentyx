@@ -1,0 +1,19 @@
+{
+  "id": "20260912T031949Z-07f15721",
+  "time": "2026-09-12T03:19:49.636842Z",
+  "model": "gpt-6-astra",
+  "context": "Reach \u003c5% false positive and \u003c50% false negative on contact detection with a frozen V-JEPA 2.1 encoder plus a small trained head, on a high-quality mixed synthetic+real dataset.",
+  "images": [
+    "/tmp/audit_deep/rd-eoci60-sentry-mode-vs-group-of-future-tesla-owners.png"
+  ],
+  "prompt": "You are re-auditing an ambiguous dataset label, blind to any model score. The attached image is a dense contact sheet of 48 frames sampled evenly across one Tesla Sentry Mode clip, ordered left-to-right then top-to-bottom (chronological, 6 columns x 8 rows). A previous 16-frame pass could not tell whether anything touched the car. Decide now; if contact is even momentary or partial, say so. Reply with exactly:\nVERDICT: contact | no_contact | indeterminate\nCLOSEST_MOMENT: frame number(s) of nearest approach or contact (1-48), else none\nACTOR: who or what is involved, or none\nVISIBILITY: anything occluded, off-camera, or between frames\nCONFIDENCE: low | medium | high\nEVIDENCE: one or two sentences naming what is visible",
+  "response": "VERDICT: indeterminate\nCLOSEST_MOMENT: 19-25\nACTOR: Person wearing a gray shirt with “66” on the back\nVISIBILITY: The car’s surface and the person’s lower body and nearest hand are outside the frame; brief contact between samples cannot be excluded.\nCONFIDENCE: low\nEVIDENCE: The person passes very close to the camera, then exits left. No hand-to-car or body-to-car contact is visible, but the potential contact area is off-camera.",
+  "duration_sec": 13.439795083,
+  "exit_code": 0,
+  "session_id": "01a093a0-ae3c-7d40-9223-9b190ec76b16",
+  "rollout_path": "/Users/adri/.codex/sessions/2026/09/11/rollout-2026-09-11T21-19-36-01a093a0-ae3c-7d40-9223-9b190ec76b16.jsonl",
+  "tags": [
+    "label-audit",
+    "deep"
+  ]
+}

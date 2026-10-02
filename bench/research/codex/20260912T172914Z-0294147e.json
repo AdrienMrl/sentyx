@@ -1,0 +1,22 @@
+{
+  "id": "20260912T172914Z-0294147e",
+  "time": "2026-09-12T17:29:14.181726Z",
+  "model": "gpt-6-astra",
+  "context": "Reach \u003c5% false positive and \u003c50% false negative on contact detection with a frozen V-JEPA 2.1 encoder plus a small trained head, on a high-quality mixed synthetic+real dataset.",
+  "images": [
+    "/tmp/piaudit/2026-09-08_13-10-58.png",
+    "/tmp/piaudit/2026-09-08_13-24-10.png",
+    "/tmp/piaudit/2026-09-08_16-46-53.png",
+    "/tmp/piaudit/2026-09-09_15-37-03.png",
+    "/tmp/piaudit/2026-09-09_15-43-43.png"
+  ],
+  "prompt": "Attached are 5 contact sheets, each 48 frames sampled evenly (6 columns x 8 rows, chronological) from a single Tesla Sentry Mode field clip recorded by the owner's own car. For EACH image, decide whether anything physically touched the car anywhere in the clip. Output exactly one line per event:\n\u003cevent\u003e: VERDICT=contact|near_miss|quiet|unclear; ACTOR=\u003cwho/what or none\u003e; CONFIDENCE=low|medium|high; NOTE=\u003cup to 12 words\u003e\nDefinitions: contact = something physically touches the car; near_miss = a person or object approaches closely but no contact is visible; quiet = nobody/nothing approaches; unclear = cannot tell.\nImages:\nImage 1: 2026-09-08_13-10-58\nImage 2: 2026-09-08_13-24-10\nImage 3: 2026-09-08_16-46-53\nImage 4: 2026-09-09_15-37-03\nImage 5: 2026-09-09_15-43-43\n",
+  "response": "2026-09-08_13-10-58: VERDICT=near_miss; ACTOR=pedestrian; CONFIDENCE=medium; NOTE=Person passes close along left edge; no visible touch.\n2026-09-08_13-24-10: VERDICT=quiet; ACTOR=none; CONFIDENCE=high; NOTE=Parked vehicles remain stationary; no visible approach.\n2026-09-08_16-46-53: VERDICT=quiet; ACTOR=none; CONFIDENCE=high; NOTE=Adjacent SUV remains stationary; no visible approach or contact.\n2026-09-09_15-37-03: VERDICT=quiet; ACTOR=none; CONFIDENCE=high; NOTE=Adjacent SUV remains parked; nobody visibly approaches the recording car.\n2026-09-09_15-43-43: VERDICT=near_miss; ACTOR=pedestrians and shopping cart; CONFIDENCE=medium; NOTE=Pedestrians and cart pass nearby; no visible contact with recording car.",
+  "duration_sec": 74.883624083,
+  "exit_code": 0,
+  "session_id": "01a096a9-6872-7f51-a3ac-e40c89029986",
+  "rollout_path": "/Users/adri/.codex/sessions/2026/09/12/rollout-2026-09-12T11-27-59-01a096a9-6872-7f51-a3ac-e40c89029986.jsonl",
+  "tags": [
+    "pi-audit"
+  ]
+}

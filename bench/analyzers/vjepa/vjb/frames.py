@@ -8,6 +8,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 
 import numpy as np
 
@@ -23,24 +24,57 @@ def ffmpeg_exe():
     return imageio_ffmpeg.get_ffmpeg_exe()
 
 
+# The fraction of frame height the `bottom` mode keeps. In Sentry footage the
+# car's own body edge runs along the bottom of every camera view and a person
+# touching it is in the lower half, so the contact zone is always in this band.
+BOTTOM_FRACTION = 0.55
+
+# Renamed modes. The old name stays accepted so a cache whose meta.json still
+# says "full" keeps loading; it is normalized wherever a crop spec is read.
+CROP_ALIASES = {"full": "squash"}
+
+_warned_aliases = set()
+
+
+def normalize_crop(crop):
+    """Map a deprecated crop name onto its current one, noting it once."""
+    if crop not in CROP_ALIASES:
+        return crop
+    new = CROP_ALIASES[crop]
+    if crop not in _warned_aliases:
+        _warned_aliases.add(crop)
+        print(f"note: crop {crop!r} was renamed to {new!r}; the old name still works", file=sys.stderr)
+    return new
+
+
 def crop_filter(crop, size):
     """Translate a --crop spec into an ffmpeg -vf chain producing size x size.
 
-    full      squash the whole frame to a square (keeps every pixel, distorts aspect)
+    squash    squash the whole frame to a square (keeps every pixel, distorts aspect)
     center    resize the short side to `size`, center-crop (what the HF processor does)
+    bottom    keep the bottom BOTTOM_FRACTION of the height at full width -- the
+              contact zone -- then squash it to a square, doubling the pixels on it
     band:A,B  keep rows A..B (fractions of height, e.g. 0.35,1.0 for the lower
               band where the ego body sits), then squash to a square
     """
-    if crop == "full":
+    crop = normalize_crop(crop)
+    if crop == "squash":
         return f"scale={size}:{size}:flags=area"
     if crop == "center":
         return f"scale='if(gt(iw,ih),-2,{size})':'if(gt(iw,ih),{size},-2)':flags=area,crop={size}:{size}"
+    if crop == "bottom":
+        return band_filter(1 - BOTTOM_FRACTION, 1.0, size)
     if crop.startswith("band:"):
         a, b = (float(x) for x in crop[5:].split(","))
-        if not (0 <= a < b <= 1):
-            raise ValueError(f"band fractions must satisfy 0 <= A < B <= 1, got {crop}")
-        return f"crop=iw:ih*{b - a}:0:ih*{a},scale={size}:{size}:flags=area"
-    raise ValueError(f"unknown crop {crop!r}; expected full, center, or band:A,B")
+        return band_filter(a, b, size)
+    raise ValueError(f"unknown crop {crop!r}; expected squash, center, bottom, or band:A,B")
+
+
+def band_filter(a, b, size):
+    """Keep rows a..b (fractions of height, full width), then squash to a square."""
+    if not (0 <= a < b <= 1):
+        raise ValueError(f"band fractions must satisfy 0 <= A < B <= 1, got {a},{b}")
+    return f"crop=iw:ih*{b - a}:0:ih*{a},scale={size}:{size}:flags=area"
 
 
 def probe(clip):

@@ -1,0 +1,18 @@
+{
+  "id": "20260912T025830Z-4f0f68af",
+  "time": "2026-09-12T02:58:30.500751Z",
+  "model": "gpt-6-astra",
+  "context": "Reach \u003c5% false positive and \u003c50% false negative on contact detection with a frozen V-JEPA 2.1 encoder plus a small trained head, on a high-quality mixed synthetic+real dataset.",
+  "images": [
+    "/tmp/audit/pi-2026-09-02_15-34-38.png"
+  ],
+  "prompt": "You are auditing one dataset label visually, blind to any model score. The attached image is a contact sheet of 16 frames sampled evenly across a single Tesla Sentry Mode clip, ordered left-to-right then top-to-bottom (chronological). Decide whether anything physically touches the car anywhere in the clip. Reply with exactly these lines:\nVERDICT: contact | no_contact | indeterminate\nACTOR: who or what is involved (person, cart, animal, branch, camera shake, or none)\nTIME: approximate second or moment of any contact, else none\nVISIBILITY: anything occluded, off-camera, or too brief to judge\nCONFIDENCE: low | medium | high\nEVIDENCE: one or two sentences naming what is visible",
+  "response": "VERDICT: no_contact\nACTOR: none\nTIME: none\nVISIBILITY: The passing sedan obscures the near side initially; the gap beside the Tesla is off-camera, and brief contact between samples cannot be ruled out.\nCONFIDENCE: medium\nEVIDENCE: A maroon sedan passes close to the camera and clears the view; a white SUV remains farther away. No visible touching, impact, or displacement indicates contact.",
+  "duration_sec": 13.915041625,
+  "exit_code": 0,
+  "session_id": "01a0938d-2e36-7b31-938e-bdbb979c6e24",
+  "rollout_path": "/Users/adri/.codex/sessions/2026/09/11/rollout-2026-09-11T20-58-18-01a0938d-2e36-7b31-938e-bdbb979c6e24.jsonl",
+  "tags": [
+    "label-audit"
+  ]
+}

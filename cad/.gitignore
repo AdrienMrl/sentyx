@@ -1,0 +1,6 @@
+.venv/
+__pycache__/
+*.pyc
+
+# Generated exports; keep source models under version control instead.
+exports/

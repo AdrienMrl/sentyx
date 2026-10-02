@@ -1,0 +1,19 @@
+{
+  "id": "20260912T032847Z-1cf16154",
+  "time": "2026-09-12T03:28:47.2238Z",
+  "model": "gpt-6-astra",
+  "context": "Reach \u003c5% false positive and \u003c50% false negative on contact detection with a frozen V-JEPA 2.1 encoder plus a small trained head, on a high-quality mixed synthetic+real dataset.",
+  "images": [
+    "/tmp/audit_deep/yt-lliyzlqaawa-sentry-mode-don-t-care-about-360-degrees-cam.png"
+  ],
+  "prompt": "You are re-auditing an ambiguous dataset label, blind to any model score. The attached image is a dense contact sheet of 48 frames sampled evenly across one Tesla Sentry Mode clip, ordered left-to-right then top-to-bottom (chronological, 6 columns x 8 rows). A previous 16-frame pass could not tell whether anything touched the car. Decide now; if contact is even momentary or partial, say so. Reply with exactly:\nVERDICT: contact | no_contact | indeterminate\nCLOSEST_MOMENT: frame number(s) of nearest approach or contact (1-48), else none\nACTOR: who or what is involved, or none\nVISIBILITY: anything occluded, off-camera, or between frames\nCONFIDENCE: low | medium | high\nEVIDENCE: one or two sentences naming what is visible",
+  "response": "VERDICT: indeterminate\nCLOSEST_MOMENT: 33-44\nACTOR: Person bending beside the camera-side vehicle\nVISIBILITY: The reaching hand and possible contact surface are partly obscured at the left edge; contact between sampled frames cannot be excluded.\nCONFIDENCE: low\nEVIDENCE: The person bends and reaches toward the left foreground, very near the camera-side vehicle. The frames do not clearly show whether the hand touches its surface.",
+  "duration_sec": 16.928009584,
+  "exit_code": 0,
+  "session_id": "01a093a8-d47f-7cd3-b055-82c9a25557a6",
+  "rollout_path": "/Users/adri/.codex/sessions/2026/09/11/rollout-2026-09-11T21-28-30-01a093a8-d47f-7cd3-b055-82c9a25557a6.jsonl",
+  "tags": [
+    "label-audit",
+    "deep"
+  ]
+}

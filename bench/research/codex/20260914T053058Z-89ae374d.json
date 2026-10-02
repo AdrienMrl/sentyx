@@ -1,0 +1,22 @@
+{
+  "id": "20260914T053058Z-89ae374d",
+  "time": "2026-09-14T05:30:58.031429Z",
+  "model": "gpt-6-astra",
+  "context": "Reach \u003c5% false positive and \u003c50% false negative on contact detection with a frozen V-JEPA 2.1 encoder plus a small trained head, on a high-quality mixed synthetic+real dataset.",
+  "images": [
+    "/tmp/neg2/yt-kaeo2g0xzac-tesla-sentry-mode-launch-viewer-caught-on-ca.png",
+    "/tmp/neg2/yt-kolh3x0ycd4.png",
+    "/tmp/neg2/yt-kzv7h4fn__e.png",
+    "/tmp/neg2/yt-odsuohovesw.png",
+    "/tmp/neg2/yt-oefzicma8du.png"
+  ],
+  "prompt": "Attached are 5 dense contact sheets, each 96 frames (8 columns x 12 rows, chronological) of one Tesla Sentry clip LABELLED as containing NO contact (a near-miss or quiet event). For EACH, decide whether the car is actually physically touched anywhere in the clip. Output one line per image:\n\u003cname\u003e: EVIDENCE=direct|indirect|indeterminate|none; CONFIDENCE=low|medium|high; NOTE=\u003cup to 15 words\u003e\ndirect = a touch is visibly happening; indirect = aftermath/motion implies a touch; none = clearly nothing touches; indeterminate = cannot tell.\nImages:\nImage 1: yt-kaeo2g0xzac-tesla-sentry-mode-launch-viewer-caught-on-ca\nImage 2: yt-kolh3x0ycd4\nImage 3: yt-kzv7h4fn__e\nImage 4: yt-odsuohovesw\nImage 5: yt-oefzicma8du\n",
+  "response": "yt-kaeo2g0xzac-tesla-sentry-mode-launch-viewer-caught-on-ca: EVIDENCE=none; CONFIDENCE=high; NOTE=Vehicles remain separated; roadside flashes show no contact with the recording car.\nyt-kolh3x0ycd4: EVIDENCE=none; CONFIDENCE=medium; NOTE=Vehicles pass and change lanes; no visible impact or contact with the recording car.\nyt-kzv7h4fn__e: EVIDENCE=indeterminate; CONFIDENCE=medium; NOTE=Person and scooter approach closely; potential contact falls below the camera view.\nyt-odsuohovesw: EVIDENCE=none; CONFIDENCE=medium; NOTE=Cars pass alongside; no visible touching, impact, or abrupt camera displacement.\nyt-oefzicma8du: EVIDENCE=none; CONFIDENCE=medium; NOTE=White car enters ahead from the right; visible separation persists without apparent impact.",
+  "duration_sec": 150.908144666,
+  "exit_code": 0,
+  "session_id": "01a09e63-5d21-72b3-8c38-2d340d7f27fb",
+  "rollout_path": "/Users/adri/.codex/sessions/2026/09/14/rollout-2026-09-14T00-28-27-01a09e63-5d21-72b3-8c38-2d340d7f27fb.jsonl",
+  "tags": [
+    "neg-dense-annot"
+  ]
+}

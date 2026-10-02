@@ -2,7 +2,7 @@
 
 **Status:** working. `experiments/tesla-clip/dashcam` lists the car's Sentry
 events, lets you pick one with the arrow keys, and writes the clip to the Mac as
-an `.mp4`. First proven 2026-07-24 against VIN `<REDACTED_VEHICLE_IDENTIFIER>`.
+an `.mp4`. First proven 2026-07-24 against VIN `<YOUR_VIN>`.
 
 This document explains *how* and *why* the pieces fit together, for whoever
 picks this up later (including us). The terse operational reference —

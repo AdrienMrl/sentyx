@@ -1,0 +1,18 @@
+{
+  "id": "20260912T025908Z-dbfdc2ad",
+  "time": "2026-09-12T02:59:08.742036Z",
+  "model": "gpt-6-astra",
+  "context": "Reach \u003c5% false positive and \u003c50% false negative on contact detection with a frozen V-JEPA 2.1 encoder plus a small trained head, on a high-quality mixed synthetic+real dataset.",
+  "images": [
+    "/tmp/audit/rd-bds11x-respectful-family-telling-the-kid-not-to-tou.png"
+  ],
+  "prompt": "You are auditing one dataset label visually, blind to any model score. The attached image is a contact sheet of 16 frames sampled evenly across a single Tesla Sentry Mode clip, ordered left-to-right then top-to-bottom (chronological). Decide whether anything physically touches the car anywhere in the clip. Reply with exactly these lines:\nVERDICT: contact | no_contact | indeterminate\nACTOR: who or what is involved (person, cart, animal, branch, camera shake, or none)\nTIME: approximate second or moment of any contact, else none\nVISIBILITY: anything occluded, off-camera, or too brief to judge\nCONFIDENCE: low | medium | high\nEVIDENCE: one or two sentences naming what is visible",
+  "response": "VERDICT: indeterminate\nACTOR: person—adult and child\nTIME: middle and later frames, especially frames 10–14\nVISIBILITY: Hands approach the recording car at the left edge, but the possible contact points are obscured or outside the frame.\nCONFIDENCE: medium\nEVIDENCE: The child extends a hand toward the recording car while the adult repeatedly leans close. The sampled frames do not clearly show whether either person's hand touches it.",
+  "duration_sec": 16.842880292,
+  "exit_code": 0,
+  "session_id": "01a0938d-b51e-7350-a207-f48929173bb0",
+  "rollout_path": "/Users/adri/.codex/sessions/2026/09/11/rollout-2026-09-11T20-58-52-01a0938d-b51e-7350-a207-f48929173bb0.jsonl",
+  "tags": [
+    "label-audit"
+  ]
+}

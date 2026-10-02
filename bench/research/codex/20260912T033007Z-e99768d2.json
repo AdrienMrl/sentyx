@@ -1,0 +1,19 @@
+{
+  "id": "20260912T033007Z-e99768d2",
+  "time": "2026-09-12T03:30:07.760414Z",
+  "model": "gpt-6-astra",
+  "context": "Reach \u003c5% false positive and \u003c50% false negative on contact detection with a frozen V-JEPA 2.1 encoder plus a small trained head, on a high-quality mixed synthetic+real dataset.",
+  "images": [
+    "/tmp/audit_deep/yt-y88ho9cmk0y-idiot-vs-model-3-sentry.png"
+  ],
+  "prompt": "You are re-auditing an ambiguous dataset label, blind to any model score. The attached image is a dense contact sheet of 48 frames sampled evenly across one Tesla Sentry Mode clip, ordered left-to-right then top-to-bottom (chronological, 6 columns x 8 rows). A previous 16-frame pass could not tell whether anything touched the car. Decide now; if contact is even momentary or partial, say so. Reply with exactly:\nVERDICT: contact | no_contact | indeterminate\nCLOSEST_MOMENT: frame number(s) of nearest approach or contact (1-48), else none\nACTOR: who or what is involved, or none\nVISIBILITY: anything occluded, off-camera, or between frames\nCONFIDENCE: low | medium | high\nEVIDENCE: one or two sentences naming what is visible",
+  "response": "VERDICT: indeterminate\nCLOSEST_MOMENT: 30-33\nACTOR: Person wearing a light shirt and jeans\nVISIBILITY: Hands and feet are partly cropped near the car; the closest approach obscures the potential contact point, and contact could occur between sampled frames.\nCONFIDENCE: medium\nEVIDENCE: The person approaches the car with an arm extended toward it, then a jeans-clad leg fills much of frame 33. These frames show very close proximity but do not clearly establish whether the person touches the car.",
+  "duration_sec": 17.502274292,
+  "exit_code": 0,
+  "session_id": "01a093aa-106c-7c83-b002-23927b140c70",
+  "rollout_path": "/Users/adri/.codex/sessions/2026/09/11/rollout-2026-09-11T21-29-51-01a093aa-106c-7c83-b002-23927b140c70.jsonl",
+  "tags": [
+    "label-audit",
+    "deep"
+  ]
+}

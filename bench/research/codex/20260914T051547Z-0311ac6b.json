@@ -1,0 +1,30 @@
+{
+  "id": "20260914T051547Z-0311ac6b",
+  "time": "2026-09-14T05:15:47.751653Z",
+  "model": "gpt-6-astra",
+  "context": "Reach \u003c5% false positive and \u003c50% false negative on contact detection with a frozen V-JEPA 2.1 encoder plus a small trained head, on a high-quality mixed synthetic+real dataset.",
+  "images": [
+    "/tmp/ddann/garage-mustang-door.png",
+    "/tmp/ddann/rd-18onveu-littering-door-ding-combo-while-looking-into.png",
+    "/tmp/ddann/rd-1b9sobq-identify-car-parking-lot-ding.png",
+    "/tmp/ddann/rd-1baaqtc-door-ding-found-culprit-what-would-you-do-ne.png",
+    "/tmp/ddann/rd-1j18tgo-i-caught-the-culprit-who-scratched-my-car.png",
+    "/tmp/ddann/rd-1kv9pom-women-shakes-her-butt-and-opens-her-door-int.png",
+    "/tmp/ddann/rd-1l1b5ys-complete-dumbass-parks-into-non-existent-spo.png",
+    "/tmp/ddann/rd-1pnf9hq-door-ding.png",
+    "/tmp/ddann/rd-dh49wk-mr-piggy-door-ding.png",
+    "/tmp/ddann/rd-fcirxe-door-ding-why-people-are-so-careless.png",
+    "/tmp/ddann/rd-mlqx65-porsche-driver-throws-his-door-open-and-ding.png",
+    "/tmp/ddann/yt-7g18ntq8qf0-tesla-sentry-mode-right-camera-car-doors-ope.png",
+    "/tmp/ddann/yt-cijilmtxrq4-tesla-sentry-mode-catches-discourteous-behav.png"
+  ],
+  "prompt": "Attached are 13 contact sheets, each 48 frames (6 columns x 8 rows, chronological, frame 1 top-left to frame 48 bottom-right) of a single Tesla Sentry clip that is labelled as containing a door ding (something physically touched the car). For EACH image, identify the frame number (1-48) where the contact occurs - the moment the door/object meets the car body. If contact is not visible in the sampled frames, say none. Output exactly one line per image:\n\u003cname\u003e: FRAME=\u003c1-48 or none\u003e; CONFIDENCE=low|medium|high; NOTE=\u003cup to 15 words describing where you see contact\u003e\nImages:\nImage 1: garage-mustang-door\nImage 2: rd-18onveu-littering-door-ding-combo-while-looking-into\nImage 3: rd-1b9sobq-identify-car-parking-lot-ding\nImage 4: rd-1baaqtc-door-ding-found-culprit-what-would-you-do-ne\nImage 5: rd-1j18tgo-i-caught-the-culprit-who-scratched-my-car\nImage 6: rd-1kv9pom-women-shakes-her-butt-and-opens-her-door-int\nImage 7: rd-1l1b5ys-complete-dumbass-parks-into-non-existent-spo\nImage 8: rd-1pnf9hq-door-ding\nImage 9: rd-dh49wk-mr-piggy-door-ding\nImage 10: rd-fcirxe-door-ding-why-people-are-so-careless\nImage 11: rd-mlqx65-porsche-driver-throws-his-door-open-and-ding\nImage 12: yt-7g18ntq8qf0-tesla-sentry-mode-right-camera-car-doors-ope\nImage 13: yt-cijilmtxrq4-tesla-sentry-mode-catches-discourteous-behav\n",
+  "response": "garage-mustang-door: FRAME=none; CONFIDENCE=high; NOTE=Open door remains away from the visible recording-car boundary.\nrd-18onveu-littering-door-ding-combo-while-looking-into: FRAME=none; CONFIDENCE=low; NOTE=Door approaches the left boundary, but contact is not distinguishable.\nrd-1b9sobq-identify-car-parking-lot-ding: FRAME=none; CONFIDENCE=medium; NOTE=People and the open door obscure any potential contact point.\nrd-1baaqtc-door-ding-found-culprit-what-would-you-do-ne: FRAME=none; CONFIDENCE=medium; NOTE=Open door extends leftward; cropping and blur prevent seeing physical contact.\nrd-1j18tgo-i-caught-the-culprit-who-scratched-my-car: FRAME=10; CONFIDENCE=low; NOTE=Open door’s outer edge appears to meet the narrow Tesla body strip at left.\nrd-1kv9pom-women-shakes-her-butt-and-opens-her-door-int: FRAME=8; CONFIDENCE=medium; NOTE=Door’s outer edge meets the visible Tesla body strip along the left boundary.\nrd-1l1b5ys-complete-dumbass-parks-into-non-existent-spo: FRAME=none; CONFIDENCE=medium; NOTE=Door opens close to the camera, but no contact point is visible.\nrd-1pnf9hq-door-ding: FRAME=31; CONFIDENCE=medium; NOTE=Fully opened door’s left edge appears against the Tesla’s white body strip.\nrd-dh49wk-mr-piggy-door-ding: FRAME=none; CONFIDENCE=low; NOTE=Door reaches the left margin, but the possible contact point remains obscured.\nrd-fcirxe-door-ding-why-people-are-so-careless: FRAME=none; CONFIDENCE=medium; NOTE=Open door is visible; its meeting point with the recording car is not.\nrd-mlqx65-porsche-driver-throws-his-door-open-and-ding: FRAME=none; CONFIDENCE=medium; NOTE=Door swings outward, but contact with the Tesla is not visible.\nyt-7g18ntq8qf0-tesla-sentry-mode-right-camera-car-doors-ope: FRAME=none; CONFIDENCE=low; NOTE=Doors approach the right boundary, but contact is obscured or outside the sampled view.\nyt-cijilmtxrq4-tesla-sentry-mode-catches-discourteous-behav: FRAME=none; CONFIDENCE=medium; NOTE=Open truck door is close; sampled frames do not resolve contact with Tesla body.",
+  "duration_sec": 302.207357584,
+  "exit_code": 0,
+  "session_id": "01a09e53-2bf7-7040-aa7d-03ddb8b7d315",
+  "rollout_path": "/Users/adri/.codex/sessions/2026/09/14/rollout-2026-09-14T00-10-46-01a09e53-2bf7-7040-aa7d-03ddb8b7d315.jsonl",
+  "tags": [
+    "door-interval-annot"
+  ]
+}

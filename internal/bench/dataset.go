@@ -112,8 +112,9 @@ type Label struct {
 	Threat string `json:"threat"`
 	// StartSeconds/EndSeconds bound the moment that matters, in seconds from
 	// the start of the first clip. Nil when nothing in particular happens.
-	StartSeconds *int `json:"start_seconds"`
-	EndSeconds   *int `json:"end_seconds"`
+	// Fractional, because a labeler scrubbing a clip lands between seconds.
+	StartSeconds *float64 `json:"start_seconds"`
+	EndSeconds   *float64 `json:"end_seconds"`
 }
 
 // LoadDataset reads and validates a dataset file.

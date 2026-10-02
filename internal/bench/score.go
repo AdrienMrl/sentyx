@@ -141,13 +141,13 @@ func ScoreCase(c *Case, attempt int, v *Verdict, runErr error) CaseScore {
 	s.Miss = wantRank > 0 && gotRank == 0
 	s.FalseAlarm = wantRank == 0 && gotRank > 0
 	if c.Label.StartSeconds != nil && v.StartSeconds != nil && v.EndSeconds != nil {
-		hit := overlaps(*c.Label.StartSeconds, *c.Label.EndSeconds, *v.StartSeconds, *v.EndSeconds, timingSlackSeconds)
+		hit := overlaps(*c.Label.StartSeconds, *c.Label.EndSeconds, float64(*v.StartSeconds), float64(*v.EndSeconds), timingSlackSeconds)
 		s.TimingHit = &hit
 	}
 	return s
 }
 
-func overlaps(aStart, aEnd, bStart, bEnd, slack int) bool {
+func overlaps(aStart, aEnd, bStart, bEnd, slack float64) bool {
 	return aStart-slack <= bEnd && bStart-slack <= aEnd
 }
 

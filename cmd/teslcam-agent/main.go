@@ -81,7 +81,8 @@ func main() {
 	deviceID := flag.String("device-id", "", "stable source device ID used in event keys; default is the hostname")
 	eventSettle := flag.Duration("event-settle", 90*time.Second, "quiet time after the last stable event file before finalizing")
 	spoolDB := flag.String("spool-db", "", "SQLite file holding the durable pending-upload queue (required with -post-to)")
-	spoolMaxMB := flag.Int64("spool-max-mb", 0, "cap on the durable upload spool in MiB; oldest uploaded files evicted first (required, > 0, with -post-to)")
+	spoolMaxMB := flag.Int64("spool-max-mb", 0, "cap on all extracted clips in MiB; oldest events discarded even if not uploaded (required with -post-to)")
+	storageReserveMB := flag.Int64("storage-reserve-mb", 0, "minimum free filesystem MiB reserved for OS (required with -post-to)")
 	tokenFile := flag.String("token-file", "", "file holding the server's bearer token; empty = no auth")
 	selectClips := flag.Bool("select-clips", false, "upload only the trigger camera's relevant clip per event (plus event.json/thumb.png); other clips stay extracted locally but are not uploaded")
 	selectMetadataTimeout := flag.Duration("select-metadata-timeout", 0, "fallback: if event.json has not appeared this long after an event's last stable clip, upload all held clips (required, > 0, with -select-clips)")
@@ -128,8 +129,8 @@ func main() {
 	// The durable spool queue is what lets the car spend days parked offline
 	// without losing pending uploads across reboots, so its config is required
 	// whenever uploading is enabled — no implicit path or cap.
-	if *postTo != "" && (*spoolDB == "" || *spoolMaxMB <= 0) {
-		log.Fatal("-spool-db and -spool-max-mb (> 0) are required with -post-to")
+	if *postTo != "" && (*spoolDB == "" || *spoolMaxMB <= 0 || *storageReserveMB <= 0) {
+		log.Fatal("-spool-db, -spool-max-mb and -storage-reserve-mb (> 0) are required with -post-to")
 	}
 	// Upload-dependent features (clip selection, camera scoring) are only
 	// meaningful when uploading. An unprovisioned Pi runs with an empty
@@ -569,6 +570,7 @@ func main() {
 		EventSettleDelay:      *eventSettle,
 		SpoolDBPath:           *spoolDB,
 		SpoolMaxBytes:         *spoolMaxMB << 20,
+		StorageReserveBytes:   *storageReserveMB << 20,
 		VideoCompression:      videoCompression,
 		SelectClips:           selectClipsActive,
 		SelectMetadataTimeout: *selectMetadataTimeout,

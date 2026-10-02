@@ -1,0 +1,22 @@
+{
+  "id": "20260914T022431Z-1a583adb",
+  "time": "2026-09-14T02:24:31.080399Z",
+  "model": "gpt-6-astra",
+  "context": "Reach \u003c5% false positive and \u003c50% false negative on contact detection with a frozen V-JEPA 2.1 encoder plus a small trained head, on a high-quality mixed synthetic+real dataset.",
+  "images": [
+    "/tmp/fldaudit/sentyx-2026-08-03_16-51-47.png",
+    "/tmp/fldaudit/sentyx-2026-08-03_16-53-32.png",
+    "/tmp/fldaudit/sentyx-2026-08-04_18-31-29.png",
+    "/tmp/fldaudit/sentyx-2026-08-04_18-34-36.png",
+    "/tmp/fldaudit/sentyx-2026-08-04_18-36-47.png"
+  ],
+  "prompt": "Attached are 5 contact sheets, each 48 frames (6 columns x 8 rows, chronological) from a single Tesla Sentry field clip recorded by the owner's own car. For EACH image, decide whether anything physically touched the car anywhere in the clip. Output exactly one line per event:\n\u003cevent\u003e: VERDICT=contact|near_miss|quiet|unclear; ACTOR=\u003cwho/what or none\u003e; CONFIDENCE=low|medium|high; NOTE=\u003cup to 12 words\u003e\nDefinitions: contact = something physically touches the car; near_miss = a person or object approaches closely but no contact is visible; quiet = nobody/nothing approaches; unclear = cannot tell.\nImages:\nImage 1: sentyx-2026-08-03_16-51-47\nImage 2: sentyx-2026-08-03_16-53-32\nImage 3: sentyx-2026-08-04_18-31-29\nImage 4: sentyx-2026-08-04_18-34-36\nImage 5: sentyx-2026-08-04_18-36-47\n",
+  "response": "sentyx-2026-08-03_16-51-47: VERDICT=quiet; ACTOR=none; CONFIDENCE=high; NOTE=No approaching person or object visible.\nsentyx-2026-08-03_16-53-32: VERDICT=near_miss; ACTOR=dark SUV; CONFIDENCE=medium; NOTE=SUV approaches near final frames; no contact visible.\nsentyx-2026-08-04_18-31-29: VERDICT=quiet; ACTOR=none; CONFIDENCE=medium; NOTE=View shifts inside garage; no external approach or contact visible.\nsentyx-2026-08-04_18-34-36: VERDICT=quiet; ACTOR=none; CONFIDENCE=high; NOTE=Static storefront scene; no approaching person or object visible.\nsentyx-2026-08-04_18-36-47: VERDICT=quiet; ACTOR=none; CONFIDENCE=high; NOTE=Static storefront scene; no approaching person or object visible.",
+  "duration_sec": 32.237500542,
+  "exit_code": 0,
+  "session_id": "01a09dba-7b5c-7243-8f78-daa18af06fb3",
+  "rollout_path": "/Users/adri/.codex/sessions/2026/09/13/rollout-2026-09-13T21-23-59-01a09dba-7b5c-7243-8f78-daa18af06fb3.jsonl",
+  "tags": [
+    "field-audit"
+  ]
+}

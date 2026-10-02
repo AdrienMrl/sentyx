@@ -6,6 +6,10 @@ Everything is parametric in `teslcam-case.scad`; fix what's off and re-render.
 
 ## Print
 
+STL exports are local build artifacts and are not versioned. Open
+`teslcam-case.scad` in OpenSCAD, set `part` to `"base"` or `"lid"`, render each
+part, and export it as `base.stl` or `lid.stl` before printing.
+
 | Part | File | Orientation | Settings |
 |---|---|---|---|
 | Base | `base.stl` | as modeled (floor on bed) | 0.2 mm layers, 3 walls, no supports |

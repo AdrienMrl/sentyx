@@ -1,0 +1,15 @@
+{
+  "id": "20260912T032944Z-91d9e566",
+  "time": "2026-09-12T03:29:44.188919Z",
+  "model": "gpt-6-astra",
+  "context": "Reach \u003c5% false positive and \u003c50% false negative on contact detection with a frozen V-JEPA 2.1 encoder plus a small trained head, on a high-quality mixed synthetic+real dataset.",
+  "images": [
+    "/tmp/audit_deep/yt-siuqyv5eweg-tesla-sentry-mode-can-t-stop-everyone.png"
+  ],
+  "prompt": "Blind visual audit only, no model scores or other data. Image is 48 chronological frames left-to-right then top-to-bottom, 6 columns x 8 rows. Determine whether the person or shopping cart visibly touches the camera car, including momentary or partial contact. Distinguish proximity and occlusion from actual visible contact; indeterminate if hidden. Reply exactly six lines: VERDICT: contact | no_contact | indeterminate; CLOSEST_MOMENT: frame numbers; ACTOR: actor; VISIBILITY: occlusions or between-frame uncertainty; CONFIDENCE: low | medium | high; EVIDENCE: one or two sentences naming visible evidence.",
+  "response": "VERDICT: indeterminate\nCLOSEST_MOMENT: 40–42\nACTOR: Person pushing a loaded shopping cart\nVISIBILITY: The load obscures the possible contact point in frame 40; contact between sampled frames cannot be resolved.\nCONFIDENCE: medium\nEVIDENCE: The cart and protruding belongings pass very close to the car’s visible edge. Their overlap obscures the gap, without clearly showing surfaces touching.",
+  "duration_sec": 37.261993292,
+  "exit_code": 0,
+  "session_id": "01a093a9-6395-78e3-b783-64409df83680",
+  "rollout_path": "/Users/adri/.codex/sessions/2026/09/11/rollout-2026-09-11T21-29-06-01a093a9-6395-78e3-b783-64409df83680.jsonl"
+}

@@ -36,15 +36,16 @@ which implements the VCSEC protocol — we are not reimplementing crypto.
 
 ```sh
 cd experiments/tesla-ble-pair
+export TESLA_VIN="<YOUR_VIN>"
 
 # 1. Generate the keypair (once). Default: ~/.teslcam/tesla-ble-key.pem, mode 0600.
 go run . genkey
 
 # 2. Standing next to the car, confirm the Mac sees its BLE beacon.
-go run . scan -vin <REDACTED_VEHICLE_IDENTIFIER>
+go run . scan -vin "$TESLA_VIN"
 
 # 3. Enroll the key. Tap the key card on the center console when prompted.
-go run . pair -vin <REDACTED_VEHICLE_IDENTIFIER>
+go run . pair -vin "$TESLA_VIN"
 ```
 
 `-vin` can be replaced by the `TESLA_VIN` environment variable.
@@ -75,11 +76,11 @@ flow accept. An RSA key will be rejected.
 - [x] Key generation, storage, public-key export — tested
 - [x] Builds and vets clean on darwin/arm64
 - [x] `scan` — **verified against the real car** (2026-07-24): found Model 3
-      `<REDACTED_VEHICLE_IDENTIFIER>` at −75 dBm. macOS CoreBluetooth works with no dongle.
-      Beacon local name `<REDACTED_VEHICLE_IDENTIFIER>` matches `"S"+SHA1(VIN)[:16]+"C"`,
+      `<YOUR_VIN>` at −75 dBm. macOS CoreBluetooth works with no dongle.
+      Beacon local name `S<first-16-hex-digits-of-SHA1(VIN)>C` matches `"S"+SHA1(VIN)[:16]+"C"`,
       which confirms vehicle identity rather than trusting any nearby Tesla.
 - [x] `pair` — **verified against the real car** (2026-07-24): key enrolled into
-      `<REDACTED_VEHICLE_IDENTIFIER>` and confirmed by an authenticated VCSEC session on a
+      `<YOUR_VIN>` and confirmed by an authenticated VCSEC session on a
       fresh connection (`verify`).
 - [ ] Using the enrolled key to authorize a dashcam signaling session — not built
 

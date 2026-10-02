@@ -42,6 +42,7 @@ commands:
   remote-list   list recent events on a deployed server
   fetch         copy one event's clips into the dataset as an unlabeled case
   add           register local clip files as an unlabeled case
+  convert       rewrite clips a browser or analyzer cannot read
   list          show the dataset and which cases still need labels
   label         open the web labeling UI
   run           analyze every labeled case and score the verdicts
@@ -66,6 +67,8 @@ func main() {
 		err = cmdFetch(ctx, os.Args[2:])
 	case "add":
 		err = cmdAdd(os.Args[2:])
+	case "convert":
+		err = cmdConvert(ctx, os.Args[2:])
 	case "list":
 		err = cmdList(os.Args[2:])
 	case "label":
@@ -93,12 +96,14 @@ type paths struct {
 	dataset string
 	clips   string
 	results string
+	removed string
 }
 
 func (p *paths) bind(fs *flag.FlagSet) {
 	fs.StringVar(&p.dataset, "dataset", "bench/dataset.json", "labeled dataset file")
 	fs.StringVar(&p.clips, "clips-dir", "bench/clips", "directory holding each case's clips")
 	fs.StringVar(&p.results, "results-dir", "bench/results", "directory for stored runs")
+	fs.StringVar(&p.removed, "removed-dir", "bench/clips-removed", "where a rejected case's clips are moved")
 }
 
 // remoteFlags carry no defaults: which box the footage comes from decides what
@@ -275,6 +280,51 @@ func copyFile(src, dest string) error {
 	return out.Close()
 }
 
+// cmdConvert makes the clip tree readable. A download named ".mp4" is not
+// always an MP4 — Reddit serves some posts over HLS, which arrives as MPEG-TS
+// under an mp4 name — and such a file plays nowhere and reads nowhere. The
+// footage is still real, so it is converted rather than thrown out, and what
+// came down is kept beside it under the extension it should have had.
+func cmdConvert(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("convert", flag.ExitOnError)
+	var p paths
+	p.bind(fs)
+	ffmpegPath := fs.String("ffmpeg", "ffmpeg", "ffmpeg used to convert")
+	ffprobePath := fs.String("ffprobe", "ffprobe", "ffprobe used to identify a file")
+	dir := fs.String("dir", "", "directory to walk (default: the clips directory)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	root := *dir
+	if root == "" {
+		root = p.clips
+	}
+	conv := bench.Converter{FFmpegPath: *ffmpegPath, FFprobePath: *ffprobePath}
+	actions, err := conv.ConvertTree(ctx, root)
+	if err != nil {
+		return err
+	}
+	var converted, failed int
+	for _, act := range actions {
+		switch act.Action {
+		case "ok":
+			continue
+		case "failed":
+			failed++
+			fmt.Printf("FAILED  %s: %s\n", act.Path, act.Error)
+		default:
+			converted++
+			fmt.Printf("%-7s %s (%s/%s), original kept as %s\n",
+				act.Action, act.Path, act.Format.Container, act.Format.Codec, filepath.Base(act.KeptAs))
+		}
+	}
+	fmt.Printf("\n%d clips checked, %d converted, %d failed\n", len(actions), converted, failed)
+	if failed > 0 {
+		return fmt.Errorf("%d clip(s) could not be converted", failed)
+	}
+	return nil
+}
+
 func cmdList(args []string) error {
 	fs := flag.NewFlagSet("list", flag.ExitOnError)
 	var p paths
@@ -316,13 +366,16 @@ func cmdLabel(ctx context.Context, args []string) error {
 	p.bind(fs)
 	addr := fs.String("addr", "127.0.0.1:8099", "address to listen on")
 	open := fs.Bool("open", true, "open the page in a browser")
+	ffmpegPath := fs.String("ffmpeg", "ffmpeg", "ffmpeg used to trim a clip")
+	syntheticRoot := fs.String("synthetic", "sim/unreal/out", "synthetic render directory (empty disables)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if _, err := os.Stat(p.dataset); err != nil {
 		return fmt.Errorf("%s: %w (fetch or add a case first)", p.dataset, err)
 	}
-	editor := &bench.Editor{DatasetPath: p.dataset, ClipRoot: p.clips, ResultsDir: p.results}
+	editor := &bench.Editor{DatasetPath: p.dataset, ClipRoot: p.clips, ResultsDir: p.results,
+		RemovedRoot: p.removed, FFmpegPath: *ffmpegPath, SyntheticRoot: *syntheticRoot}
 	srv := &http.Server{Addr: *addr, Handler: editor.Handler()}
 	ln, err := net.Listen("tcp", *addr)
 	if err != nil {

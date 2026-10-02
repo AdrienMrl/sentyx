@@ -1,0 +1,19 @@
+{
+  "id": "20260912T033146Z-cf54b3fb",
+  "time": "2026-09-12T03:31:46.875852Z",
+  "model": "gpt-6-astra",
+  "context": "Reach \u003c5% false positive and \u003c50% false negative on contact detection with a frozen V-JEPA 2.1 encoder plus a small trained head, on a high-quality mixed synthetic+real dataset.",
+  "images": [
+    "/tmp/audit_deep/yt-vlnskutaoli-sentry-mode-live-camera.png"
+  ],
+  "prompt": "You are re-auditing an ambiguous dataset label, blind to any model score. The attached image is a dense contact sheet of 48 frames sampled evenly across one Tesla Sentry Mode clip, ordered left-to-right then top-to-bottom (chronological, 6 columns x 8 rows). A previous 16-frame pass could not tell whether anything touched the car. Decide now; if contact is even momentary or partial, say so. Reply with exactly:\nVERDICT: contact | no_contact | indeterminate\nCLOSEST_MOMENT: frame number(s) of nearest approach or contact (1-48), else none\nACTOR: who or what is involved, or none\nVISIBILITY: anything occluded, off-camera, or between frames\nCONFIDENCE: low | medium | high\nEVIDENCE: one or two sentences naming what is visible",
+  "response": "VERDICT: no_contact\nCLOSEST_MOMENT: 20-23, 26-28\nACTOR: passing vehicles on the roadway behind the parked Tesla\nVISIBILITY: Far side and interior are obscured; brief contact between sampled frames cannot be excluded.\nCONFIDENCE: medium\nEVIDENCE: Vehicles pass behind the Tesla without visible contact. No person or object visibly touches its exposed bodywork, including in the closer final frames.",
+  "duration_sec": 17.916290417,
+  "exit_code": 0,
+  "session_id": "01a093ab-8e68-71a3-ba0a-5d277032c005",
+  "rollout_path": "/Users/adri/.codex/sessions/2026/09/11/rollout-2026-09-11T21-31-29-01a093ab-8e68-71a3-ba0a-5d277032c005.jsonl",
+  "tags": [
+    "label-audit",
+    "deep"
+  ]
+}

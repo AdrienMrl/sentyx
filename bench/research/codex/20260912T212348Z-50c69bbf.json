@@ -1,0 +1,16 @@
+{
+  "id": "20260912T212348Z-50c69bbf",
+  "time": "2026-09-12T21:23:48.842307Z",
+  "model": "gpt-6-astra",
+  "context": "Visual contact assessment requested by user",
+  "images": [
+    "/tmp/doord/doording-onepass-prod.png",
+    "/tmp/doord/doording-test-aug13.png"
+  ],
+  "prompt": "You are the visual advisor. Inspect the two attached contact sheets directly; do not delegate or edit files. Two contact sheets each 48 frames (6x8 chronological) from a Tesla Sentry FRONT camera recorded by the owners own car during a deliberate door-ding test. Image 1 event doording-onepass-prod; Image 2 doording-test-aug13. For EACH decide whether anything physically touches the recording car anywhere in the clip. Distinguish adjacent car contact from recording car contact; test intent alone is not evidence. No sampling rate or clip duration supplied, so do not invent seconds; use unknown and optionally frame position. Output one line per image: \u003cevent\u003e: VERDICT=contact|near_miss|quiet|unclear; ACTOR=\u003cwho/what\u003e; MOMENT=\u003capprox second or unknown\u003e; CONFIDENCE=low|medium|high; NOTE=\u003cup to 15 words\u003e",
+  "response": "doording-onepass-prod: VERDICT=unclear; ACTOR=adjacent car’s open door; MOMENT=unknown; CONFIDENCE=medium; NOTE=Person touches adjacent car; door approaches recording car, but contact point is not visible.\ndoording-test-aug13: VERDICT=unclear; ACTOR=adjacent car’s open door; MOMENT=unknown; CONFIDENCE=medium; NOTE=Person touches adjacent car; door approaches recording car, but contact point is not visible.",
+  "duration_sec": 21.957058334,
+  "exit_code": 0,
+  "session_id": "01a09780-7977-77c1-bd71-0c5a41cd4494",
+  "rollout_path": "/Users/adri/.codex/sessions/2026/09/12/rollout-2026-09-12T15-22-54-01a09780-7977-77c1-bd71-0c5a41cd4494.jsonl"
+}

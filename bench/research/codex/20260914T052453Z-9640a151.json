@@ -1,0 +1,21 @@
+{
+  "id": "20260914T052453Z-9640a151",
+  "time": "2026-09-14T05:24:53.863746Z",
+  "model": "gpt-6-astra",
+  "context": "Reach \u003c5% false positive and \u003c50% false negative on contact detection with a frozen V-JEPA 2.1 encoder plus a small trained head, on a high-quality mixed synthetic+real dataset.",
+  "images": [
+    "/tmp/dd2/rd-mlqx65-porsche-driver-throws-his-door-open-and-ding.png",
+    "/tmp/dd2/sedan-door-swing.png",
+    "/tmp/dd2/yt-7g18ntq8qf0-tesla-sentry-mode-right-camera-car-doors-ope.png",
+    "/tmp/dd2/yt-cijilmtxrq4-tesla-sentry-mode-catches-discourteous-behav.png"
+  ],
+  "prompt": "Attached are 4 dense contact sheets, each 96 frames (8 columns x 12 rows, chronological) of one Tesla Sentry clip labelled as containing a door ding. For EACH, decide whether the moment of physical contact between the door/object and the car is VISIBLE in the supplied frames. Output one line per image:\n\u003cname\u003e: EVIDENCE=direct|indirect|indeterminate; FRAME=\u003c1-96 or none\u003e; CONFIDENCE=low|medium|high; NOTE=\u003cup to 15 words\u003e\ndirect = contact visibly occurs (door meets body); indirect = aftermath/motion implies it but the touch isn't seen; indeterminate = cannot tell.\nImages:\nImage 1: rd-mlqx65-porsche-driver-throws-his-door-open-and-ding\nImage 2: sedan-door-swing\nImage 3: yt-7g18ntq8qf0-tesla-sentry-mode-right-camera-car-doors-ope\nImage 4: yt-cijilmtxrq4-tesla-sentry-mode-catches-discourteous-behav\n",
+  "response": "rd-mlqx65-porsche-driver-throws-his-door-open-and-ding: EVIDENCE=indeterminate; FRAME=none; CONFIDENCE=low; NOTE=Door opens toward camera, but contact with recording car is not resolved.\nsedan-door-swing: EVIDENCE=direct; FRAME=33; CONFIDENCE=medium; NOTE=Open door’s outer edge appears to meet recording car’s visible body strip.\nyt-7g18ntq8qf0-tesla-sentry-mode-right-camera-car-doors-ope: EVIDENCE=indeterminate; FRAME=none; CONFIDENCE=low; NOTE=Door approaches recording car, but supplied resolution does not establish touching.\nyt-cijilmtxrq4-tesla-sentry-mode-catches-discourteous-behav: EVIDENCE=indeterminate; FRAME=none; CONFIDENCE=low; NOTE=Door opens into narrow gap; contact boundary remains too small and obscured to verify.",
+  "duration_sec": 67.425747792,
+  "exit_code": 0,
+  "session_id": "01a09e5f-14b9-7a31-873e-e3b83db78585",
+  "rollout_path": "/Users/adri/.codex/sessions/2026/09/14/rollout-2026-09-14T00-23-46-01a09e5f-14b9-7a31-873e-e3b83db78585.jsonl",
+  "tags": [
+    "door-dense-annot"
+  ]
+}

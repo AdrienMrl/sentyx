@@ -1,0 +1,15 @@
+{
+  "id": "20260912T033106Z-bbf3497d",
+  "time": "2026-09-12T03:31:06.04336Z",
+  "model": "gpt-6-astra",
+  "context": "Reach \u003c5% false positive and \u003c50% false negative on contact detection with a frozen V-JEPA 2.1 encoder plus a small trained head, on a high-quality mixed synthetic+real dataset.",
+  "images": [
+    "/tmp/audit_deep/yt-zw51rmujffy-tesla-does-not-see-you-if-you-are-pushing-a.png"
+  ],
+  "prompt": "Visually audit only the attached 48-frame contact sheet, chronological left-to-right top-to-bottom, 6 columns x 8 rows. Blind to model scores; do not read any dataset or other context, do not delegate. Decide whether anything touches the camera car; momentary or partial contact counts. Reply exactly six lines: VERDICT: contact | no_contact | indeterminate; CLOSEST_MOMENT: frame numbers 1-48 or none; ACTOR: involved actor or none; VISIBILITY: occluded, off-camera or between-frame limitations; CONFIDENCE: low | medium | high; EVIDENCE: one or two sentences of visible evidence. Choose one value per field. Distinguish nearness from actual contact.",
+  "response": "VERDICT: no_contact\nCLOSEST_MOMENT: 13-14, 31-33\nACTOR: pedestrian pushing a cart along the right side\nVISIBILITY: Right-edge cropping and gaps between frames limit assessment of the closest pass.\nCONFIDENCE: medium\nEVIDENCE: The pedestrian and cart pass close to the camera car’s right side, but no touching or impact is visible. The other vehicles remain visibly separated from the camera car.",
+  "duration_sec": 11.393728833,
+  "exit_code": 0,
+  "session_id": "01a093aa-8db1-7ca1-bce8-b7863cf3fce9",
+  "rollout_path": "/Users/adri/.codex/sessions/2026/09/11/rollout-2026-09-11T21-30-23-01a093aa-8db1-7ca1-bce8-b7863cf3fce9.jsonl"
+}

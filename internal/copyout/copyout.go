@@ -24,6 +24,8 @@ type Config struct {
 	// (case-insensitive, e.g. "/TeslaCam/SentryClips"). Paths outside it are
 	// ignored by Enqueue.
 	PathPrefix string
+	// BeforeWrite reserves disk budget and excludes concurrent retention cleanup.
+	BeforeWrite func(imagePath string, bytes int64) (release func(), err error)
 }
 
 // Result describes one processed path.
@@ -183,6 +185,13 @@ func (c *Copier) copyOne(path string) (Result, error) {
 	}
 
 	dst := filepath.Join(c.cfg.DestDir, filepath.FromSlash(strings.TrimPrefix(path, "/")))
+	if c.cfg.BeforeWrite != nil {
+		release, err := c.cfg.BeforeWrite(path, int64(e.ValidDataLength))
+		if err != nil {
+			return Result{}, err
+		}
+		defer release()
+	}
 	if st, err := os.Stat(dst); err == nil && st.Size() == int64(e.ValidDataLength) {
 		return Result{Path: path, Dest: dst, Skipped: true}, nil
 	}

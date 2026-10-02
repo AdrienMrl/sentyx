@@ -9,10 +9,9 @@ plugins {
 }
 
 // Apply the google-services plugin only when a google-services.json is present.
-// A PLACEHOLDER file is committed so CI/dev builds stay green; the plugin still
-// requires the file to exist, and guarding on its presence means removing it (or
-// swapping in the real one) never breaks assembleDebug/installDebug. Push is
-// inert at runtime until the real file replaces the placeholder.
+// This checkout contains a real Firebase Android client configuration. It is
+// public client metadata, not a service-account credential. Forks should supply
+// their own configuration; removing the file skips Firebase resource processing.
 if (project.file("google-services.json").exists()) {
     apply(plugin = libs.plugins.googleServices.get().pluginId)
 }

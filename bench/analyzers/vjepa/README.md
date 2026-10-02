@@ -15,15 +15,32 @@ seconds to minutes on the cache, so cross-validation over every case is cheap.
 
 | path | what |
 | --- | --- |
-| `vjepa_bench.py` | the CLI: `encode`, `train`, `analyze` |
+| `vjepa_bench.py` | the CLI: `encode`, `train`, `finetune`, `analyze` |
 | `vjb/frames.py` | ffmpeg sampling into square uint8 frames; window/stride logic |
 | `vjb/encoder.py` | `VJEPA2Encoder` (Hugging Face) and `FakeEncoder` (pixel statistics, for plumbing) |
 | `vjb/store.py` | the feature cache format and `bench/dataset.json` loading |
-| `vjb/heads.py` | `meanpool`, `probe` (attentive probe), `temporal` (per-timestep) heads |
+| `vjb/heads.py` | `meanpool`, `probe` (attentive probe), `temporal`, `motion`, `region` heads |
 | `vjb/train.py` | leave-one-case-out CV, loss, metrics, head save/load |
+| `vjb/finetune.py` | fine-tuning the last K encoder blocks with the head, from frames |
 | `vjb/analyze.py` | the bench `-analyzer` verdict |
 | `tests/` | end-to-end plumbing on synthetic clips, no weights needed |
 | `bench/features/<cache>/` | token caches and training summaries (gitignored) |
+
+## Live dashboard
+
+The dashboard runs on the Mac and reads progress, completed results, and GPU
+telemetry from the Windows training box over SSH:
+
+```
+python dashboard.py
+open http://127.0.0.1:8765
+```
+
+Pass `-progress ../../features/vjepa-dashboard/progress.json` to `encode` and
+`train`, or set `VJEPA_PROGRESS` to that path once in the training shell. Both
+commands replace the status file atomically, so the dashboard never observes
+a partly written update. The default host is the LAN render/training PC in
+`AGENTS.md`; `--target` and `--remote-repo` override it.
 
 ## Setup
 
@@ -58,7 +75,7 @@ curl -L -o ~/.cache/vjepa2/vjepa2_1_vitl_dist_vitG_384.pt \
   -cache ../../features/vjepa21-vitl-384-3fps-pi-f16s4 \
   -encoder vjepa21 -model ~/.cache/vjepa2/vjepa2_1_vitl_dist_vitG_384.pt \
   -arch vjepa2_1_vit_large_384 -src third_party/vjepa2 -device mps -dtype float32 \
-  -fps 3 -size 384 -crop full -frames 16 -stride 4 -match pi -flip
+  -fps 3 -size 384 -crop squash -frames 16 -stride 4 -match pi -flip
 ```
 
 Archs: `vjepa2_1_vit_base_384` (80M), `vjepa2_1_vit_large_384` (300M,
@@ -81,7 +98,7 @@ configuration. One cache per configuration, named for it:
 .venv/bin/python vjepa_bench.py encode \
   -cache ../../features/vjepa2-vitl-256-8fps-full-f16 \
   -encoder vjepa2 -model facebook/vjepa2-vitl-fpc64-256 -device cuda -dtype bfloat16 \
-  -fps 3 -size 256 -crop full -frames 16 -stride 4 -match pi -flip
+  -fps 3 -size 256 -crop squash -frames 16 -stride 4 -match pi -flip
 ```
 
 - `-match pi`: push every clip through the transcode the in-car unit applies
@@ -98,10 +115,15 @@ configuration. One cache per configuration, named for it:
   equal the checkpoint's crop size. V-JEPA 2.1 checkpoints were not on the hub
   under the `vjepa2` search as of 2026-09-04; when they appear they should
   load through the same class.
-- `-crop`: `full` squashes the whole frame to a square and keeps every pixel
+- `-crop`: `squash` squashes the whole frame to a square and keeps every pixel
   (the ego body sits at the frame edge, which `center` would cut off);
-  `band:0.35,1.0` keeps only the lower band before squashing, which is the
-  near-ego crop from the notes and worth an A/B once the staged clips exist.
+  `bottom` keeps the bottom 55% of the height at full width and squashes that
+  to the square instead, doubling the pixels on the contact zone -- in Sentry
+  footage the car's own body edge runs along the bottom of every camera view,
+  so hand-scale contact is always in the lower band; `band:A,B` is the same
+  idea with the fractions chosen by hand (`band:0.45,1.0` is `bottom`).
+  `full` is the deprecated name of `squash` and still works, with a note on
+  stderr, so caches whose `meta.json` says `full` keep loading.
 - `-frames`/`-stride`: a window of 16 frames at 8 fps is 2 s; stride 8 gives
   half-overlap. The checkpoint's `fpc64` is what it was pretrained with, not a
   constraint; 64-frame windows cost 4x the tokens per window.
@@ -138,6 +160,15 @@ Heads:
   clip logit is the max. The paper's own evaluation recipe.
 - `temporal`: tokens pooled per timestep, dilated 1-D convolutions over time,
   one logit per timestep. Also reports where in the clip the contact is.
+- `motion`: `temporal` with the same per-timestep pooling applied to the
+  temporal difference of the token grid as well (mean, max, diff-mean,
+  diff-max). Spatial mean/max over 24x24 tokens washes out a hand-sized
+  change; the difference grid is near zero wherever the scene is still, so the
+  motion discontinuity survives the pooling. Localizes.
+- `region`: keeps coarse spatial structure. The token grid is averaged into
+  4x4 regions, each squeezed by a shared `Linear(D, 64)`, and the flattened
+  regions feed the same temporal stack, so a change at the car body is
+  separable from a change elsewhere in the frame. Localizes.
 
 Labels: a case with `start_seconds`/`end_seconds` trains window by window
 (windows overlapping the interval are positive). A case with only `contact`
@@ -150,6 +181,67 @@ summary JSON.
 `-save-head` fits one more head on every case and writes it with the cache
 metadata and threshold, for `analyze`. A head trained on all bench cases is
 only meaningful on clips outside them.
+
+## 2b. Fine-tune the last blocks (`finetune`)
+
+`encode` + `train` keep the encoder frozen. When the head plateaus there — and
+it does, because the frozen features encode *proximity* rather than *contact* —
+`finetune` trains the last K transformer blocks jointly with the head, end to
+end from frames:
+
+```
+.venv\Scripts\python.exe vjepa_bench.py finetune `
+  -cache ..\..\features\ft-k4 `
+  -encoder vjepa21 -model $env:USERPROFILE\.cache\vjepa2\vjepa2_1_vitl_dist_vitG_384.pt `
+  -arch vjepa2_1_vit_large_384 -src third_party\vjepa2 -device cuda -dtype bfloat16 `
+  -fps 15 -size 384 -crop squash -frames 64 -stride 16 -match none `
+  -unfreeze 4 -epochs 8 -lr 1e-3 -lr-encoder 1e-5 -split holdout `
+  -max-windows-per-clip 8 -accum 8 -flip `
+  -out ..\..\features\ft-k4\finetune-k4.json `
+  -save-encoder ..\..\features\ft-k4\ft-k4.pt `
+  -notes "K=4, 64f windows, no domain matching"
+```
+
+The design in one line: nothing below block `depth - K` ever changes, so the
+first epoch writes each window's hidden state at the split to
+`-cache/<case>/ft-fps..-size..-f..-s..-k<K>/<orig|flip>/wNNNNN.npy` as fp16 and
+every later epoch reads it back and runs only the K trainable blocks. `-cache
+none` disables the cache and recomputes the frozen trunk every epoch.
+
+- `-unfreeze 0` is head-only and reproduces the frozen path exactly (asserted
+  in `tests/test_finetune.py`), so it is the control the K > 0 runs are read
+  against.
+- `-split holdout` trains on the cases without the `holdout` tag and evaluates
+  on the ones with it. `-split loo` is leave-one-case-out and retrains the tail
+  once per case — supported, but it costs `len(cases)` times as much and the
+  command warns.
+- `-max-windows-per-clip` samples a random subset of each clip's windows per
+  epoch, biasing half the budget toward the labeled interval when the case has
+  `start_seconds`/`end_seconds`. Without it a 60 s clip with a 2 s touch trains
+  almost entirely on its own negatives.
+- The loss is `train`'s: per-window BCE for cases with an interval, MIL
+  logsumexp over the sampled windows otherwise. The MIL branch runs one no-grad
+  pass for the softmax coefficients and a second backward pass one window at a
+  time, which is exact (the gradient of logsumexp *is* the softmax) and keeps
+  activation memory at one window.
+- `-out` has the same JSON shape as `train -out`, plus a `finetune` block, so
+  the existing analysis reads it unchanged. `-save-encoder` writes the unfrozen
+  block weights (keyed by absolute block index) and the head.
+
+Cost on a 12 GB 4070, ViT-L at 384 px with 64-frame windows (18432 tokens x
+1024 dims per window):
+
+| | per window |
+| --- | --- |
+| frozen trunk, first pass (bf16, no_grad) | ~0.6 s, ~2 GB peak |
+| cached hidden state | 37 MB on disk, 74 MB fp32 on the device |
+| trainable tail, K=4, checkpointed fwd+bwd | ~0.5 s, ~1.5 GB above the 0.6 GB of weights |
+
+So epoch 1 costs about 1.1 s per window and every epoch after it about 0.5 s.
+The disk cost is the thing to watch: at stride 16 a 60 s clip at 15 fps is ~53
+windows, i.e. ~2 GB of cache per clip variant. Cache only the cases a run
+actually touches (`-case`), raise `-stride`, or use `-cache none` on a large
+corpus.
 
 ## 3. Score through the bench
 
@@ -177,7 +269,7 @@ rate severity, so the bench's threat columns say nothing about it.
 
 1. `encode` ViT-L at 256 with `-flip`, then `train` all three heads with
    `-seeds 5`. That is the baseline number.
-2. The same with `-crop band:0.35,1.0`. If the near-ego crop helps, resolution
+2. The same with `-crop bottom`. If the near-ego crop helps, resolution
    at the contact zone was a limiting factor.
 3. ViT-g at 384 (`-size 384`), only if the ViT-L learning curve has not
    saturated.
@@ -201,28 +293,56 @@ the same footage, and the summary reports `loc_hits`: whether the held-out
 head pointed at the labeled second. The garage clip has no interval because
 the door rests on the car from the first frame.
 
-## Status (2026-09-04)
+## Status (2026-09-05, overnight run)
 
-Plumbing verified end to end: synthetic tests, the fake encoder on the real
-clips, and a Go bench run through the `-analyzer` contract. The real ViT-L
-encoder was run on all 11 bench cases on a Mac GPU (token grid and order
-verified against the transformers source), and heads were cross-validated on
-those features. First numbers, leave-one-case-out, 3 seeds, no flips,
-threshold 0.5:
+Protocol now: **native frame rate, 15 fps, 384 px, 64-frame windows (4.3 s)**,
+no `-match` transcode. The six 3 fps Pi-uploaded cases were removed from
+`dataset.json` (kept in `bench/clips-removed/`). 48 labeled cases: 37
+contact / 11 no-contact (3 own-camera quiet clips, 8 downloaded near-miss);
+15 carry the tag `holdout` (11 contact / 4 none, seed 20260904). No
+own-camera positives exist yet. Leave-one-case-out unless noted, threshold
+0.5, `report.py` tabulates the JSONs.
 
-| head | contact missed | contact phantom | AUC | CV time on M-series GPU |
-| --- | --- | --- | --- | --- |
-| meanpool | 0/5 | 4/6 | 0.83 | 15 s |
-| temporal | 1/5 (night-handtruck-boxes) | 1/6 | 0.93 | 1 min |
-| probe | 1/5 (night-kia-parks-close, 0.43 with seed spread 0.27) | 1/6 | 0.93 | 17 min |
+| encoder | head | windows | found | phantom | AUC | AUC within web |
+| --- | --- | --- | --- | --- | --- | --- |
+| 2.1 ViT-L 384 | temporal | f16 s8, flips | 23/28 | 4/8 | 0.67 | 0.71 |
+| 2.1 ViT-L 384 | temporal | f64 s16, flips (36 cases) | 24/28 | 4/8 | 0.71 | 0.80 |
+| 2.1 ViT-L 384 | temporal | f64 s16, flips | 31/37 | 6/11 | 0.74 | 0.79 |
+| 2.1 ViT-L 384 | motion | f64 s16, flips | 32/37 | 7/11 | 0.76 | 0.79 |
+| 2.1 ViT-L 384 | region | f64 s16, flips | 34/37 | 6/11 | 0.74 | 0.80 |
+| **2.1 ViT-g 384 (1B)** | temporal | f64 s32, no flips | 33/37 | 5/11 | **0.81** | 0.79 |
+| 2.1 ViT-L 384, `-crop bottom` | temporal | f64 s32, no flips | 29/37 | 5/11 | 0.70 | 0.76 |
+| fine-tune K=0 (holdout 15) | temporal | f64 s32 | 10/11 | 3/4 | 0.80 | 0.79 |
+| fine-tune K=4, 8 ep (holdout 15) | temporal | f64 s32 | 11/11 | 4/4 | 0.77 | 0.70 |
+| fine-tune K=4, 30 ep, 16 win/clip (holdout 15) | temporal | f64 s32 | 11/11 | 3/4 | 0.86 | 0.88 |
 
-Read these as "the pipeline works and the features carry signal", not as a
-result: with five positives one case moves the miss rate by 20 points, and
-the positives are downloaded compilations while every negative is a real
-field clip, so a head can separate them on style alone. The confound goes
-away only with staged positives from the real cameras.
+What is stable across every row: the misses are hand-scale contacts
+(charger unplug, door-handle puller, Ventura and YouTube vandalism, ghost
+cart) and the phantoms are people handling something within arm's reach
+without touching (both own-camera bystander clips, `rd-bo8byv`, `rd-bds11x`,
+`rd-cxmrnf`, the shopping-cart clip). Heads, motion features, coarse spatial
+regions, the lower-band crop and fine-tuning the last four blocks (training
+loss 0.004, holdout scores saturated at 1.000 for 13 of 15 clips) do not
+move that set; the 1B encoder moves
+one or two clips. The frozen representation encodes proximity, not contact.
 
-Memory: training holds the whole token cache on the device in float16
-(1.7 GB for the bench) plus a float32 transient per clip while standardizing;
-the encoder is never loaded during `train`. Running several `train`
-processes at once multiplies that.
+Ensemble with the Qwen 3.8 zero-shot scores (`analyzers/vlm`) was
+pre-registered as a veto rule (`veto.py`) and gives no gain: the VLM scores
+true contacts as low as 0.07, so no veto threshold removes a phantom without
+removing a contact. The Qwen LoRA fine-tune (33 non-holdout clips) matched
+its own zero-shot (AUC 0.69) and lost the confident rejections that made a
+veto conceivable.
+
+The 1 s windows (f16 at 15 fps) are worse than 4.3 s windows on every head;
+the checkpoint was trained at 64 frames. Keep f64.
+
+Training notes: the f64 cache is 76 GB with flips; `train` streams each
+grid once and keeps only the pooled representation (`ClipFeatures(lazy=True)`,
+`stage_examples`), so it runs in ~2 GB of GPU memory. Running two trainers or
+a trainer next to an encode on the 12 GB card spills to host memory on
+Windows and slows 30x. Detached jobs on the PC survive an ssh drop only when
+launched as a single foreground ssh command; `start /b`, `Start-Process` and
+`schtasks` did not start reliably.
+
+Superseded (2026-09-04, matched 3 fps protocol, 11 cases): see git history
+of this file; those numbers were within noise of 5 positives.

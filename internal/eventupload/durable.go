@@ -90,6 +90,37 @@ func openSpoolStore(path string) (*spoolStore, error) {
 
 func (s *spoolStore) close() error { return s.db.Close() }
 
+func (s *spoolStore) sourceIDs() ([]string, error) {
+	rows, err := s.db.Query("SELECT source_id FROM spool_items UNION SELECT source_id FROM spool_events UNION SELECT source_id FROM spool_artifacts")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+func (s *spoolStore) discardEvent(id string) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, table := range []string{"spool_items", "spool_artifacts", "spool_events"} {
+		if _, err = tx.Exec("DELETE FROM "+table+" WHERE source_id = ?", id); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
 // add durably records a newly enqueued item as pending. It is idempotent: a
 // re-enqueue of an already-tracked path (including reconciliation on startup)
 // leaves the original record untouched. size is stat-ed best-effort here so the

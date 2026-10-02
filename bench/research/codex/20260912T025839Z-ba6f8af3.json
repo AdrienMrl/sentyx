@@ -1,0 +1,18 @@
+{
+  "id": "20260912T025839Z-ba6f8af3",
+  "time": "2026-09-12T02:58:39.388846Z",
+  "model": "gpt-6-astra",
+  "context": "Reach \u003c5% false positive and \u003c50% false negative on contact detection with a frozen V-JEPA 2.1 encoder plus a small trained head, on a high-quality mixed synthetic+real dataset.",
+  "images": [
+    "/tmp/audit/i-2026-09-02_16-05-10.png"
+  ],
+  "prompt": "You are auditing one dataset label visually, blind to any model score. The attached image is a contact sheet of 16 frames sampled evenly across a single Tesla Sentry Mode clip, ordered left-to-right then top-to-bottom (chronological). Decide whether anything physically touches the car anywhere in the clip. Reply with exactly these lines:\nVERDICT: contact | no_contact | indeterminate\nACTOR: who or what is involved (person, cart, animal, branch, camera shake, or none)\nTIME: approximate second or moment of any contact, else none\nVISIBILITY: anything occluded, off-camera, or too brief to judge\nCONFIDENCE: low | medium | high\nEVIDENCE: one or two sentences naming what is visible",
+  "response": "VERDICT: indeterminate\nACTOR: none identifiable\nTIME: none\nVISIBILITY: Contact sheet unavailable; the image path could not be read.\nCONFIDENCE: low\nEVIDENCE: No frames are visible in the provided message, so physical contact cannot be assessed.",
+  "duration_sec": 8.804412958,
+  "exit_code": 0,
+  "session_id": "01a0938d-5e68-7d91-a964-6cc6ee7e440d",
+  "rollout_path": "/Users/adri/.codex/sessions/2026/09/11/rollout-2026-09-11T20-58-30-01a0938d-5e68-7d91-a964-6cc6ee7e440d.jsonl",
+  "tags": [
+    "label-audit"
+  ]
+}

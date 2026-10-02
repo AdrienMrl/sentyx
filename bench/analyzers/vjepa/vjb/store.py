@@ -18,6 +18,7 @@ and `starts`, so the same cache serves clip-level and per-timestep training.
 
 import json
 import os
+import tempfile
 
 import numpy as np
 
@@ -25,6 +26,16 @@ META = "meta.json"
 
 
 def dataset_cases(dataset_path):
+    """Training/evaluation cases: unknown labels are excluded."""
+    return _dataset_cases(dataset_path, require_labels=True)
+
+
+def encoding_cases(dataset_path):
+    """Encoding needs video paths, not labels; preserve unknown as None."""
+    return _dataset_cases(dataset_path, require_labels=False)
+
+
+def _dataset_cases(dataset_path, require_labels):
     """Labeled cases from bench/dataset.json as a list of dicts with
     id, clip (absolute path), contact, start, end. Unlabeled cases are skipped
     with a note on stderr, mirroring the Go runner."""
@@ -37,22 +48,26 @@ def dataset_cases(dataset_path):
     clips_dir = os.path.join(os.path.dirname(os.path.abspath(dataset_path)), "clips")
     cases = []
     for c in ds["cases"]:
-        if not c.get("label"):
+        if not c.get("label") and require_labels:
             print(f"skip {c['id']}: unlabeled", file=sys.stderr)
             continue
         if len(c["clips"]) != 1:
             raise ValueError(f"{c['id']}: expected exactly one clip, got {len(c['clips'])}")
-        lab = c["label"]
+        lab = c.get("label") or {}
         cases.append({
             "id": c["id"],
             "clip": os.path.join(clips_dir, c["id"], c["clips"][0]),
-            "contact": bool(lab["contact"]),
+            "contact": bool(lab["contact"]) if lab else None,
+            # Keep synthetic training distinct from both own-camera and web
+            # footage in summaries of a synthetic -> real holdout experiment.
+            "source": ("synthetic" if "synthetic" in c.get("tags", []) else
+                       ("own" if ("field" in c.get("tags", []) or c["id"].startswith("sentyx-")) else "web")),
             "start": lab.get("start_seconds"),
             "end": lab.get("end_seconds"),
             "tags": c.get("tags") or [],
         })
     if not cases:
-        raise ValueError("no labeled cases")
+        raise ValueError("no labeled cases" if require_labels else "no cases")
     return cases
 
 
@@ -82,24 +97,51 @@ def feature_path(cache_dir, case_id, clip, flip=False):
 
 def save_features(path, tokens, starts, valid, n_frames):
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    np.savez(path, tokens=tokens.astype(np.float16), starts=np.asarray(starts, np.int32),
-             valid=np.asarray(valid, np.int32), n_frames=np.int32(n_frames))
+    # Never publish a partial ZIP archive as a reusable cache after an
+    # interrupted encode. Preserve any previous complete file on failure.
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(dir=os.path.dirname(path), prefix=".features-", delete=False) as f:
+            temporary = f.name
+            np.savez(f, tokens=tokens.astype(np.float16), starts=np.asarray(starts, np.int32),
+                     valid=np.asarray(valid, np.int32), n_frames=np.int32(n_frames))
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(temporary, path)
+        temporary = None
+    finally:
+        if temporary is not None:
+            os.unlink(temporary)
 
 
 class ClipFeatures:
     """One clip's cached windows, kept as float16 on the host (a long clip is
     hundreds of MB); consumers upcast on the device."""
 
-    def __init__(self, path):
+    def __init__(self, path, lazy=False):
+        """lazy=True keeps the grid on disk: `tokens` re-reads the file on every
+        access. A 64-frame cache runs to gigabytes per clip, so training loads
+        each grid once, reduces it, and drops it."""
+        self.path = path
         z = np.load(path)
-        self.tokens = z["tokens"]                       # (W, T', H', W', D) float16
         self.starts = z["starts"]
         self.valid = z["valid"]
         self.n_frames = int(z["n_frames"])
+        self._tokens = None if lazy else z["tokens"]   # (W, T', H', W', D) float16
+
+    @property
+    def tokens(self):
+        if self._tokens is not None:
+            return self._tokens
+        return np.load(self.path)["tokens"]
+
+    @tokens.setter
+    def tokens(self, value):
+        self._tokens = value
 
     @property
     def n_windows(self):
-        return self.tokens.shape[0]
+        return len(self.starts)
 
     def window_seconds(self, w, fps, tubelet):
         """(start_s, end_s) of the real frames in window w."""

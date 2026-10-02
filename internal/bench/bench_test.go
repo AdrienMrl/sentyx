@@ -15,6 +15,9 @@ import (
 
 func ptr(i int) *int { return &i }
 
+// secs builds a label window bound, which is fractional.
+func secs(f float64) *float64 { return &f }
+
 func TestParseVerdictCurrentAndLegacySchemas(t *testing.T) {
 	v, err := ParseVerdict([]byte(`{"description":"a door opened into the car","contact":true,"start_seconds":11,"end_seconds":14,"threat":"medium"}`))
 	if err != nil {
@@ -55,7 +58,7 @@ func TestParseVerdictRejectsUnknownThreat(t *testing.T) {
 }
 
 func TestScoreCaseSeparatesMissesFromFalseAlarms(t *testing.T) {
-	real := &Case{ID: "hit", Label: &Label{Threat: "high", Contact: true, StartSeconds: ptr(10), EndSeconds: ptr(14)}}
+	real := &Case{ID: "hit", Label: &Label{Threat: "high", Contact: true, StartSeconds: secs(10), EndSeconds: secs(14)}}
 	calm := &Case{ID: "calm", Label: &Label{Threat: "none"}}
 
 	missed := ScoreCase(real, 1, &Verdict{Threat: "none", StartSeconds: ptr(0), EndSeconds: ptr(0)}, nil)
@@ -128,7 +131,7 @@ func TestFoldThreatCollapsesMedium(t *testing.T) {
 }
 
 func TestScoreCaseTiming(t *testing.T) {
-	c := &Case{ID: "t", Label: &Label{Threat: "low", StartSeconds: ptr(20), EndSeconds: ptr(24)}}
+	c := &Case{ID: "t", Label: &Label{Threat: "low", StartSeconds: secs(20), EndSeconds: secs(24)}}
 
 	// Just outside the window but inside the slack: still a hit, because the
 	// label's precision does not exceed a few seconds.
@@ -208,7 +211,7 @@ func TestDatasetRoundTripAndValidation(t *testing.T) {
 		t.Fatal("expected a threat outside the enum to fail validation")
 	}
 	halfWindow := &Dataset{Cases: []Case{{ID: "x", Clips: []string{"a.mp4"},
-		Label: &Label{Threat: "low", StartSeconds: ptr(3)}}}}
+		Label: &Label{Threat: "low", StartSeconds: secs(3)}}}}
 	if err := halfWindow.Validate(); err == nil {
 		t.Fatal("expected a start without an end to fail validation")
 	}

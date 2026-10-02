@@ -1,0 +1,15 @@
+{
+  "id": "20260912T031903Z-0b22fd52",
+  "time": "2026-09-12T03:19:03.800977Z",
+  "model": "gpt-6-astra",
+  "context": "Blind contact sheet label audit; no model scores.",
+  "images": [
+    "/tmp/audit_deep/rd-bo8byv-video-caught-checking-out-my-model-3-by-sent.png"
+  ],
+  "prompt": "Judge the attached 48-frame contact sheet chronologically left to right then top to bottom (6 columns, 8 rows). Target contact is with the recording Tesla, not merely touching the adjacent white car. A previous sparse pass was ambiguous. Assess any momentary or partial contact, but do not infer contact solely from proximity. Do not consult dataset labels, journals or scores and do not delegate again. Reply exactly six lines: VERDICT: contact | no_contact | indeterminate; CLOSEST_MOMENT: frame numbers 1-48 or none; ACTOR: who/what; VISIBILITY: occlusion/off-camera/between frames; CONFIDENCE: low | medium | high; EVIDENCE: one or two sentences naming visible evidence.",
+  "response": "VERDICT: indeterminate\nCLOSEST_MOMENT: 21, 32–33\nACTOR: Man in the light-blue shirt\nVISIBILITY: His extended hand is partly off-camera; the adjacent car’s open door obscures some movement.\nCONFIDENCE: medium\nEVIDENCE: In frame 21 he reaches toward the recording Tesla; in frames 32–33 his arm extends toward its side beyond the image boundary. No hand-to-Tesla contact is visibly established, but the obscured reach prevents ruling out momentary contact.",
+  "duration_sec": 18.329997667,
+  "exit_code": 0,
+  "session_id": "01a0939f-825c-7350-8ddf-32b6c3e1ef73",
+  "rollout_path": "/Users/adri/.codex/sessions/2026/09/11/rollout-2026-09-11T21-18-19-01a0939f-825c-7350-8ddf-32b6c3e1ef73.jsonl"
+}

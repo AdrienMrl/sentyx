@@ -1,0 +1,19 @@
+{
+  "id": "20260912T032037Z-44ca398b",
+  "time": "2026-09-12T03:20:37.920194Z",
+  "model": "gpt-6-astra",
+  "context": "Reach \u003c5% false positive and \u003c50% false negative on contact detection with a frozen V-JEPA 2.1 encoder plus a small trained head, on a high-quality mixed synthetic+real dataset.",
+  "images": [
+    "/tmp/audit_deep/rd-hmaafr-thank-you-for-neatly-putting-away-your-shopp.png"
+  ],
+  "prompt": "You are re-auditing an ambiguous dataset label, blind to any model score. The attached image is a dense contact sheet of 48 frames sampled evenly across one Tesla Sentry Mode clip, ordered left-to-right then top-to-bottom (chronological, 6 columns x 8 rows). A previous 16-frame pass could not tell whether anything touched the car. Decide now; if contact is even momentary or partial, say so. Reply with exactly:\nVERDICT: contact | no_contact | indeterminate\nCLOSEST_MOMENT: frame number(s) of nearest approach or contact (1-48), else none\nACTOR: who or what is involved, or none\nVISIBILITY: anything occluded, off-camera, or between frames\nCONFIDENCE: low | medium | high\nEVIDENCE: one or two sentences naming what is visible",
+  "response": "VERDICT: indeterminate\nCLOSEST_MOMENT: 22-26\nACTOR: shopping cart pushed by a person\nVISIBILITY: Part of the approaching cart extends off-camera; contact below the image edge or between sampled frames cannot be excluded.\nCONFIDENCE: medium\nEVIDENCE: The cart approaches, turns, and stops very close to the camera car. No definite contact or impact displacement is visible, but the full clearance between cart and car is not shown.",
+  "duration_sec": 47.54071125,
+  "exit_code": 0,
+  "session_id": "01a093a0-e5a6-76b0-a6ae-632948295686",
+  "rollout_path": "/Users/adri/.codex/sessions/2026/09/11/rollout-2026-09-11T21-19-50-01a093a0-e5a6-76b0-a6ae-632948295686.jsonl",
+  "tags": [
+    "label-audit",
+    "deep"
+  ]
+}

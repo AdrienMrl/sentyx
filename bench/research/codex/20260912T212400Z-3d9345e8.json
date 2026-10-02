@@ -1,0 +1,19 @@
+{
+  "id": "20260912T212400Z-3d9345e8",
+  "time": "2026-09-12T21:24:00.027175Z",
+  "model": "gpt-6-astra",
+  "context": "Reach \u003c5% false positive and \u003c50% false negative on contact detection with a frozen V-JEPA 2.1 encoder plus a small trained head, on a high-quality mixed synthetic+real dataset.",
+  "images": [
+    "/tmp/doord/doording-onepass-prod.png",
+    "/tmp/doord/doording-test-aug13.png"
+  ],
+  "prompt": "Two contact sheets, each 48 frames (6x8, chronological) from a Tesla Sentry FRONT camera recorded by the owner's own car during a deliberate door-ding test. Image 1 = event doording-onepass-prod; Image 2 = doording-test-aug13. For EACH, decide whether anything physically touches the recording car anywhere in the clip. Output one line per image:\n\u003cevent\u003e: VERDICT=contact|near_miss|quiet|unclear; ACTOR=\u003cwho/what\u003e; MOMENT=\u003capprox second\u003e; CONFIDENCE=low|medium|high; NOTE=\u003cup to 15 words\u003e",
+  "response": "doording-onepass-prod: VERDICT=unclear; ACTOR=adjacent car’s open door; MOMENT=unknown; CONFIDENCE=medium; NOTE=Door approaches recording car, but contact point is not visible; timestamps unavailable.\ndoording-test-aug13: VERDICT=unclear; ACTOR=adjacent car’s open door; MOMENT=unknown; CONFIDENCE=medium; NOTE=Door approaches recording car, but contact point is not visible; timestamps unavailable.",
+  "duration_sec": 66.132679958,
+  "exit_code": 0,
+  "session_id": "01a09780-7977-77c1-bd71-0c5a41cd4494",
+  "rollout_path": "/Users/adri/.codex/sessions/2026/09/12/rollout-2026-09-12T15-22-54-01a09780-7977-77c1-bd71-0c5a41cd4494.jsonl",
+  "tags": [
+    "doording-audit"
+  ]
+}

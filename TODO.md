@@ -1,5 +1,8 @@
 # TODO
 
+> Historical development checklist. Deployment and feature-status claims below
+> are stale; consult `AGENTS.md` and the current `docs/` references for operations.
+
 ## 0a. Re-encrypt the onboarding payloads (security debt, opened 2026-08-01)
 
 BLE onboarding no longer requires an encrypted link. The server token and the

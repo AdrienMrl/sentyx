@@ -1,0 +1,17 @@
+{
+  "revision": "enclosure-r1-2026-09-14",
+  "units": "mm",
+  "status": "selected prototype design basis; not measured or vehicle-qualified",
+  "placement_status": "Minimal R1 implemented in minimal_r1/enclosure.py; original reservation sizes below remain planning inputs, see implementation and validation.json for actual placements",
+  "shell_target_xyz": [220, 190, 84],
+  "defaults": {"wall": 2.4, "floor": 3, "lid": 2.4, "lid_clearance_per_side": 0.3, "component_clearance_per_side": 1, "cable_corridor": 25, "usb_bend_radius_assumption": 20},
+  "components": [
+    {"id": "pi", "qty": 1, "part": "Raspberry Pi 4 Model B", "reserve_xyz": [95,70,30], "reserve_basis": "assumption including connectors and heatsink; excludes cable mating space"},
+    {"id": "lte", "qty": 1, "part": "Sixfab S121 + Quectel EC25-AFX Mini PCIe", "reserve_xyz": [75,70,30], "reserve_basis": "assumed assembled envelope around published 65x57 board"},
+    {"id": "storage", "qty": 1, "part": "Sabrent EC-SNVE + Transcend TS256GMTE452T-I", "reserve_xyz": [125,40,18], "reserve_basis": "published enclosure approximately 116.6x31.5x12.7", "additional_connector_space": 30},
+    {"id": "display", "qty": 1, "part": "Waveshare 1.3inch LCD Module ST7789", "reserve_xyz": [50,38,15], "reserve_basis": "published PCB 45x31; thickness and cable allowance assumed"},
+    {"id": "buttons", "qty": 1, "part": "custom board with 2x Omron B3F-1000", "reserve_xyz": [35,15,12], "reserve_basis": "custom assembly assumption"},
+    {"id": "power", "qty": 1, "part": "AQEX qUPS-P-SC-1.3 evaluation cassette", "reserve_xyz": [80,70,40], "reserve_basis": "family 65x56x23 plus 11 header; verify revision", "initial_population": "unpopulated/bypassed pending electrical integration", "maximum_load_A": 2.5},
+    {"id": "antenna", "qty": 2, "part": "Taoglas FXUB63.07.0150C", "reserve_xyz": [100,25,8], "reserve_basis": "published antenna 96x21x0.2; added connector/coax allowance", "coax_length": 150, "metal_clearance_assumption": 10}
+  ]
+}

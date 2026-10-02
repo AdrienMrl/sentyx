@@ -1,0 +1,22 @@
+{
+  "id": "20260912T172759Z-298202e0",
+  "time": "2026-09-12T17:27:59.27326Z",
+  "model": "gpt-6-astra",
+  "context": "Reach \u003c5% false positive and \u003c50% false negative on contact detection with a frozen V-JEPA 2.1 encoder plus a small trained head, on a high-quality mixed synthetic+real dataset.",
+  "images": [
+    "/tmp/piaudit/2026-09-06_12-08-52.png",
+    "/tmp/piaudit/2026-09-06_12-11-33.png",
+    "/tmp/piaudit/2026-09-06_16-52-14.png",
+    "/tmp/piaudit/2026-09-06_17-09-36.png",
+    "/tmp/piaudit/2026-09-08_11-02-43.png"
+  ],
+  "prompt": "Attached are 5 contact sheets, each 48 frames sampled evenly (6 columns x 8 rows, chronological) from a single Tesla Sentry Mode field clip recorded by the owner's own car. For EACH image, decide whether anything physically touched the car anywhere in the clip. Output exactly one line per event:\n\u003cevent\u003e: VERDICT=contact|near_miss|quiet|unclear; ACTOR=\u003cwho/what or none\u003e; CONFIDENCE=low|medium|high; NOTE=\u003cup to 12 words\u003e\nDefinitions: contact = something physically touches the car; near_miss = a person or object approaches closely but no contact is visible; quiet = nobody/nothing approaches; unclear = cannot tell.\nImages:\nImage 1: 2026-09-06_12-08-52\nImage 2: 2026-09-06_12-11-33\nImage 3: 2026-09-06_16-52-14\nImage 4: 2026-09-06_17-09-36\nImage 5: 2026-09-08_11-02-43\n",
+  "response": "2026-09-06_12-08-52: VERDICT=near_miss; ACTOR=person and adjacent car door; CONFIDENCE=medium; NOTE=Door opens close to recording car; no contact visible.\n2026-09-06_12-11-33: VERDICT=near_miss; ACTOR=pedestrians, shopping cart, and adjacent car door; CONFIDENCE=medium; NOTE=People, cart, and door approach closely; no contact visible.\n2026-09-06_16-52-14: VERDICT=quiet; ACTOR=none; CONFIDENCE=high; NOTE=Only distant activity; nothing approaches the recording car.\n2026-09-06_17-09-36: VERDICT=near_miss; ACTOR=pedestrians; CONFIDENCE=medium; NOTE=Pedestrians pass alongside the car; no contact visible.\n2026-09-08_11-02-43: VERDICT=unclear; ACTOR=person beside recording car; CONFIDENCE=medium; NOTE=Person stands extremely close; possible hand contact falls outside view.",
+  "duration_sec": 82.590476875,
+  "exit_code": 0,
+  "session_id": "01a096a8-23c0-7c21-950f-4b690eb645c8",
+  "rollout_path": "/Users/adri/.codex/sessions/2026/09/12/rollout-2026-09-12T11-26-36-01a096a8-23c0-7c21-950f-4b690eb645c8.jsonl",
+  "tags": [
+    "pi-audit"
+  ]
+}

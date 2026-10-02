@@ -1,0 +1,19 @@
+{
+  "id": "20260914T052328Z-b60abb6b",
+  "time": "2026-09-14T05:23:28.944453Z",
+  "model": "gpt-6-astra",
+  "context": "Assess five user-supplied contact sheets for visible contact.",
+  "images": [
+    "/tmp/dd2/rd-1kv9pom-women-shakes-her-butt-and-opens-her-door-int.png",
+    "/tmp/dd2/rd-1l1b5ys-complete-dumbass-parks-into-non-existent-spo.png",
+    "/tmp/dd2/rd-1pnf9hq-door-ding.png",
+    "/tmp/dd2/rd-dh49wk-mr-piggy-door-ding.png",
+    "/tmp/dd2/rd-fcirxe-door-ding-why-people-are-so-careless.png"
+  ],
+  "prompt": "You are the visual advisor. Directly assess the five attached images yourself; do not delegate or call another advisor. Each image has 96 frames, 8 columns x 12 rows, chronological row-major. Decide for EACH whether physical contact between door/object and camera car is VISIBLE. direct = contact visibly occurs (door meets body); indirect = aftermath/motion implies it but touch is not seen; indeterminate = cannot tell. Do not infer contact solely from filename labels or proximity; camera car may be offscreen. Output exactly one line per image: \u003cname\u003e: EVIDENCE=direct|indirect|indeterminate; FRAME=\u003c1-96 or none\u003e; CONFIDENCE=low|medium|high; NOTE=\u003cup to 15 words\u003e. Names in attachment order: rd-1kv9pom-women-shakes-her-butt-and-opens-her-door-int; rd-1l1b5ys-complete-dumbass-parks-into-non-existent-spo; rd-1pnf9hq-door-ding; rd-dh49wk-mr-piggy-door-ding; rd-fcirxe-door-ding-why-people-are-so-careless. Use none when no frame supports the assigned evidence.",
+  "response": "rd-1kv9pom-women-shakes-her-butt-and-opens-her-door-int: EVIDENCE=indeterminate; FRAME=none; CONFIDENCE=medium; NOTE=Door approaches the foreground edge, but a definite meeting with camera-car bodywork is unresolved.\nrd-1l1b5ys-complete-dumbass-parks-into-non-existent-spo: EVIDENCE=indeterminate; FRAME=none; CONFIDENCE=medium; NOTE=Both door openings approach the camera; the possible contact interface is not clearly visible.\nrd-1pnf9hq-door-ding: EVIDENCE=indeterminate; FRAME=none; CONFIDENCE=medium; NOTE=Door opens toward foreground bodywork, but these sampled frames do not resolve actual touch.\nrd-dh49wk-mr-piggy-door-ding: EVIDENCE=indeterminate; FRAME=none; CONFIDENCE=high; NOTE=Open door extends toward the image boundary; contact with camera-car bodywork is not visible.\nrd-fcirxe-door-ding-why-people-are-so-careless: EVIDENCE=indeterminate; FRAME=none; CONFIDENCE=medium; NOTE=Door remains close to the foreground edge without a clearly visible contact point.",
+  "duration_sec": 89.692824333,
+  "exit_code": 0,
+  "session_id": "01a09e5c-46c5-7d33-9c5b-2a8dd48eda8c",
+  "rollout_path": "/Users/adri/.codex/sessions/2026/09/14/rollout-2026-09-14T00-20-42-01a09e5c-46c5-7d33-9c5b-2a8dd48eda8c.jsonl"
+}

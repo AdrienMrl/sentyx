@@ -1,0 +1,22 @@
+{
+  "id": "20260914T052042Z-0ad61dfa",
+  "time": "2026-09-14T05:20:42.208731Z",
+  "model": "gpt-6-astra",
+  "context": "Reach \u003c5% false positive and \u003c50% false negative on contact detection with a frozen V-JEPA 2.1 encoder plus a small trained head, on a high-quality mixed synthetic+real dataset.",
+  "images": [
+    "/tmp/dd2/garage-mustang-door.png",
+    "/tmp/dd2/rd-18onveu-littering-door-ding-combo-while-looking-into.png",
+    "/tmp/dd2/rd-1b9sobq-identify-car-parking-lot-ding.png",
+    "/tmp/dd2/rd-1baaqtc-door-ding-found-culprit-what-would-you-do-ne.png",
+    "/tmp/dd2/rd-1j18tgo-i-caught-the-culprit-who-scratched-my-car.png"
+  ],
+  "prompt": "Attached are 5 dense contact sheets, each 96 frames (8 columns x 12 rows, chronological) of one Tesla Sentry clip labelled as containing a door ding. For EACH, decide whether the moment of physical contact between the door/object and the car is VISIBLE in the supplied frames. Output one line per image:\n\u003cname\u003e: EVIDENCE=direct|indirect|indeterminate; FRAME=\u003c1-96 or none\u003e; CONFIDENCE=low|medium|high; NOTE=\u003cup to 15 words\u003e\ndirect = contact visibly occurs (door meets body); indirect = aftermath/motion implies it but the touch isn't seen; indeterminate = cannot tell.\nImages:\nImage 1: garage-mustang-door\nImage 2: rd-18onveu-littering-door-ding-combo-while-looking-into\nImage 3: rd-1b9sobq-identify-car-parking-lot-ding\nImage 4: rd-1baaqtc-door-ding-found-culprit-what-would-you-do-ne\nImage 5: rd-1j18tgo-i-caught-the-culprit-who-scratched-my-car\n",
+  "response": "garage-mustang-door: EVIDENCE=indeterminate; FRAME=none; CONFIDENCE=high; NOTE=Open door remains nearby; no visible meeting with the recording car’s body.\nrd-18onveu-littering-door-ding-combo-while-looking-into: EVIDENCE=indeterminate; FRAME=none; CONFIDENCE=medium; NOTE=Darkness and occlusion obscure the door edge; contact with the recording car is not visible.\nrd-1b9sobq-identify-car-parking-lot-ding: EVIDENCE=indeterminate; FRAME=none; CONFIDENCE=high; NOTE=Door opens toward camera, but foreground people obscure any possible contact point.\nrd-1baaqtc-door-ding-found-culprit-what-would-you-do-ne: EVIDENCE=indeterminate; FRAME=none; CONFIDENCE=medium; NOTE=Door swings toward frame boundary; cropping and blur prevent seeing whether it touches.\nrd-1j18tgo-i-caught-the-culprit-who-scratched-my-car: EVIDENCE=indeterminate; FRAME=none; CONFIDENCE=medium; NOTE=Door approaches the left foreground, but no unambiguous door-to-body contact is resolved.",
+  "duration_sec": 192.440685667,
+  "exit_code": 0,
+  "session_id": "01a09e59-5553-7a80-8f07-48394615567b",
+  "rollout_path": "/Users/adri/.codex/sessions/2026/09/14/rollout-2026-09-14T00-17-29-01a09e59-5553-7a80-8f07-48394615567b.jsonl",
+  "tags": [
+    "door-dense-annot"
+  ]
+}

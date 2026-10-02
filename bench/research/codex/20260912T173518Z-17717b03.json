@@ -1,0 +1,16 @@
+{
+  "id": "20260912T173518Z-17717b03",
+  "time": "2026-09-12T17:35:18.777667Z",
+  "model": "gpt-6-astra",
+  "context": "User requests physical contact assessment of two field contact sheets.",
+  "images": [
+    "/tmp/piaudit/2026-09-10_18-35-56.png",
+    "/tmp/piaudit/2026-09-10_18-37-09.png"
+  ],
+  "prompt": "You are the visual advisor; directly assess attached images yourself, do not delegate. Each image is 48 evenly sampled frames, 6 columns x 8 rows chronological, from Tesla owner car Sentry footage. For EACH image decide whether anything physically touched car anywhere in clip. contact = physical touch; near_miss = close approach but no contact visible; quiet = no approach; unclear = cannot tell. Be careful about occlusion and missing frames. Output exactly one line each: \u003cevent\u003e: VERDICT=contact|near_miss|quiet|unclear; ACTOR=\u003cwho/what or none\u003e; CONFIDENCE=low|medium|high; NOTE=\u003cup to 12 words\u003e. Image 1 event 2026-09-10_18-35-56. Image 2 event 2026-09-10_18-37-09.",
+  "response": "2026-09-10_18-35-56: VERDICT=near_miss; ACTOR=person holding phone; CONFIDENCE=medium; NOTE=Approaches car; no physical contact visible in sampled frames.\n2026-09-10_18-37-09: VERDICT=unclear; ACTOR=person holding phone; CONFIDENCE=medium; NOTE=Reaches toward car at frame edge; possible contact obscured.",
+  "duration_sec": 16.377884375,
+  "exit_code": 0,
+  "session_id": "01a096af-db25-7062-b02d-d5ecb6933d12",
+  "rollout_path": "/Users/adri/.codex/sessions/2026/09/12/rollout-2026-09-12T11-35-02-01a096af-db25-7062-b02d-d5ecb6933d12.jsonl"
+}

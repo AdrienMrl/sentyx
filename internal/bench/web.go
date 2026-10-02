@@ -1,15 +1,19 @@
 package bench
 
 import (
+	"context"
 	"embed"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
+	"time"
 )
 
 //go:embed webui/index.html
@@ -19,9 +23,17 @@ var webUI embed.FS
 // one endpoint that writes a label back. It is a local tool — it binds to
 // loopback, has no auth, and edits a file in the working tree.
 type Editor struct {
-	DatasetPath string
-	ClipRoot    string
-	ResultsDir  string
+	DatasetPath   string
+	ClipRoot      string
+	ResultsDir    string
+	SyntheticRoot string
+	// RemovedRoot is where a rejected case's footage is moved. Rejecting is a
+	// judgement about the clip ("this is a phone video of a screen"), and a
+	// judgement can be wrong, so the video is set aside rather than deleted.
+	RemovedRoot string
+	// FFmpegPath cuts a clip down to the part worth analyzing. Empty uses
+	// "ffmpeg" from PATH; trimming is refused when it is not installed.
+	FFmpegPath string
 }
 
 // Handler returns the editor's routes.
@@ -29,7 +41,15 @@ func (e *Editor) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", e.handleIndex)
 	mux.HandleFunc("GET /api/dataset", e.handleDataset)
+	mux.HandleFunc("GET /api/failure-review", e.handleFailureReview)
+	mux.HandleFunc("GET /api/candidates", e.handleCandidates)
+	mux.HandleFunc("GET /candidate-clips/{id}/{name}", e.handleCandidateClip)
+	mux.HandleFunc("GET /api/synthetic", e.handleSynthetic)
+	mux.HandleFunc("GET /synthetic/{id}/{name}", e.handleSyntheticClip)
+	mux.HandleFunc("PUT /api/synthetic/{id}", e.handleSyntheticEdit)
 	mux.HandleFunc("PUT /api/cases/{id}", e.handlePutCase)
+	mux.HandleFunc("DELETE /api/cases/{id}", e.handleDeleteCase)
+	mux.HandleFunc("POST /api/cases/{id}/clips/{name}/trim", e.handleTrimClip)
 	mux.HandleFunc("GET /clips/{id}/{name}", e.handleClip)
 	mux.HandleFunc("GET /api/runs", e.handleRuns)
 	mux.HandleFunc("GET /api/runs/{id}", e.handleRun)
@@ -231,6 +251,199 @@ func (e *Editor) handlePutCase(w http.ResponseWriter, r *http.Request) {
 	}
 	saved, _ := ds.Find(id)
 	writeJSON(w, caseView{Case: *saved, AvailableClips: e.clipsOnDisk(id)})
+}
+
+// handleDeleteCase drops a case from the dataset and moves its clips out of
+// the clip root. Footage that is not worth labeling — a phone video of a
+// screen, an event that happens off camera — otherwise sits in the list
+// forever, and a case left unlabeled is indistinguishable from one not looked
+// at yet.
+func (e *Editor) handleDeleteCase(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" || id != filepath.Base(id) {
+		http.Error(w, "case must be a plain name", http.StatusBadRequest)
+		return
+	}
+	ds, err := e.load()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	kept := make([]Case, 0, len(ds.Cases))
+	found := false
+	for _, c := range ds.Cases {
+		if c.ID == id {
+			found = true
+			continue
+		}
+		kept = append(kept, c)
+	}
+	if !found {
+		http.Error(w, "no such case: "+id, http.StatusNotFound)
+		return
+	}
+	ds.Cases = kept
+	if err := SaveDataset(e.DatasetPath, ds); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	// The dataset is the artifact, so it is written first. A failure to move
+	// the video after that leaves footage behind but no dangling case, which
+	// is the harmless direction to fail in.
+	moved, err := e.retireClips(id)
+	if err != nil {
+		http.Error(w, "case removed from the dataset, but its clips could not be moved: "+err.Error(),
+			http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]string{"removed": id, "clips_moved_to": moved})
+}
+
+// retireClips moves a case's clip directory under RemovedRoot, never
+// overwriting an earlier rejection of the same id. It reports where the
+// footage went, or "" when the case had none on this machine.
+func (e *Editor) retireClips(id string) (string, error) {
+	src := filepath.Join(e.ClipRoot, id)
+	if _, err := os.Stat(src); errors.Is(err, os.ErrNotExist) {
+		return "", nil
+	} else if err != nil {
+		return "", err
+	}
+	if e.RemovedRoot == "" {
+		return "", errors.New("no removed-clips directory is configured")
+	}
+	if err := os.MkdirAll(e.RemovedRoot, 0o755); err != nil {
+		return "", err
+	}
+	dest := filepath.Join(e.RemovedRoot, id)
+	for n := 2; ; n++ {
+		if _, err := os.Stat(dest); errors.Is(err, os.ErrNotExist) {
+			break
+		}
+		dest = filepath.Join(e.RemovedRoot, fmt.Sprintf("%s-%d", id, n))
+	}
+	if err := os.Rename(src, dest); err != nil {
+		return "", err
+	}
+	return dest, nil
+}
+
+// trimRequest is the window to keep, in seconds from the start of the clip.
+type trimRequest struct {
+	StartSeconds float64 `json:"start_seconds"`
+	EndSeconds   float64 `json:"end_seconds"`
+}
+
+// handleTrimClip cuts a clip down to one window and points the case at the
+// result. Reposted footage is often a montage — several camera angles in a
+// row, then somebody's phone pointed at the screen — and analyzing the whole
+// thing measures the edit rather than the event. The source file is left in
+// the case directory, so the tabs still offer it and a bad cut costs nothing.
+func (e *Editor) handleTrimClip(w http.ResponseWriter, r *http.Request) {
+	id, name := r.PathValue("id"), r.PathValue("name")
+	var req trimRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "body is not a trim request: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if req.StartSeconds < 0 {
+		http.Error(w, "start_seconds must not be negative", http.StatusBadRequest)
+		return
+	}
+	if req.EndSeconds <= req.StartSeconds {
+		http.Error(w, "end_seconds must come after start_seconds", http.StatusBadRequest)
+		return
+	}
+	src, err := e.clipPath(id, name)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	ds, err := e.load()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	c, ok := ds.Find(id)
+	if !ok {
+		http.Error(w, "no such case: "+id, http.StatusNotFound)
+		return
+	}
+
+	dest := e.trimDest(id, name)
+	if err := runTrim(r.Context(), e.ffmpeg(), src, dest, req.StartSeconds, req.EndSeconds); err != nil {
+		os.Remove(dest) // a half-written cut is worse than none
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// The cut replaces the source in what the model is shown: trimming means
+	// the untrimmed clip was not what you wanted analyzed.
+	trimmed := filepath.Base(dest)
+	replaced := false
+	for i, clip := range c.Clips {
+		if clip == name {
+			c.Clips[i], replaced = trimmed, true
+		}
+	}
+	if !replaced {
+		c.Clips = []string{trimmed}
+	}
+	if err := SaveDataset(e.DatasetPath, ds); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	saved, _ := ds.Find(id)
+	writeJSON(w, caseView{Case: *saved, AvailableClips: e.clipsOnDisk(id)})
+}
+
+func (e *Editor) ffmpeg() string {
+	if e.FFmpegPath == "" {
+		return "ffmpeg"
+	}
+	return e.FFmpegPath
+}
+
+// trimDest names the cut beside its source, never overwriting an earlier one.
+func (e *Editor) trimDest(id, name string) string {
+	dir := filepath.Join(e.ClipRoot, id)
+	base := strings.TrimSuffix(name, filepath.Ext(name))
+	dest := filepath.Join(dir, base+"-trim.mp4")
+	for n := 2; ; n++ {
+		if _, err := os.Stat(dest); errors.Is(err, os.ErrNotExist) {
+			return dest
+		}
+		dest = filepath.Join(dir, fmt.Sprintf("%s-trim-%d.mp4", base, n))
+	}
+}
+
+// runTrim re-encodes rather than stream-copying: a copy can only cut on a
+// keyframe, which on these clips is up to a couple of seconds off — enough to
+// leave in the tail you were trying to remove. Audio is dropped; sentry
+// footage has none, and the analyzer does not listen.
+func runTrim(ctx context.Context, ffmpeg, src, dest string, start, end float64) error {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, ffmpeg,
+		"-nostdin", "-y",
+		"-ss", strconv.FormatFloat(start, 'f', 3, 64),
+		"-i", src,
+		"-t", strconv.FormatFloat(end-start, 'f', 3, 64),
+		"-an", "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+		"-movflags", "+faststart", dest)
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		if errors.Is(err, exec.ErrNotFound) || errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("%s is not installed, so clips cannot be trimmed here", ffmpeg)
+		}
+		msg := strings.TrimSpace(stderr.String())
+		if i := strings.LastIndex(msg, "\n"); i >= 0 {
+			msg = msg[i+1:] // ffmpeg's last line is the actual complaint
+		}
+		return fmt.Errorf("ffmpeg: %v: %s", err, msg)
+	}
+	return nil
 }
 
 // handleClip streams one clip. http.ServeFile answers range requests, which is

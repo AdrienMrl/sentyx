@@ -1,0 +1,20 @@
+{
+  "id": "20260914T053148Z-532ca3da",
+  "time": "2026-09-14T05:31:48.26739Z",
+  "model": "gpt-6-astra",
+  "context": "Reach \u003c5% false positive and \u003c50% false negative on contact detection with a frozen V-JEPA 2.1 encoder plus a small trained head, on a high-quality mixed synthetic+real dataset.",
+  "images": [
+    "/tmp/neg2/yt-vlnskutaoli-sentry-mode-live-camera.png",
+    "/tmp/neg2/yt-wwtmkrf_ljg.png",
+    "/tmp/neg2/yt-zw51rmujffy-tesla-does-not-see-you-if-you-are-pushing-a.png"
+  ],
+  "prompt": "Attached are 3 dense contact sheets, each 96 frames (8 columns x 12 rows, chronological) of one Tesla Sentry clip LABELLED as containing NO contact (a near-miss or quiet event). For EACH, decide whether the car is actually physically touched anywhere in the clip. Output one line per image:\n\u003cname\u003e: EVIDENCE=direct|indirect|indeterminate|none; CONFIDENCE=low|medium|high; NOTE=\u003cup to 15 words\u003e\ndirect = a touch is visibly happening; indirect = aftermath/motion implies a touch; none = clearly nothing touches; indeterminate = cannot tell.\nImages:\nImage 1: yt-vlnskutaoli-sentry-mode-live-camera\nImage 2: yt-wwtmkrf_ljg\nImage 3: yt-zw51rmujffy-tesla-does-not-see-you-if-you-are-pushing-a\n",
+  "response": "yt-vlnskutaoli-sentry-mode-live-camera: EVIDENCE=none; CONFIDENCE=high; NOTE=No visible physical interaction with the recording car.\nyt-wwtmkrf_ljg: EVIDENCE=indeterminate; CONFIDENCE=medium; NOTE=People touch neighboring cars; close passes obscure whether anyone touches the recording Tesla.\nyt-zw51rmujffy-tesla-does-not-see-you-if-you-are-pushing-a: EVIDENCE=none; CONFIDENCE=medium; NOTE=Recording Tesla passes the pedestrian and cart without visible contact or impact motion.",
+  "duration_sec": 50.21452275,
+  "exit_code": 0,
+  "session_id": "01a09e65-aab4-7e10-83dd-6c978e4aaf05",
+  "rollout_path": "/Users/adri/.codex/sessions/2026/09/14/rollout-2026-09-14T00-30-58-01a09e65-aab4-7e10-83dd-6c978e4aaf05.jsonl",
+  "tags": [
+    "neg-dense-annot"
+  ]
+}

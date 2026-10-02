@@ -1,0 +1,22 @@
+{
+  "id": "20260914T043018Z-89465fe2",
+  "time": "2026-09-14T04:30:18.138262Z",
+  "model": "gpt-6-astra",
+  "context": "Reach \u003c5% false positive and \u003c50% false negative on contact detection with a frozen V-JEPA 2.1 encoder plus a small trained head, on a high-quality mixed synthetic+real dataset.",
+  "images": [
+    "/tmp/wn2/2aHy4P1Q8BE.png",
+    "/tmp/wn2/KOLh3x0yCd4.png",
+    "/tmp/wn2/m3zyWQS05ZE.png",
+    "/tmp/wn2/oDSUOhOvesw.png",
+    "/tmp/wn2/oEFzICma8DU.png"
+  ],
+  "prompt": "Attached are 5 contact sheets, each 48 frames (6x8, chronological) of one Tesla/dashcam clip. For EACH image, decide whether anything physically touches the car. Output one line per image:\n\u003cname\u003e: VERDICT=contact|near_miss|quiet|unclear; ACTOR=\u003cwho/what or none\u003e; CONFIDENCE=low|medium|high; NOTE=\u003cup to 12 words\u003e\ncontact=physically touches; near_miss=close approach no contact; quiet=nothing approaches; unclear=cannot tell.\nImages:\nImage 1: 2aHy4P1Q8BE\nImage 2: KOLh3x0yCd4\nImage 3: m3zyWQS05ZE\nImage 4: oDSUOhOvesw\nImage 5: oEFzICma8DU\n",
+  "response": "2aHy4P1Q8BE: VERDICT=unclear; ACTOR=moving dark vehicle; CONFIDENCE=low; NOTE=Vehicle approaches parked black car; possible contact area is obscured.\nKOLh3x0yCd4: VERDICT=near_miss; ACTOR=white sedan; CONFIDENCE=medium; NOTE=Sedan moves across nearby lanes; no physical contact visible.\nm3zyWQS05ZE: VERDICT=contact; ACTOR=person in Cookie Monster costume; CONFIDENCE=medium; NOTE=Appears to strike windshield, with synchronized camera shake.\noDSUOhOvesw: VERDICT=near_miss; ACTOR=gray sedan; CONFIDENCE=high; NOTE=Sedan passes close alongside camera car without visible contact.\noEFzICma8DU: VERDICT=near_miss; ACTOR=white sedan entering from right; CONFIDENCE=medium; NOTE=Crosses closely ahead of camera car; no contact visible.",
+  "duration_sec": 58.242205375,
+  "exit_code": 0,
+  "session_id": "01a09e2d-3cd0-7c11-8f0a-d6b3b7037d16",
+  "rollout_path": "/Users/adri/.codex/sessions/2026/09/13/rollout-2026-09-13T23-29-19-01a09e2d-3cd0-7c11-8f0a-d6b3b7037d16.jsonl",
+  "tags": [
+    "web-new2-audit"
+  ]
+}

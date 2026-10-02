@@ -203,6 +203,10 @@ func (c *Compressor) Compress(ctx context.Context, inputPath string) (Result, er
 }
 
 func (c *Compressor) runFFmpeg(ctx context.Context, inputPath, tempPath, filter, encoder string, target int64) error {
+	st, err := os.Stat(inputPath)
+	if err != nil {
+		return err
+	}
 	args := []string{
 		"-y", "-hide_banner", "-loglevel", "error",
 		"-i", inputPath,
@@ -212,6 +216,9 @@ func (c *Compressor) runFFmpeg(ctx context.Context, inputPath, tempPath, filter,
 		args = append(args, "-vf", filter)
 	}
 	args = append(args,
+		// Never let a failed/ineffective transcode grow without bound. Outputs
+		// near this ceiling fail the savings check and the original is used.
+		"-fs", strconv.FormatInt(st.Size(), 10),
 		"-c:v", encoder,
 		"-b:v", strconv.FormatInt(target, 10),
 		"-g", "60",

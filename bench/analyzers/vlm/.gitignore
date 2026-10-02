@@ -1,0 +1,4 @@
+# weights, frames, adapters and runs — all reproducible, none small
+.venv/
+__pycache__/
+work/

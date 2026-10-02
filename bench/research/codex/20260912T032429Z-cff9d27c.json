@@ -1,0 +1,25 @@
+{
+  "id": "20260912T032429Z-cff9d27c",
+  "time": "2026-09-12T03:24:29.558131Z",
+  "model": "gpt-6-astra",
+  "context": "Reach \u003c5% false positive and \u003c50% false negative on contact detection with a frozen V-JEPA 2.1 encoder plus a small trained head, on a high-quality mixed synthetic+real dataset.",
+  "images": [
+    "/tmp/batch/yt-ddxe24mhoo8-door-ding-caught-on-tesla-sentry-mode-teslac.png",
+    "/tmp/batch/yt-fb4xc81dtfi-hit-and-run-against-my-model-s-caught-on-sen.png",
+    "/tmp/batch/yt-fzmjhvxbrom-runaway-shopping-cart-hits-my-tesla-caught-o.png",
+    "/tmp/batch/yt-hwgnhmwmi2k-uk-sentry-mode-catches-guy-keying-tesla-mode.png",
+    "/tmp/batch/yt-ifmu3dwvdxs-tesla-sentry-mode-surveillance-system-catche.png",
+    "/tmp/batch/yt-kzka8g6uirm-tesla-sentry-mode-captures-a-hit-and-run-of.png",
+    "/tmp/batch/yt-lcvrw0g-fb8-careless-driver-scratches-parked-tesla-caugh.png",
+    "/tmp/batch/yt-m-3bsbgvozq-door-ding-caught-on-camera-teslacam-live.png"
+  ],
+  "prompt": "You are triaging Tesla Sentry Mode clips for a contact-detection dataset, blind to any model score. Attached are 8 contact sheets; each image matches the case listed below and samples that clip over its full duration (16 frames, left-to-right then top-to-bottom). For EACH case output exactly one line:\n\u003ccase_id\u003e: VERDICT=contact|near_miss|quiet|unclear; ACTOR=\u003cwho/what or none\u003e; CONFIDENCE=low|medium|high; NOTE=\u003cup to 12 words\u003e\nDefinitions: contact = something physically touches the car; near_miss = a person or object approaches closely but no contact is visible; quiet = nobody/nothing approaches; unclear = cannot tell.\nCases:\nImage 1: yt-ddxe24mhoo8-door-ding-caught-on-tesla-sentry-mode-teslac (17.133333s)\nImage 2: yt-fb4xc81dtfi-hit-and-run-against-my-model-s-caught-on-sen (118.900000s)\nImage 3: yt-fzmjhvxbrom-runaway-shopping-cart-hits-my-tesla-caught-o (71.000000s)\nImage 4: yt-hwgnhmwmi2k-uk-sentry-mode-catches-guy-keying-tesla-mode (37.151927s)\nImage 5: yt-ifmu3dwvdxs-tesla-sentry-mode-surveillance-system-catche (28.800000s)\nImage 6: yt-kzka8g6uirm-tesla-sentry-mode-captures-a-hit-and-run-of (53.800000s)\nImage 7: yt-lcvrw0g-fb8-careless-driver-scratches-parked-tesla-caugh (57.500000s)\nImage 8: yt-m-3bsbgvozq-door-ding-caught-on-camera-teslacam-live (25.866667s)\n",
+  "response": "yt-ddxe24mhoo8-door-ding-caught-on-tesla-sentry-mode-teslac: VERDICT=unclear; ACTOR=adjacent car door; CONFIDENCE=medium; NOTE=Door opens very close; potential contact point is outside view.\nyt-fb4xc81dtfi-hit-and-run-against-my-model-s-caught-on-sen: VERDICT=quiet; ACTOR=none; CONFIDENCE=high; NOTE=People remain near distant parked car; nobody approaches recording car.\nyt-fzmjhvxbrom-runaway-shopping-cart-hits-my-tesla-caught-o: VERDICT=quiet; ACTOR=none; CONFIDENCE=medium; NOTE=No approaching person or object discernible in these sampled frames.\nyt-hwgnhmwmi2k-uk-sentry-mode-catches-guy-keying-tesla-mode: VERDICT=unclear; ACTOR=passing pedestrian; CONFIDENCE=medium; NOTE=Hand passes near recording car; possible contact is obscured.\nyt-ifmu3dwvdxs-tesla-sentry-mode-surveillance-system-catche: VERDICT=near_miss; ACTOR=pedestrian carrying bag; CONFIDENCE=medium; NOTE=Person approaches beside adjacent vehicle; no recording-car contact visible.\nyt-kzka8g6uirm-tesla-sentry-mode-captures-a-hit-and-run-of: VERDICT=quiet; ACTOR=none; CONFIDENCE=high; NOTE=People and vehicles remain across the parking aisle.\nyt-lcvrw0g-fb8-careless-driver-scratches-parked-tesla-caugh: VERDICT=unclear; ACTOR=passing dark car; CONFIDENCE=medium; NOTE=Car passes extremely close; potential contact area remains outside view.\nyt-m-3bsbgvozq-door-ding-caught-on-camera-teslacam-live: VERDICT=unclear; ACTOR=adjacent car door; CONFIDENCE=medium; NOTE=Open door fills foreground; contact with recording car is not visible.",
+  "duration_sec": 82.658708416,
+  "exit_code": 0,
+  "session_id": "01a093a3-e53b-7d90-ad15-f4c7534a1a0f",
+  "rollout_path": "/Users/adri/.codex/sessions/2026/09/11/rollout-2026-09-11T21-23-06-01a093a3-e53b-7d90-ad15-f4c7534a1a0f.jsonl",
+  "tags": [
+    "batch-audit"
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "id": "20260912T032053Z-bb6122ae",
+  "time": "2026-09-12T03:20:53.492877Z",
+  "model": "gpt-6-astra",
+  "context": "Reach \u003c5% false positive and \u003c50% false negative on contact detection with a frozen V-JEPA 2.1 encoder plus a small trained head, on a high-quality mixed synthetic+real dataset.",
+  "images": [
+    "/tmp/audit_deep/yt-ujjdswplsic-shopping-cart-crash-into-tesla-model-3-caugh.png"
+  ],
+  "prompt": "You are re-auditing an ambiguous dataset label, blind to any model score. The attached image is a dense contact sheet of 48 frames sampled evenly across one Tesla Sentry Mode clip, ordered left-to-right then top-to-bottom (chronological, 6 columns x 8 rows). A previous 16-frame pass could not tell whether anything touched the car. Decide now; if contact is even momentary or partial, say so. Reply with exactly:\nVERDICT: contact | no_contact | indeterminate\nCLOSEST_MOMENT: frame number(s) of nearest approach or contact (1-48), else none\nACTOR: who or what is involved, or none\nVISIBILITY: anything occluded, off-camera, or between frames\nCONFIDENCE: low | medium | high\nEVIDENCE: one or two sentences naming what is visible",
+  "response": "VERDICT: contact\nCLOSEST_MOMENT: 24-25\nACTOR: unattended shopping cart\nVISIBILITY: The apparent contact point is partly hidden by the car’s body at the right edge; impact falls between sampled frames.\nCONFIDENCE: medium\nEVIDENCE: The cart rolls toward the car, reaches its visible edge in frame 24, then abruptly changes orientation and stops alongside it by frame 25. This supports a brief, partially occluded impact.",
+  "duration_sec": 15.273696625,
+  "exit_code": 0,
+  "session_id": "01a093a1-a4ef-7691-9673-487783c975c0",
+  "rollout_path": "/Users/adri/.codex/sessions/2026/09/11/rollout-2026-09-11T21-20-39-01a093a1-a4ef-7691-9673-487783c975c0.jsonl",
+  "tags": [
+    "label-audit",
+    "deep"
+  ]
+}

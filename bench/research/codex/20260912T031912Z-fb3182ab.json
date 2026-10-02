@@ -1,0 +1,19 @@
+{
+  "id": "20260912T031912Z-fb3182ab",
+  "time": "2026-09-12T03:19:12.829182Z",
+  "model": "gpt-6-astra",
+  "context": "Reach \u003c5% false positive and \u003c50% false negative on contact detection with a frozen V-JEPA 2.1 encoder plus a small trained head, on a high-quality mixed synthetic+real dataset.",
+  "images": [
+    "/tmp/audit_deep/rd-bo8byv-video-caught-checking-out-my-model-3-by-sent.png"
+  ],
+  "prompt": "You are re-auditing an ambiguous dataset label, blind to any model score. The attached image is a dense contact sheet of 48 frames sampled evenly across one Tesla Sentry Mode clip, ordered left-to-right then top-to-bottom (chronological, 6 columns x 8 rows). A previous 16-frame pass could not tell whether anything touched the car. Decide now; if contact is even momentary or partial, say so. Reply with exactly:\nVERDICT: contact | no_contact | indeterminate\nCLOSEST_MOMENT: frame number(s) of nearest approach or contact (1-48), else none\nACTOR: who or what is involved, or none\nVISIBILITY: anything occluded, off-camera, or between frames\nCONFIDENCE: low | medium | high\nEVIDENCE: one or two sentences naming what is visible",
+  "response": "VERDICT: indeterminate\nCLOSEST_MOMENT: 21, 32–33\nACTOR: Man in the light-blue shirt\nVISIBILITY: His extended hand goes off-camera; the adjacent car’s open door obscures some movement.\nCONFIDENCE: medium\nEVIDENCE: He reaches toward the recording Tesla in frame 21 and extends his arm beyond the image boundary in frames 32–33. Contact is not visibly established, but momentary contact cannot be ruled out.",
+  "duration_sec": 53.396201625,
+  "exit_code": 0,
+  "session_id": "01a0939f-825c-7350-8ddf-32b6c3e1ef73",
+  "rollout_path": "/Users/adri/.codex/sessions/2026/09/11/rollout-2026-09-11T21-18-19-01a0939f-825c-7350-8ddf-32b6c3e1ef73.jsonl",
+  "tags": [
+    "label-audit",
+    "deep"
+  ]
+}

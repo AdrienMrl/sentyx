@@ -1,0 +1,22 @@
+{
+  "id": "20260914T052827Z-7d2ae537",
+  "time": "2026-09-14T05:28:27.093982Z",
+  "model": "gpt-6-astra",
+  "context": "Reach \u003c5% false positive and \u003c50% false negative on contact detection with a frozen V-JEPA 2.1 encoder plus a small trained head, on a high-quality mixed synthetic+real dataset.",
+  "images": [
+    "/tmp/neg2/rd-1eqotqc-4-4-magnitude-earthquake-in-pasadena-ca.png",
+    "/tmp/neg2/rd-g1dq6a-sentry-mode-activated-beesy-intruder.png",
+    "/tmp/neg2/rd-mpm6my-my-favorite-sentry-event-i-ve-captured.png",
+    "/tmp/neg2/yt-3zve4fsafyc.png",
+    "/tmp/neg2/yt-iv4q0tiawa4.png"
+  ],
+  "prompt": "Attached are 5 dense contact sheets, each 96 frames (8 columns x 12 rows, chronological) of one Tesla Sentry clip LABELLED as containing NO contact (a near-miss or quiet event). For EACH, decide whether the car is actually physically touched anywhere in the clip. Output one line per image:\n\u003cname\u003e: EVIDENCE=direct|indirect|indeterminate|none; CONFIDENCE=low|medium|high; NOTE=\u003cup to 15 words\u003e\ndirect = a touch is visibly happening; indirect = aftermath/motion implies a touch; none = clearly nothing touches; indeterminate = cannot tell.\nImages:\nImage 1: rd-1eqotqc-4-4-magnitude-earthquake-in-pasadena-ca\nImage 2: rd-g1dq6a-sentry-mode-activated-beesy-intruder\nImage 3: rd-mpm6my-my-favorite-sentry-event-i-ve-captured\nImage 4: yt-3zve4fsafyc\nImage 5: yt-iv4q0tiawa4\n",
+  "response": "rd-1eqotqc-4-4-magnitude-earthquake-in-pasadena-ca: EVIDENCE=none; CONFIDENCE=medium; NOTE=No visible contact; scene movement alone does not establish a touch.\nrd-g1dq6a-sentry-mode-activated-beesy-intruder: EVIDENCE=indeterminate; CONFIDENCE=medium; NOTE=Insect approaches lens closely; hovering versus actual contact cannot be resolved.\nrd-mpm6my-my-favorite-sentry-event-i-ve-captured: EVIDENCE=none; CONFIDENCE=high; NOTE=Elephants and people cross at a visible distance from the recording car.\nyt-3zve4fsafyc: EVIDENCE=none; CONFIDENCE=high; NOTE=Pedestrian crosses without visibly reaching toward or touching the car.\nyt-iv4q0tiawa4: EVIDENCE=indeterminate; CONFIDENCE=low; NOTE=Person passes close in darkness; hands and potential contact points are insufficiently visible.",
+  "duration_sec": 166.414859125,
+  "exit_code": 0,
+  "session_id": "01a09e60-d4e7-70f3-ac13-08a6fad17a57",
+  "rollout_path": "/Users/adri/.codex/sessions/2026/09/14/rollout-2026-09-14T00-25-41-01a09e60-d4e7-70f3-ac13-08a6fad17a57.jsonl",
+  "tags": [
+    "neg-dense-annot"
+  ]
+}

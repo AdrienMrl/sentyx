@@ -8,12 +8,14 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/AdrienMrl/teslcam/internal/cameraselect"
+	"github.com/AdrienMrl/teslcam/internal/clipretention"
 	"github.com/AdrienMrl/teslcam/internal/copyout"
 	"github.com/AdrienMrl/teslcam/internal/eventupload"
 	"github.com/AdrienMrl/teslcam/internal/videocompress"
@@ -38,14 +40,15 @@ type Config struct {
 	CopyTo     string // extract stable files into this local directory
 	CopyPrefix string // only extract files under this image path prefix
 
-	PostTo           string        // server base URL; extracted files are pushed there
-	PostToken        string        // bearer token for the server; empty = none
-	HTTPClient       *http.Client  // used for uploads when set (e.g. the LTE fallback client); nil keeps the uploader's default
-	DeviceID         string        // stable source device identifier used in event keys
-	RetryDelay       time.Duration // upload retry delay; required when PostTo is set
-	EventSettleDelay time.Duration // quiet time after the last stable file before finalization
-	SpoolDBPath      string        // durable pending-upload queue DB; required when PostTo is set
-	SpoolMaxBytes    int64         // cap on the durable spool; required (> 0) when PostTo is set
+	PostTo              string        // server base URL; extracted files are pushed there
+	PostToken           string        // bearer token for the server; empty = none
+	HTTPClient          *http.Client  // used for uploads when set (e.g. the LTE fallback client); nil keeps the uploader's default
+	DeviceID            string        // stable source device identifier used in event keys
+	RetryDelay          time.Duration // upload retry delay; required when PostTo is set
+	EventSettleDelay    time.Duration // quiet time after the last stable file before finalization
+	SpoolDBPath         string        // durable pending-upload queue DB; required when PostTo is set
+	SpoolMaxBytes       int64         // cap on the durable spool; required (> 0) when PostTo is set
+	StorageReserveBytes int64         // available filesystem space reserved for the OS
 	// VideoCompression, when non-nil, compresses eligible MP4s before upload.
 	// Other files and failed/ineffective transcodes use their original bytes.
 	VideoCompression *videocompress.Config
@@ -175,12 +178,25 @@ func Run(ctx context.Context, cfg Config) error {
 	}()
 
 	var uploader *eventupload.Client
+	var retention *clipretention.Manager
+	if cfg.PostTo != "" {
+		retention, err = clipretention.New(cfg.CopyTo, cfg.CopyPrefix, cfg.SpoolMaxBytes, cfg.StorageReserveBytes, cfg.Logf)
+		if err != nil {
+			return err
+		}
+		// Reclaim before opening SQLite, which itself needs writable disk space.
+		if err = retention.Sweep(); err != nil {
+			return err
+		}
+		go retention.Run(ctx)
+	}
 	if cfg.PostTo != "" {
 		uploader, err = eventupload.New(eventupload.Config{
 			BaseURL: cfg.PostTo, RetryDelay: cfg.RetryDelay,
 			SettleDelay: cfg.EventSettleDelay, DeviceID: cfg.DeviceID, Token: cfg.PostToken,
 			SpoolDBPath: cfg.SpoolDBPath, SpoolMaxBytes: cfg.SpoolMaxBytes, Logf: cfg.Logf,
 			HTTPClient: cfg.HTTPClient,
+			Retain:     retention.Allowed,
 		})
 		if err != nil {
 			return err
@@ -215,7 +231,17 @@ func Run(ctx context.Context, cfg Config) error {
 				case <-ctx.Done():
 					return
 				case job := <-compressionJobs:
+					st, statErr := os.Stat(job.localPath)
+					if statErr != nil {
+						continue
+					}
+					release, reserveErr := retention.Begin(job.imagePath, 2*st.Size())
+					if reserveErr != nil {
+						cfg.Logf("compression skipped: %v", reserveErr)
+						continue
+					}
 					result, err := compressor.Compress(ctx, job.localPath)
+					release()
 					if err != nil {
 						cfg.Logf("compression error for %s (uploading original): %v", job.imagePath, err)
 						uploader.Enqueue(eventupload.Item{LocalPath: job.localPath, ImagePath: job.imagePath})
@@ -277,6 +303,12 @@ func Run(ctx context.Context, cfg Config) error {
 			ImagePath:  cfg.ImagePath,
 			DestDir:    cfg.CopyTo,
 			PathPrefix: cfg.CopyPrefix,
+			BeforeWrite: func(path string, bytes int64) (func(), error) {
+				if retention == nil {
+					return func() {}, nil
+				}
+				return retention.Begin(path, bytes)
+			},
 		})
 		if err != nil {
 			return err

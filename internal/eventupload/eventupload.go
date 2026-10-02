@@ -43,6 +43,8 @@ type Config struct {
 	SpoolDBPath   string
 	SpoolMaxBytes int64
 	Logf          func(format string, v ...any)
+	// Retain rejects events explicitly discarded by local retention policy.
+	Retain func(imagePath string) bool
 }
 
 type Item struct {
@@ -107,6 +109,9 @@ func New(cfg Config) (*Client, error) {
 }
 
 func (c *Client) Enqueue(it Item) bool {
+	if c.cfg.Retain != nil && !c.cfg.Retain(it.ImagePath) {
+		return false
+	}
 	sourceID, name, err := parseImagePath(it.ImagePath)
 	if err != nil || strings.HasPrefix(sourceID, "._") || strings.HasPrefix(name, "._") {
 		return false
@@ -144,6 +149,18 @@ func (c *Client) Pending() int {
 func (c *Client) Run(ctx context.Context, onDone func(Item), onError func(Item, error), onFinalized func(string, int)) error {
 	if c.store != nil {
 		defer c.store.close()
+		if c.cfg.Retain != nil {
+			ids, err := c.store.sourceIDs()
+			if err != nil {
+				return err
+			}
+			for _, id := range ids {
+				path := eventImagePath(id) + "/event.json"
+				if !c.cfg.Retain(path) {
+					c.discard(path)
+				}
+			}
+		}
 		c.reconcile()
 	}
 	tickEvery := c.cfg.SettleDelay / 4
@@ -156,11 +173,25 @@ func (c *Client) Run(ctx context.Context, onDone func(Item), onError func(Item, 
 	tick := time.NewTicker(tickEvery)
 	defer tick.Stop()
 	for {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		if it, ok := c.pop(); ok {
+			if c.cfg.Retain != nil && !c.cfg.Retain(it.ImagePath) {
+				c.mu.Lock()
+				c.inFlight--
+				c.mu.Unlock()
+				c.discard(it.ImagePath)
+				continue
+			}
 			err := c.processItem(ctx, it)
 			c.mu.Lock()
 			c.inFlight--
 			c.mu.Unlock()
+			if c.cfg.Retain != nil && !c.cfg.Retain(it.ImagePath) {
+				c.discard(it.ImagePath)
+				continue
+			}
 			if err != nil {
 				onError(it, err)
 				time.AfterFunc(c.cfg.RetryDelay, func() { c.Enqueue(it) })
@@ -187,6 +218,10 @@ func (c *Client) Run(ctx context.Context, onDone func(Item), onError func(Item, 
 		case <-c.wake:
 		case now := <-tick.C:
 			for _, ev := range c.events {
+				if c.cfg.Retain != nil && !c.cfg.Retain(eventImagePath(ev.sourceID)+"/event.json") {
+					c.discard(eventImagePath(ev.sourceID) + "/event.json")
+					continue
+				}
 				if !ev.dirty || ev.due.After(now) {
 					continue
 				}
@@ -197,6 +232,25 @@ func (c *Client) Run(ctx context.Context, onDone func(Item), onError func(Item, 
 				}
 				onFinalized(ev.key, ev.generation)
 			}
+		}
+	}
+}
+
+// Called only by Run, so event state is not raced by the retention goroutine.
+func (c *Client) discard(path string) {
+	id, _, err := parseImagePath(path)
+	if err != nil {
+		return
+	}
+	if ev := c.events[id]; ev != nil {
+		if ev.dirty {
+			c.dirtyCount.Add(-1)
+		}
+		delete(c.events, id)
+	}
+	if c.store != nil {
+		if err := c.store.discardEvent(id); err != nil {
+			c.cfg.Logf("eventupload: discarding %s: %v", id, err)
 		}
 	}
 }

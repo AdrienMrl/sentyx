@@ -1,22 +1,20 @@
-# Push notifications (Android / FCM) — PLACEHOLDER SETUP
+# Push notifications (Android / FCM)
 
-**`composeApp/google-services.json` in this directory is a PLACEHOLDER.**
-It contains dummy Firebase project ids (`project_id: sentyx-placeholder`,
-`project_number: 000000000000`, a fake API key) with the correct
-`package_name: com.sentyx.app`. It exists only so the `google-services` Gradle
-plugin applies and `assembleDebug` / `installDebug` stay green.
+`composeApp/google-services.json` contains a real Firebase Android client
+configuration, not a placeholder. Forks should replace it with the configuration
+for their own Firebase project. Firebase client API keys identify a project;
+they do not grant administrative access. Restrict their allowed APIs and Android
+application/signing certificate in Google Cloud as appropriate:
+[Firebase API key documentation](https://firebase.google.com/docs/projects/api-keys).
 
-**Push is INERT until this file is replaced with a real one.** With the
-placeholder, `FirebaseMessaging.getInstance().token` fails (resolving to `null`,
-so no token is registered) and FCM delivers nothing, so
-`SentyxMessagingService` never runs. No crashes — every push path degrades to a
-silent no-op.
+FCM sending requires separate backend service-account credentials. Keep those
+credentials outside the repository and set `FCM_CREDENTIALS_FILE` on the server.
 
 ## To make push actually work
 
 1. Create a Firebase project, add an Android app with package `com.sentyx.app`.
 2. Download the real `google-services.json` and replace this file with it.
-3. Configure the backend (the other agent's server) with the FCM service-account
+3. Configure the backend server with the FCM service-account
    credentials so it can send to registered tokens.
 4. Rebuild. On sign-in the app registers its FCM token via
    `PUT /v1/me/push-tokens`; verdicts at or above the user's threshold arrive on
@@ -25,9 +23,8 @@ silent no-op.
 ## How the plugin is wired
 
 `composeApp/build.gradle.kts` applies `com.google.gms.google-services`
-**only if `google-services.json` exists**, so deleting this placeholder (rather
-than replacing it) also keeps the build green — the app just compiles without
-Firebase resource processing. See the guarded `apply(plugin = ...)` block there.
+**only if `google-services.json` exists**. Removing this client configuration
+skips Firebase resource processing. See the guarded `apply(plugin = ...)` block there.
 
 ## iOS
 

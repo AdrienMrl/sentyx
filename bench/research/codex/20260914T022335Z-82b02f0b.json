@@ -1,0 +1,22 @@
+{
+  "id": "20260914T022335Z-82b02f0b",
+  "time": "2026-09-14T02:23:35.160269Z",
+  "model": "gpt-6-astra",
+  "context": "Reach \u003c5% false positive and \u003c50% false negative on contact detection with a frozen V-JEPA 2.1 encoder plus a small trained head, on a high-quality mixed synthetic+real dataset.",
+  "images": [
+    "/tmp/fldaudit/raspberrypi-2026-07-23_11-52-17.png",
+    "/tmp/fldaudit/raspberrypi-2026-07-23_17-22-20.png",
+    "/tmp/fldaudit/raspberrypi-2026-07-23_17-41-17.png",
+    "/tmp/fldaudit/raspberrypi-2026-07-23_18-13-27.png",
+    "/tmp/fldaudit/raspberrypi-2026-07-23_18-34-17.png"
+  ],
+  "prompt": "Attached are 5 contact sheets, each 48 frames (6 columns x 8 rows, chronological) from a single Tesla Sentry field clip recorded by the owner's own car. For EACH image, decide whether anything physically touched the car anywhere in the clip. Output exactly one line per event:\n\u003cevent\u003e: VERDICT=contact|near_miss|quiet|unclear; ACTOR=\u003cwho/what or none\u003e; CONFIDENCE=low|medium|high; NOTE=\u003cup to 12 words\u003e\nDefinitions: contact = something physically touches the car; near_miss = a person or object approaches closely but no contact is visible; quiet = nobody/nothing approaches; unclear = cannot tell.\nImages:\nImage 1: raspberrypi-2026-07-23_11-52-17\nImage 2: raspberrypi-2026-07-23_17-22-20\nImage 3: raspberrypi-2026-07-23_17-41-17\nImage 4: raspberrypi-2026-07-23_18-13-27\nImage 5: raspberrypi-2026-07-23_18-34-17\n",
+  "response": "raspberrypi-2026-07-23_11-52-17: VERDICT=quiet; ACTOR=none; CONFIDENCE=medium; NOTE=No approach or visible contact in sampled frames.\nraspberrypi-2026-07-23_17-22-20: VERDICT=quiet; ACTOR=none; CONFIDENCE=medium; NOTE=No nearby person or object approaches the car.\nraspberrypi-2026-07-23_17-41-17: VERDICT=quiet; ACTOR=none; CONFIDENCE=medium; NOTE=Parking lot remains static; no visible approach or contact.\nraspberrypi-2026-07-23_18-13-27: VERDICT=quiet; ACTOR=none; CONFIDENCE=medium; NOTE=Vehicles remain separated; no visible approach toward the recording car.\nraspberrypi-2026-07-23_18-34-17: VERDICT=near_miss; ACTOR=silver minivan; CONFIDENCE=medium; NOTE=Minivan passes close across the front; no contact visible.",
+  "duration_sec": 20.933680083,
+  "exit_code": 0,
+  "session_id": "01a09db9-cb61-7ac1-a03b-6d359b997f0f",
+  "rollout_path": "/Users/adri/.codex/sessions/2026/09/13/rollout-2026-09-13T21-23-14-01a09db9-cb61-7ac1-a03b-6d359b997f0f.jsonl",
+  "tags": [
+    "field-audit"
+  ]
+}

@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>sentry benchmark — labeling</title>
 <style>
   :root { --bg:#14161a; --panel:#1c1f26; --line:#2b3038; --text:#e6e8ec; --dim:#939aa6;
@@ -38,10 +39,17 @@
          color:var(--text); cursor:pointer; font:inherit; }
   .btn.primary { background:var(--accent); border-color:var(--accent); color:#0d1117; font-weight:600; }
   .btn.primary:disabled { opacity:.4; cursor:default; }
+  .btn.danger { margin-left:auto; border-color:#4a2326; color:#ff9592; }
+  .btn.danger.armed { background:var(--yes); border-color:var(--yes); color:#0d1117; font-weight:600; }
   #status { color:var(--dim); font-size:12px; }
   #status.err { color:var(--yes); }
   .empty { color:var(--dim); padding:40px 0; }
   .sent { margin-top:10px; color:var(--dim); font-size:12px; }
+  .trim { display:flex; gap:8px; align-items:center; margin-top:10px; flex-wrap:wrap; }
+  .trim .sm { padding:4px 10px; border:1px solid var(--line); border-radius:4px; background:#242932;
+              color:var(--dim); cursor:pointer; font:inherit; font-size:12px; }
+  .trim .sm:disabled { opacity:.4; cursor:default; }
+  .trim .read { color:var(--dim); font-size:12px; font-variant-numeric:tabular-nums; }
   .nav { display:flex; gap:6px; padding:12px 16px 0; }
   .nav button { flex:1; padding:6px; border:1px solid var(--line); border-radius:4px;
                 background:transparent; color:var(--dim); cursor:pointer; font:inherit; }
@@ -63,6 +71,30 @@
   select { background:#14171d; color:var(--text); border:1px solid var(--line);
            border-radius:4px; padding:6px 8px; font:inherit; }
 </style>
+<style>
+body { grid-template-columns:320px 1fr; }
+main { max-width:1250px; width:100%; padding:28px 36px; }
+aside { display:flex; flex-direction:column; }
+#cases { overflow:auto; }
+.filters { padding:16px; display:grid; gap:8px; border-bottom:1px solid var(--line); }
+input,textarea { width:100%; background:var(--bg); color:var(--text); border:1px solid var(--line); border-radius:6px; padding:9px; font:inherit; }
+.case { text-align:left; background:transparent; color:var(--text); width:100%; border:0; border-bottom:1px solid var(--line); border-left:3px solid transparent; font:inherit; }
+.case .id { word-break:normal; overflow-wrap:anywhere; }
+.toolbar { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin:12px 0; }
+.banner { padding:12px 16px; border:1px solid #655027; background:#2a2419; border-radius:8px; margin-bottom:16px; color:#efcd88; }
+pre { white-space:pre-wrap; overflow-wrap:anywhere; font-size:12px; max-height:420px; overflow:auto; }
+details { border:1px solid var(--line); border-radius:6px; padding:12px; margin-top:12px; }
+.candidate-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:16px; }
+.review-panel { border:1px solid var(--line); border-radius:8px; padding:18px; margin-top:20px; background:var(--panel); }
+.review-panel select { width:100%; }
+.review-checks { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:10px; }
+.review-checks label { display:flex; align-items:center; gap:8px; }
+.review-checks input { width:auto; }
+.savebar { flex-wrap:wrap; }
+button:focus-visible,select:focus-visible,input:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+@media(max-width:800px) { body { grid-template-columns:240px 1fr; } main { padding:16px; } .choice button { padding:8px 12px; } }
+@media(max-width:560px) { body { display:block; height:auto; } aside { max-height:40vh; } }
+</style>
 </head>
 <body>
 <aside>
@@ -70,12 +102,21 @@
     <button id="nav-label" class="on">Label</button>
     <button id="nav-results">Results</button>
   </div>
+  <div class="filters" id="filters">
+    <strong>Dataset explorer</strong>
+    <input id="search" type="search" placeholder="Search clips, tags, scenes…" aria-label="Search cases">
+    <select id="collection" aria-label="Collection"><option value="all">All clips</option><option value="real" selected>Real footage</option><option value="failures">Failure review · temporal baseline</option><option value="candidates">Contact moment review</option><option value="synthetic">Synthetic clips</option><option value="previews">Legacy appearance tests</option></select>
+    <select id="filter" aria-label="Label status"><option value="all">All labels</option><option value="labeled" selected>Has contact label</option><option value="unlabeled">Needs labeling</option><option value="contact">Contact</option><option value="no-contact">No contact</option></select>
+    <select id="review-filter" aria-label="Event review status"><option value="all">All event reviews</option><option value="pending">Needs event review</option><option value="done">Event review complete</option></select>
+  </div>
   <div id="progress"></div><div id="cases"></div>
 </aside>
 <main id="main"><div class="empty">Loading…</div></main>
 
 <script>
-const state = { cases: [], severities: [], current: null, clip: null, dirty: false, view: "label" };
+const state = { cases: [], severities: [], current: null, clip: null, dirty: false, view: "label",
+                // arming holds the case id whose Reject button has been clicked once.
+                arming: null };
 
 function make(tag, props = {}, kids = []) {
   const n = document.createElement(tag);
@@ -90,38 +131,74 @@ function make(tag, props = {}, kids = []) {
 }
 
 async function load() {
-  const data = await (await fetch("/api/dataset")).json();
+  const [data, synthetic, reports, candidates] = await Promise.all([getJSON("/api/dataset"),getJSON("/api/synthetic"),getJSON("/api/failure-review"),getJSON("/api/candidates")]);
+  state.candidates = candidates;
+  state.reports = reports;
+  if (new URLSearchParams(location.search).get("review") === "candidates") document.getElementById("collection").value="candidates";
+  if (new URLSearchParams(location.search).get("review") === "failures") document.getElementById("collection").value="failures";
   state.severities = data.severities;
-  state.cases = data.cases || [];
+  state.cases = [...(data.cases || []), ...synthetic];
   renderList();
   if (!state.cases.length) {
     document.getElementById("main").replaceChildren(
       make("div", { class: "empty", text: "No cases yet — add some with teslcam-bench fetch or add." }));
     return;
   }
-  select(state.cases.find(c => c.id === state.current?.id) || state.cases[0]);
+  const initial = filteredCases().find(c => c.id === state.current?.id) || filteredCases()[0];
+  if (initial) select(initial);
+  else document.getElementById("main").replaceChildren(make("div",{class:"empty",text:"No clips match this collection."}));
 }
 
+async function getJSON(url) { const r = await fetch(url); if (!r.ok) throw new Error(await r.text()); return r.json(); }
+function filteredCases() {
+  const q = document.getElementById("search").value.toLowerCase();
+  const source = document.getElementById("collection").value, filter = document.getElementById("filter").value;
+  return state.cases.filter(c => (source === "previews" ? c.collection && c.archived : !c.archived && (source === "all" || (source === "synthetic") === !!c.collection))
+    && (source !== "failures" || failureKind(c))
+    && (source !== "candidates" || candidateCase(c))
+    && (filter === "all" || (filter === "labeled" ? !!c.label : filter === "unlabeled" ? !c.label : c.label && c.label.contact === (filter === "contact")))
+    && (document.getElementById("review-filter").value === "all" || (!c.collection && reviewComplete(c) === (document.getElementById("review-filter").value === "done")))
+    && JSON.stringify([c.id,c.collection,c.tags,c.notes,c.metadata]).toLowerCase().includes(q));
+}
+for (const id of ["search","collection","filter","review-filter"]) document.getElementById(id).addEventListener("input",()=>{
+  renderList();
+  if (!state.dirty && !state.saving) {
+    const rows=filteredCases();
+    if(rows.length && !rows.some(c=>c.id===state.current?.id))select(rows[0]);
+    else if(state.current)renderCase();
+  }
+});
 function renderList() {
-  const labeled = state.cases.filter(c => c.label).length;
+  const visible = filteredCases();
+  const labeled = visible.filter(c => c.label && (!c.collection || c.reviewed)).length;
+  const generated = visible.filter(c => c.label && c.collection && !c.reviewed).length;
   document.getElementById("progress").textContent =
-    `${state.cases.length} cases · ${labeled} labeled · ${state.cases.length - labeled} to go`;
-  document.getElementById("cases").replaceChildren(...state.cases.map(c => make("div", {
+    `${visible.length} shown · ${labeled} human-labeled · ${generated} generated labels · ${visible.filter(c => !c.collection && reviewComplete(c)).length} event reviews complete`;
+  if (document.getElementById("collection").value === "failures") document.getElementById("progress").textContent = `${visible.length} failures · ${visible.filter(c=>reviewValue(c,"failure")).length} inspected`;
+  if (document.getElementById("collection").value === "candidates") document.getElementById("progress").textContent = `${visible.length} contact clips · ${visible.filter(c=>reviewValue(c,"candidate_v1")).length} reviewed`;
+  document.getElementById("cases").replaceChildren(...filteredCases().map(c => make("button", {
     class: "case" + (c.id === state.current?.id ? " active" : ""),
     onclick: () => select(c),
   }, [
-    make("div", { class: "id", text: c.id }),
-    make("div", { class: "meta", text: c.label ? `${c.label.contact ? "contact" : "no contact"} · ${c.label.threat}` : "unlabeled" }),
+    make("div", { class: "id", text: c.collection || c.id }),
+    ...(document.getElementById("collection").value === "candidates" ? [make("div",{class:"meta",text:reviewValue(c,"candidate_v1") ? "Candidate review: "+reviewValue(c,"candidate_v1") : "Candidate review pending"})] : []),
+    ...(failureKind(c) ? [make("div",{class:"meta",text:failureKind(c)+(reviewValue(c,"failure") ? " · reviewed" : " · needs inspection")})] : []),
+    ...(!c.collection ? [make("div", {class:"meta",text:reviewComplete(c) ? "✓ " + reviewValue(c,"event") : "Needs event review"})] : []),
+    make("div", { class: "meta", text: c.collection ? "SYNTHETIC · " + (c.reviewed ? "human reviewed" : c.label ? "generated label" : "no label metadata") : "REAL FOOTAGE" }),
+    make("div", { class: "meta", text: c.label ? `${c.label.contact ? "contact" : "no contact"}${c.label_source ? " · " + c.label_source : ""}` : "unlabeled" }),
   ])));
+  if (!visible.length) document.getElementById("cases").append(make("div",{class:"empty",style:"padding:16px",text:"No clips match these filters."}));
 }
 
-function select(c) {
+function select(c, autoplay = false) {
+  if (state.saving) return;
   if (state.dirty && !confirm("Discard unsaved changes?")) return;
   state.current = JSON.parse(JSON.stringify(c));
-  state.clip = (c.available_clips || c.clips)[0] || null;
+  state.clip = c.clips?.find(x => c.available_clips?.includes(x)) || (c.available_clips || c.clips)[0] || null;
   state.dirty = false;
+  state.arming = null;
   renderList();
-  renderCase();
+  renderCase(autoplay);
 }
 
 function label() {
@@ -138,15 +215,31 @@ function markDirty() {
 
 function setStatus(msg, isErr) {
   const s = document.getElementById("status");
+  if (!s) return;
   s.textContent = msg || "";
   s.className = isErr ? "err" : "";
 }
 
-function renderCase() {
+function renderCase(autoplay = false) {
+  if (!state.current) return;
+  if (document.getElementById("collection").value === "candidates") { renderCandidateCase(); return; }
   const c = state.current, l = c.label;
-  const clips = c.available_clips || c.clips;
+  const clips = c.available_clips || c.clips || [];
+  const oldVideo = document.querySelector("video");
+  const restore = oldVideo && oldVideo.dataset.clip === c.id + state.clip ? {time:oldVideo.currentTime, paused:oldVideo.paused, rate:oldVideo.playbackRate} : null;
   const video = make("video", { controls: "", preload: "metadata",
-    src: state.clip ? `/clips/${encodeURIComponent(c.id)}/${encodeURIComponent(state.clip)}` : null });
+    "data-clip": c.id + state.clip,
+    src: state.clip ? `/${c.collection ? "synthetic" : "clips"}/${encodeURIComponent(c.id)}/${encodeURIComponent(state.clip)}` : null });
+  video.playbackRate = autoplay ? 4 : (restore?.rate || 1);
+  if (autoplay) {
+    video.muted = true;
+    video.autoplay = true;
+    video.addEventListener("loadedmetadata", () => {
+      video.playbackRate = 4;
+      video.play().catch(() => setStatus("Press play to start this clip at 4×."));
+    }, {once:true});
+  }
+  if (restore && !autoplay) video.addEventListener("loadedmetadata", () => { video.currentTime=restore.time; video.playbackRate=restore.rate; if (!restore.paused) video.play().catch(()=>{}); },{once:true});
   const tabs = clips.length < 2 ? make("span") : make("div", { class: "tabs" },
     clips.map(name => make("button", {
       class: "tab" + (name === state.clip ? " on" : ""), text: shortName(name),
@@ -159,21 +252,227 @@ function renderCase() {
     text: `sent to the model: ${c.clips.map(shortName).join(", ")}`
       + (clips.length > c.clips.length ? `  (${clips.length - c.clips.length} other camera${clips.length - c.clips.length > 1 ? "s" : ""} on disk, not sent)` : "") });
 
-  const save = make("button", { id: "save", class: "btn primary", text: "Save", onclick: saveCase });
+  const save = make("button", { id: "save", class: "btn primary", text: "Save", onclick: () => saveCase() });
 
   document.getElementById("main").replaceChildren(
-    make("h2", { text: c.id }), video, tabs, sent,
-    make("label", { class: "q", text: "Did anything touch the car?" }),
-    choice([["yes", "true"], ["no", "false"]], l ? String(l.contact) : null,
-      v => { label().contact = v === "true"; markDirty(); renderCase(); }),
-    make("label", { class: "q", text: "Threat" }),
-    choice(state.severities.map(s => [s, s]), l ? l.threat : null,
-      v => { label().threat = v; markDirty(); renderCase(); }),
+    make("h2", { text: c.collection || c.id }),
+    ...(c.collection ? [syntheticSummary(c)] : []),
+    video, tabs, playbackBar(video),
+    ...(!c.collection ? [eventReview(c)] : []),
+    ...(c.collection ? [] : [sent]),
+    annotationFields(c,video),
     make("div", { class: "savebar" }, [save,
+      make("button", {class:"btn", text:"Save & next", onclick:() => saveCase(true)}),
       make("button", { class: "btn", text: "Clear", onclick: () => { c.label = null; markDirty(); renderCase(); } }),
-      make("span", { id: "status" })]),
+      make("span", { id: "status" }),
+      make("button", {
+        class: "btn danger",
+        text: "Reject clip",
+        title: "Remove this case and move its video to bench/clips-removed/.",
+        onclick: () => rejectCase(),
+      })]),
   );
+  if(c.collection) for(const [name,data] of Object.entries(c.metadata || {})) document.getElementById("main").append(make("details",{},[make("summary",{text:name}),make("pre",{text:JSON.stringify(data,null,2)})]));
+  if(c.collection) document.querySelector(".danger").remove();
+  if (!c.collection) {
+    const main=document.getElementById("main"), panel=main.querySelector(".review-panel");
+    const advanced=make("details",{},[make("summary",{text:"Notes and tags"})]);
+    while(panel.nextSibling) advanced.append(panel.nextSibling);
+    // Keep save feedback visible in the one-click workflow.
+    const status=advanced.querySelector("#status");
+    const reject=advanced.querySelector(".danger");
+    panel.querySelector(".toolbar").append(reject);
+    main.append(status,advanced);
+  }
+  if (document.getElementById("collection").value === "failures" && failureKind(c)) {
+    const panel = document.querySelector(".review-panel");
+    panel.before(failurePanel(c,video));
+  }
   document.getElementById("save").disabled = !state.dirty;
+}
+
+function playbackBar(video) {
+  const speed=make("select",{"aria-label":"Playback speed",onchange:e=>video.playbackRate=Number(e.target.value)},[0.25,0.5,1,2,4].map(n=>{const o=make("option",{value:n,text:n+"× speed"});o.selected=n===video.playbackRate;return o;}));
+  return make("div",{class:"toolbar"},[
+    make("button",{class:"btn",text:"← Previous",onclick:()=>navigate(-1)}),
+    make("button",{class:"btn",text:"Next →",onclick:()=>navigate(1)}),
+    make("button",{class:"btn",text:"−0.1s",onclick:()=>{video.pause();video.currentTime=Math.max(0,video.currentTime-.1);}}),
+    make("button",{class:"btn",text:"+0.1s",onclick:()=>{video.pause();video.currentTime=Math.min(video.duration,video.currentTime+.1);}}),speed]);
+}
+function syntheticSummary(c) {
+  const report=c.metadata?.["render-review.json"], assessment=c.metadata?.["contact-assessment.json"], generated=c.metadata?.["case.json"] || {label:report?.scenario};
+  const box=make("div",{class:"toolbar"});
+  for(const text of [generated?.label ? "Generated label: "+(generated.label.contact?"contact":"no contact") : null,report?.appearance?.background ? "Scene: "+report.appearance.background.replaceAll("_"," ") : null]) if(text) box.append(make("span",{class:"pill",text}));
+  return box;
+}
+function navigate(delta) {const rows=filteredCases(), i=rows.findIndex(c=>c.id===state.current?.id);if(rows[i+delta]) select(rows[i+delta]);}
+// Namespaced tags keep review annotations separate from contact ground truth.
+const reviewEvents = [["door_ding","Door ding"],["vehicle_other","Other car contact"],["other_contact","Other contact"],["no_contact","No contact"]];
+function reviewValue(c, key) { return (c.tags || []).find(t => t.startsWith("review:"+key+":"))?.split(":").slice(2).join(":") || ""; }
+function reviewComplete(c) { return !!reviewValue(c,"event"); }
+function eventLabel(existing, event) {
+  const contact = event !== "no_contact";
+  // Retain the legacy severity field for existing benchmark readers.
+  return {...(existing || {}), contact,
+    threat: contact ? (existing?.threat && existing.threat !== "none" ? existing.threat : "low") : "none",
+    start_seconds: contact ? (existing?.start_seconds ?? null) : null,
+    end_seconds: contact ? (existing?.end_seconds ?? null) : null};
+}
+function eventReview(c) {
+  const active=reviewValue(c,"event");
+  return make("section",{class:"review-panel"},[
+    make("h2",{text:"Which event is this?"}),
+    make("div",{class:"toolbar"},reviewEvents.map(([value,text])=>make("button",{
+      class:"btn"+(active===value?" primary":""),text:(active===value?"✓ ":"")+text,
+      onclick:async()=>{
+        if(state.saving)return;
+        c.tags=(c.tags||[]).filter(t=>!t.startsWith("review:event:"));
+        c.tags.push("review:event:"+value);
+        c.label = eventLabel(c.label, value);
+        markDirty();
+        await saveCase(true);
+      }
+    }))),
+    make("p",{class:"sent",text:"One click saves and opens the next clip. Contact is set from the category. No timestamps needed. Use Previous to correct a choice."})
+  ]);
+}
+
+function candidateCase(c) {
+  if(!c.label?.contact || !["door_ding","vehicle_other"].includes(reviewValue(c,"event"))) return null;
+  return state.candidates?.cases?.find(r=>r.id===c.id);
+}
+function renderCandidateCase() {
+  const c=state.current, proposal=candidateCase(c);
+  if(!proposal) { document.getElementById("main").replaceChildren(make("p",{text:"No candidate excerpts for this clip."}));return; }
+  const cards=make("div",{class:"candidate-grid"});
+  for (const old of document.querySelectorAll("video")) old.pause();
+  const playExcerpt = index => {
+    const video=cards.querySelectorAll("video")[index];
+    if (!video || !cards.isConnected) return;
+    video.currentTime=0;
+    video.playbackRate=4;
+    video.play().catch(()=>setStatus("Press play to start the excerpts at 4×."));
+  };
+  proposal.moments.forEach((moment,i)=>{
+    const video=make("video",{controls:"",preload:"metadata",src:`/candidate-clips/${encodeURIComponent(c.id)}/${i+1}.mp4`});
+    video.muted=true;
+    video.defaultPlaybackRate=4;
+    video.playbackRate=4;
+    video.addEventListener("ended",()=>playExcerpt(i+1));
+    video.addEventListener("play",()=>{for(const other of cards.querySelectorAll("video"))if(other!==video)other.pause();});
+    cards.append(make("div",{},[make("h2",{text:"Excerpt "+(i+1)}),video]));
+  });
+  const answer=async value=>{
+    if(state.saving)return;
+    c.tags=(c.tags||[]).filter(t=>!t.startsWith("review:candidate_v1:"));
+    c.tags.push("review:candidate_v1:"+value);
+    markDirty();await saveCase(true);
+  };
+  document.getElementById("main").replaceChildren(
+    make("h2",{text:c.id}),
+    make("p",{text:"Is the actual contact visible in ANY of these excerpts? Yes as soon as you see it; watch all excerpts before choosing No. Scores are hidden so you can judge the footage."}),
+    cards,
+    make("div",{class:"toolbar"},[["yes","Yes — contact visible"],["no","No — none shows contact"],["unclear","Cannot tell"]].map(([value,text])=>make("button",{class:"btn"+(reviewValue(c,"candidate_v1")===value?" primary":""),text,onclick:()=>answer(value)}))),
+    make("div",{class:"toolbar"},[make("button",{class:"btn",text:"← Previous",onclick:()=>navigate(-1)}),make("button",{class:"btn",text:"Skip →",onclick:()=>navigate(1)})]),
+    make("p",{class:"sent",text:"Excerpts autoplay in order at 4×. Your answer saves and starts the next clip’s excerpts; it does not change the contact label."}),
+    make("button",{id:"save",style:"display:none",onclick:()=>saveCase()}),make("span",{id:"status"})
+  );
+  playExcerpt(0);
+}
+
+function headResult(c,head) { return state.reports?.[head]?.cases?.find(r=>r.case===c.id); }
+function failureKind(c) {
+  const r=headResult(c,"temporal");
+  if(!r || !c.label || c.collection)return null;
+  if(!c.label.contact && r.score>=.5)return "False alarm";
+  if(c.label.contact && ["door_ding","vehicle_other"].includes(reviewValue(c,"event")) && r.score<.5)return "Missed contact";
+  return null;
+}
+function failurePanel(c,video) {
+  const panel=make("section",{class:"review-panel"},[
+    make("h2",{text:failureKind(c)+" · inspect model evidence"}),
+    make("p",{class:"sent",text:"Saved synthetic-trained heads · YES at score ≥ 0.5. Scores are not calibrated probabilities. Highlighted intervals are model estimates, not contact labels."})
+  ]);
+  for(const head of ["temporal","motion","region"]) {
+    const r=headResult(c,head);if(!r)continue;
+    const interval=r.loc_seconds;
+    panel.append(make("div",{class:"toolbar"},[
+      make("strong",{text:head+": "+r.score.toFixed(6)+" → "+(r.score>=.5?"YES":"NO")}),
+      ...(interval ? [make("button",{class:"btn",text:"Watch highlighted moment · "+interval[0].toFixed(1)+"–"+interval[1].toFixed(1)+"s",onclick:()=>{
+        const play=()=>{video.currentTime=Math.max(0,interval[0]-1.5);video.playbackRate=1;video.muted=true;
+          document.querySelector('[aria-label="Playback speed"]').value="1";
+          video.play().catch(()=>setStatus("Press play to inspect this moment."));};
+        if(video.readyState>=1)play();else video.addEventListener("loadedmetadata",play,{once:true});
+      }})] : [])
+    ]));
+  }
+  panel.append(make("p",{text:"Inspect the temporal moment first. What is visible there? Use the other heads for comparison; mention differences in the optional note."}));
+  const options=[["camera_motion","Camera shake"],["approach","Person / car nearby, no touch"],["lighting","Reflection / lighting change"],["visible_contact","Contact is visible"],["hidden","Contact area hidden / unclear"],["other","Something else / unsure"]];
+  panel.append(make("div",{class:"toolbar"},options.map(([value,text])=>make("button",{
+    class:"btn"+(reviewValue(c,"failure")===value?" primary":""),text,
+    onclick:async()=>{if(state.saving)return;c.tags=(c.tags||[]).filter(t=>!t.startsWith("review:failure:"));c.tags.push("review:failure:"+value);markDirty();await saveCase(true);}
+  }))));
+  panel.append(make("textarea",{rows:2,"aria-label":"Failure review notes",placeholder:"Optional: what happens, or why the current contact label might be wrong",text:c.notes||"",oninput:e=>{c.notes=e.target.value;markDirty();}}));
+  panel.append(make("p",{class:"sent",text:"A description saves and advances. It records your observation; it does not change the contact label. Use the event buttons below if that label needs correcting."}));
+  return panel;
+}
+
+function annotationFields(c,video) {
+  const fields=make("div");
+  fields.append(make("label",{class:"q",text:"Notes"}),make("textarea",{rows:3,oninput:e=>{c.notes=e.target.value;markDirty();},text:c.notes||""}),make("label",{class:"q",text:"Tags (comma separated)"}),make("input",{value:(c.tags||[]).filter(t=>!t.startsWith("review:")).join(", "),oninput:e=>{c.tags=[...(c.tags||[]).filter(t=>t.startsWith("review:")),...e.target.value.split(",").map(s=>s.trim()).filter(t=>t && !t.startsWith("review:"))];markDirty();}}));
+  return fields;
+}
+
+// trimBar cuts the clip down to the part worth analyzing. Reposted footage is
+// often a montage — several angles in a row, then a phone pointed at a screen —
+// and the benchmark would otherwise be scoring the edit. It updates itself
+// rather than re-rendering the case, because a re-render restarts the video and
+// you are setting these points by watching it.
+function trimBar(c, video) {
+  const range = { start: null, end: null };
+  const read = make("span", { class: "read" });
+  const cut = make("button", { class: "sm", text: "Trim", onclick: () => doTrim(c, range, cut, read) });
+  const at = () => Math.max(0, Math.round(video.currentTime * 100) / 100);
+  const show = () => {
+    const fmt = v => v === null ? "—" : v.toFixed(2) + "s";
+    read.textContent = `keep ${fmt(range.start)} → ${fmt(range.end)}`;
+    cut.disabled = range.start === null || range.end === null || range.end <= range.start;
+  };
+  const setStart = make("button", { class: "sm", text: "Start here",
+    onclick: () => { range.start = at(); show(); } });
+  const setEnd = make("button", { class: "sm", text: "End here",
+    onclick: () => { range.end = at(); show(); } });
+  const play = make("button", { class: "sm", text: "Play range", onclick: () => {
+    if (range.start === null) return;
+    video.currentTime = range.start;
+    video.play();
+    const stop = () => { if (range.end !== null && video.currentTime >= range.end) { video.pause(); video.removeEventListener("timeupdate", stop); } };
+    video.addEventListener("timeupdate", stop);
+  } });
+  const clear = make("button", { class: "sm", text: "Reset",
+    onclick: () => { range.start = range.end = null; show(); } });
+  show();
+  return make("div", { class: "trim" }, [setStart, setEnd, play, clear, cut, read]);
+}
+
+async function doTrim(c, range, cut, read) {
+  if(state.dirty) {read.textContent="Save label changes before trimming.";return;}
+  cut.disabled = true;
+  read.textContent = "trimming…";
+  const res = await fetch(`/api/cases/${encodeURIComponent(c.id)}/clips/${encodeURIComponent(state.clip)}/trim`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ start_seconds: range.start, end_seconds: range.end }),
+  });
+  if (!res.ok) { read.textContent = await res.text(); return; }
+  const saved = await res.json();
+  state.cases[state.cases.findIndex(x => x.id === c.id)] = saved;
+  state.current = JSON.parse(JSON.stringify(saved));
+  // The cut is what the case now analyzes, so it is what you should be
+  // watching — the untrimmed source stays on the tabs beside it.
+  state.clip = saved.clips[0];
+  state.dirty = false;
+  renderList(); renderCase();
+  setStatus("trimmed");
 }
 
 function choice(options, active, onpick) {
@@ -186,10 +485,15 @@ function shortName(name) {
   return m ? m[1].replace("_", " ") : name.replace(/\.mp4$/, "");
 }
 
-async function saveCase() {
+async function saveCase(advance = false) {
+  if(state.saving)return;
+  state.saving=true;
+  try {
   const c = state.current;
+  const rows = filteredCases(), at = rows.findIndex(x => x.id === c.id);
+  const nextID = rows[at + 1]?.id;
   setStatus("saving…");
-  const res = await fetch(`/api/cases/${encodeURIComponent(c.id)}`, {
+  const res = await fetch(`/api/${c.collection ? "synthetic" : "cases"}/${encodeURIComponent(c.id)}`, {
     method: "PUT", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ label: c.label, clips: c.clips, tags: c.tags || [], notes: c.notes || "" }),
   });
@@ -199,16 +503,54 @@ async function saveCase() {
   state.current = JSON.parse(JSON.stringify(saved));
   state.dirty = false;
   renderList(); renderCase();
-  setStatus("saved");
+  state.saving=false;
+  if (advance && nextID) select(state.cases.find(x => x.id === nextID), true);
+  setStatus(advance && !nextID ? "Saved — end of this list." : "saved");
+  } catch(err) { setStatus("Could not save: "+err.message,true); }
+  finally { state.saving=false; }
+}
+
+// rejectCase drops the case from the dataset and moves its footage aside, then
+// moves on to the next case — rejecting is a pass through the list, like
+// labeling, and stopping to re-pick each time would make it slower than it is
+// worth.
+async function rejectCase() {
+  if (state.saving) return;
+  const c = state.current;
+  const rows = filteredCases(), at = rows.findIndex(x => x.id === c.id);
+  const nextID = rows[at + 1]?.id || rows[at - 1]?.id;
+  state.saving = true;
+  setStatus("rejecting…");
+  try {
+    const res = await fetch(`/api/cases/${encodeURIComponent(c.id)}`, { method: "DELETE" });
+    if (!res.ok) throw new Error(await res.text());
+    state.cases = state.cases.filter(x => x.id !== c.id);
+    state.dirty = false;
+    state.arming = null;
+    state.saving = false;
+    const next = state.cases.find(x => x.id === nextID) || filteredCases()[0];
+    if (next) select(next, true);
+    else {
+      state.current = null;
+      renderList();
+      document.getElementById("main").replaceChildren(make("div", {class:"empty", text:"No clips remain in this selection."}));
+    }
+  } catch (err) {
+    state.arming = null;
+    const button = document.querySelector(".danger");
+    if (button) { button.classList.remove("armed"); button.textContent = "Reject clip"; }
+    setStatus("Could not reject clip: " + err.message, true);
+  } finally { state.saving = false; }
 }
 
 function setView(view) {
-  if (view === "label" && state.dirty === false) { /* nothing to lose */ }
+  if (view !== state.view && state.dirty) { setStatus("Save your changes before opening results.",true); return; }
   state.view = view;
   document.getElementById("nav-label").className = view === "label" ? "on" : "";
   document.getElementById("nav-results").className = view === "results" ? "on" : "";
   document.getElementById("cases").style.display = view === "label" ? "" : "none";
   document.getElementById("progress").style.display = view === "label" ? "" : "none";
+  document.getElementById("filters").style.display = view === "label" ? "" : "none";
   view === "label" ? renderCase() : renderResults();
 }
 document.getElementById("nav-label").addEventListener("click", () => setView("label"));
@@ -279,7 +621,8 @@ document.addEventListener("keydown", ev => {
   if ((ev.metaKey || ev.ctrlKey) && ev.key === "s") { ev.preventDefault(); if (state.dirty) saveCase(); }
 });
 window.addEventListener("beforeunload", ev => { if (state.dirty) ev.preventDefault(); });
-load();
+window.addEventListener("unhandledrejection",ev=>{setStatus("Request failed: "+ev.reason?.message,true);});
+load().catch(err=>document.getElementById("main").replaceChildren(make("div",{class:"banner",text:"Could not load dataset: "+err.message})));
 </script>
 </body>
 </html>

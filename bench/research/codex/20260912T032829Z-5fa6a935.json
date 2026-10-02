@@ -1,0 +1,19 @@
+{
+  "id": "20260912T032829Z-5fa6a935",
+  "time": "2026-09-12T03:28:29.900722Z",
+  "model": "gpt-6-astra",
+  "context": "Reach \u003c5% false positive and \u003c50% false negative on contact detection with a frozen V-JEPA 2.1 encoder plus a small trained head, on a high-quality mixed synthetic+real dataset.",
+  "images": [
+    "/tmp/audit_deep/yt-i-k4vyb9ul0-sentry-mode-caught-jaguar-salesmen-checking.png"
+  ],
+  "prompt": "You are re-auditing an ambiguous dataset label, blind to any model score. The attached image is a dense contact sheet of 48 frames sampled evenly across one Tesla Sentry Mode clip, ordered left-to-right then top-to-bottom (chronological, 6 columns x 8 rows). A previous 16-frame pass could not tell whether anything touched the car. Decide now; if contact is even momentary or partial, say so. Reply with exactly:\nVERDICT: contact | no_contact | indeterminate\nCLOSEST_MOMENT: frame number(s) of nearest approach or contact (1-48), else none\nACTOR: who or what is involved, or none\nVISIBILITY: anything occluded, off-camera, or between frames\nCONFIDENCE: low | medium | high\nEVIDENCE: one or two sentences naming what is visible",
+  "response": "VERDICT: indeterminate\nCLOSEST_MOMENT: 32-40\nACTOR: person in dark trousers immediately beside the camera\nVISIBILITY: The foreground person obscures the car-side area; any contact there or between sampled frames is hidden.\nCONFIDENCE: medium\nEVIDENCE: A person's dark clothing fills most of the camera view in frames 32-38, followed by a hand visible beside their hip in frames 39-40. No visible hand or body part can be clearly seen touching a visible car surface.",
+  "duration_sec": 14.464861125,
+  "exit_code": 0,
+  "session_id": "01a093a8-9ddb-70a2-bd73-df7c17576ed4",
+  "rollout_path": "/Users/adri/.codex/sessions/2026/09/11/rollout-2026-09-11T21-28-16-01a093a8-9ddb-70a2-bd73-df7c17576ed4.jsonl",
+  "tags": [
+    "label-audit",
+    "deep"
+  ]
+}

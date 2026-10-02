@@ -1,0 +1,19 @@
+{
+  "id": "20260912T033114Z-e2ef8799",
+  "time": "2026-09-12T03:31:14.937791Z",
+  "model": "gpt-6-astra",
+  "context": "Reach \u003c5% false positive and \u003c50% false negative on contact detection with a frozen V-JEPA 2.1 encoder plus a small trained head, on a high-quality mixed synthetic+real dataset.",
+  "images": [
+    "/tmp/audit_deep/yt-zw51rmujffy-tesla-does-not-see-you-if-you-are-pushing-a.png"
+  ],
+  "prompt": "You are re-auditing an ambiguous dataset label, blind to any model score. The attached image is a dense contact sheet of 48 frames sampled evenly across one Tesla Sentry Mode clip, ordered left-to-right then top-to-bottom (chronological, 6 columns x 8 rows). A previous 16-frame pass could not tell whether anything touched the car. Decide now; if contact is even momentary or partial, say so. Reply with exactly:\nVERDICT: contact | no_contact | indeterminate\nCLOSEST_MOMENT: frame number(s) of nearest approach or contact (1-48), else none\nACTOR: who or what is involved, or none\nVISIBILITY: anything occluded, off-camera, or between frames\nCONFIDENCE: low | medium | high\nEVIDENCE: one or two sentences naming what is visible",
+  "response": "VERDICT: no_contact\nCLOSEST_MOMENT: 13-14, 31-33\nACTOR: pedestrian pushing a cart along the right side\nVISIBILITY: Right-edge cropping and gaps between frames limit assessment of the closest pass.\nCONFIDENCE: medium\nEVIDENCE: The pedestrian and cart pass close to the camera car’s right side, but no touching or impact is visible. Other vehicles remain visibly separated from the camera car.",
+  "duration_sec": 52.831841791,
+  "exit_code": 0,
+  "session_id": "01a093aa-8db1-7ca1-bce8-b7863cf3fce9",
+  "rollout_path": "/Users/adri/.codex/sessions/2026/09/11/rollout-2026-09-11T21-30-23-01a093aa-8db1-7ca1-bce8-b7863cf3fce9.jsonl",
+  "tags": [
+    "label-audit",
+    "deep"
+  ]
+}

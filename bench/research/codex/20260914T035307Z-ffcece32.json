@@ -1,0 +1,18 @@
+{
+  "id": "20260914T035307Z-ffcece32",
+  "time": "2026-09-14T03:53:07.608795Z",
+  "model": "gpt-6-astra",
+  "context": "Reach \u003c5% false positive and \u003c50% false negative on contact detection with a frozen V-JEPA 2.1 encoder plus a small trained head, on a high-quality mixed synthetic+real dataset.",
+  "images": [
+    "/tmp/mv/raspberrypi-2026-07-26_12-36-00__2026-07-26_12-34-40-right_repeater.png"
+  ],
+  "prompt": "Attached are 1 contact sheets, each 48 frames (6x8, chronological) from one camera/segment of a Tesla Sentry field event recorded by the owner's own car. Multiple images may be different cameras or segments of the same event. For EACH image, does anything physically touch the car? Output one line per image:\n\u003cname\u003e: VERDICT=contact|near_miss|quiet|unclear; ACTOR=\u003cwho/what or none\u003e; CONFIDENCE=low|medium|high; NOTE=\u003cup to 12 words\u003e\ncontact = something physically touches the car; near_miss = close approach, no contact visible; quiet = nothing approaches; unclear = cannot tell.\nImages:\nImage 1: raspberrypi-2026-07-26_12-36-00__2026-07-26_12-34-40-right_repeater\n",
+  "response": "raspberrypi-2026-07-26_12-36-00__2026-07-26_12-34-40-right_repeater: VERDICT=quiet; ACTOR=none; CONFIDENCE=high; NOTE=No person or vehicle approaches or visibly touches the recording Tesla.",
+  "duration_sec": 42.122614334,
+  "exit_code": 0,
+  "session_id": "01a09e0b-72c8-7421-8012-dc758bf7029d",
+  "rollout_path": "/Users/adri/.codex/sessions/2026/09/13/rollout-2026-09-13T22-52-25-01a09e0b-72c8-7421-8012-dc758bf7029d.jsonl",
+  "tags": [
+    "field-multiview"
+  ]
+}

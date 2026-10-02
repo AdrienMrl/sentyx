@@ -1,0 +1,464 @@
+{
+ "model_3": {
+  "vehicle": "Tesla Model 3 (Highland / 2024+), Autopilot HW4",
+  "frame": {
+   "origin": "ground point below the rear-axle centre",
+   "x": "forward",
+   "y": "left",
+   "z": "up",
+   "units": "metres and degrees",
+   "rotation": "yaw about z (left positive), then pitch (up positive), then roll"
+  },
+  "vehicle_dimensions_m": {
+   "length": 4.72,
+   "width": 1.849,
+   "height": 1.441,
+   "wheelbase": 2.875,
+   "track_front": 1.58,
+   "track_rear": 1.58
+  },
+  "cameras": {
+   "front": {
+    "resolution": [
+     2896,
+     1876
+    ],
+    "projection": "fisheye_equidistant_poly",
+    "f_px": 3230,
+    "cx": 1448.0,
+    "cy": 938.0,
+    "k": [
+     0.3333,
+     0.1333,
+     0,
+     0
+    ],
+    "hfov_deg": 49.0,
+    "position_m": [
+     1.95,
+     0.0,
+     1.33
+    ],
+    "rotation_deg": {
+     "yaw": 0.0,
+     "pitch": -1.5,
+     "roll": 0.0
+    },
+    "source": "position from body geometry; FOV is Tesla's published main-camera figure. NOT MEASURED: a forward-looking, near-level, narrow lens makes the focal length and the vertical vanishing point degenerate, and no metric ground baseline was visible (the parked cars' wheels are hidden behind their own bumpers).",
+    "uncertainty": {
+     "position_m": 0.08,
+     "yaw_deg": 1.0,
+     "pitch_deg": 3.0,
+     "roll_deg": 1.0,
+     "hfov_deg": 5.0
+    }
+   },
+   "left_pillar": {
+    "resolution": [
+     1448,
+     938
+    ],
+    "projection": "fisheye_equidistant_poly",
+    "f_px": 935,
+    "cx": 724.0,
+    "cy": 469.0,
+    "k": [
+     -0.01,
+     0,
+     0,
+     0
+    ],
+    "hfov_deg": 89.3,
+    "position_m": [
+     1.11,
+     0.9,
+     1.32
+    ],
+    "rotation_deg": {
+     "yaw": 71.0,
+     "pitch": -6.4,
+     "roll": 0.8
+    },
+    "source": "mirrored from the measured right_pillar",
+    "uncertainty": {
+     "position_m": 0.05,
+     "yaw_deg": 2.0,
+     "pitch_deg": 1.5,
+     "roll_deg": 1.5,
+     "hfov_deg": 1.0
+    }
+   },
+   "right_pillar": {
+    "resolution": [
+     1448,
+     938
+    ],
+    "projection": "fisheye_equidistant_poly",
+    "f_px": 935,
+    "cx": 724.0,
+    "cy": 469.0,
+    "k": [
+     -0.01,
+     0,
+     0,
+     0
+    ],
+    "hfov_deg": 89.3,
+    "position_m": [
+     1.11,
+     -0.9,
+     1.32
+    ],
+    "rotation_deg": {
+     "yaw": -71.0,
+     "pitch": -6.4,
+     "roll": -0.8
+    },
+    "source": "MEASURED from clips: vertical posts + adjacent Model 3 wheelbase; validated on that car's beltline (97 vs 98 cm)",
+    "uncertainty": {
+     "position_m": 0.05,
+     "yaw_deg": 1.5,
+     "pitch_deg": 1.0,
+     "roll_deg": 1.0,
+     "hfov_deg": 1.0
+    }
+   },
+   "left_repeater": {
+    "resolution": [
+     1448,
+     938
+    ],
+    "projection": "fisheye_equidistant_poly",
+    "f_px": 934,
+    "cx": 724.0,
+    "cy": 469.0,
+    "k": [
+     0.08,
+     0,
+     0,
+     0
+    ],
+    "hfov_deg": 85.1,
+    "position_m": [
+     2.649,
+     0.894,
+     0.765
+    ],
+    "rotation_deg": {
+     "yaw": 149.2,
+     "pitch": -3.0,
+     "roll": 0.0
+    },
+    "source": "SOLVED: bird's-eye registration of the ground against the pillar camera (NCC 0.77 over 7 m2) plus four shared points on the adjacent Model 3 spanning 0 to 0.97 m in height (tyre contact, hub centre, both ends of the rear door handle). Reprojection 1-2 px.",
+    "uncertainty": {
+     "position_m": 0.06,
+     "yaw_deg": 1.5,
+     "pitch_deg": 1.5,
+     "roll_deg": 1.0,
+     "hfov_deg": 3.0
+    }
+   },
+   "right_repeater": {
+    "resolution": [
+     1448,
+     938
+    ],
+    "projection": "fisheye_equidistant_poly",
+    "f_px": 934,
+    "cx": 724.0,
+    "cy": 469.0,
+    "k": [
+     0.08,
+     0,
+     0,
+     0
+    ],
+    "hfov_deg": 85.1,
+    "position_m": [
+     2.649,
+     -0.894,
+     0.765
+    ],
+    "rotation_deg": {
+     "yaw": -149.2,
+     "pitch": -3.0,
+     "roll": -0.0
+    },
+    "source": "SOLVED: bird's-eye registration of the ground against the pillar camera (NCC 0.77 over 7 m2) plus four shared points on the adjacent Model 3 spanning 0 to 0.97 m in height (tyre contact, hub centre, both ends of the rear door handle). Reprojection 1-2 px.",
+    "uncertainty": {
+     "position_m": 0.06,
+     "yaw_deg": 1.5,
+     "pitch_deg": 1.5,
+     "roll_deg": 1.0,
+     "hfov_deg": 3.0
+    }
+   },
+   "back": {
+    "resolution": [
+     1448,
+     938
+    ],
+    "projection": "fisheye_equidistant_poly",
+    "f_px": 576,
+    "cx": 724.0,
+    "cy": 469.0,
+    "k": [
+     -0.095,
+     0,
+     0,
+     0
+    ],
+    "hfov_deg": 150.0,
+    "position_m": [
+     -0.95,
+     0.0,
+     0.88
+    ],
+    "rotation_deg": {
+     "yaw": 180.0,
+     "pitch": -27.0,
+     "roll": 0.0
+    },
+    "source": "pitch and height fitted from painted ground lines + Chevrolet Trax rear track; height cross-checked against the Trax roof (7% low, corrected)",
+    "uncertainty": {
+     "position_m": 0.1,
+     "yaw_deg": 2.0,
+     "pitch_deg": 4.0,
+     "roll_deg": 1.5,
+     "hfov_deg": 15.0
+    }
+   }
+  }
+ },
+ "model_y": {
+  "vehicle": "Tesla Model Y (Juniper / 2025+), Autopilot HW4 - SCALED, not measured",
+  "frame": {
+   "origin": "ground point below the rear-axle centre",
+   "x": "forward",
+   "y": "left",
+   "z": "up",
+   "units": "metres and degrees",
+   "rotation": "yaw about z (left positive), then pitch (up positive), then roll"
+  },
+  "vehicle_dimensions_m": {
+   "length": 4.792,
+   "width": 1.921,
+   "height": 1.624,
+   "wheelbase": 2.89,
+   "track_front": 1.61,
+   "track_rear": 1.61
+  },
+  "cameras": {
+   "front": {
+    "resolution": [
+     2896,
+     1876
+    ],
+    "projection": "fisheye_equidistant_poly",
+    "f_px": 3230,
+    "cx": 1448.0,
+    "cy": 938.0,
+    "k": [
+     0.3333,
+     0.1333,
+     0,
+     0
+    ],
+    "hfov_deg": 49.0,
+    "position_m": [
+     1.96,
+     0.0,
+     1.499
+    ],
+    "rotation_deg": {
+     "yaw": 0.0,
+     "pitch": -1.5,
+     "roll": 0.0
+    },
+    "source": "position from body geometry; FOV is Tesla's published main-camera figure. NOT MEASURED: a forward-looking, near-level, narrow lens makes the focal length and the vertical vanishing point degenerate, and no metric ground baseline was visible (the parked cars' wheels are hidden behind their own bumpers).",
+    "uncertainty": {
+     "position_m": 0.1,
+     "yaw_deg": 1.6,
+     "pitch_deg": 4.800000000000001,
+     "roll_deg": 1.6,
+     "hfov_deg": 8.0
+    }
+   },
+   "left_pillar": {
+    "resolution": [
+     1448,
+     938
+    ],
+    "projection": "fisheye_equidistant_poly",
+    "f_px": 935,
+    "cx": 724.0,
+    "cy": 469.0,
+    "k": [
+     -0.01,
+     0,
+     0,
+     0
+    ],
+    "hfov_deg": 89.3,
+    "position_m": [
+     1.116,
+     0.945,
+     1.488
+    ],
+    "rotation_deg": {
+     "yaw": 71.0,
+     "pitch": -6.4,
+     "roll": 0.8
+    },
+    "source": "scaled from the Model 3 rig by body dimensions; NOT measured",
+    "uncertainty": {
+     "position_m": 0.1,
+     "yaw_deg": 3.2,
+     "pitch_deg": 2.4000000000000004,
+     "roll_deg": 2.4000000000000004,
+     "hfov_deg": 1.6
+    }
+   },
+   "right_pillar": {
+    "resolution": [
+     1448,
+     938
+    ],
+    "projection": "fisheye_equidistant_poly",
+    "f_px": 935,
+    "cx": 724.0,
+    "cy": 469.0,
+    "k": [
+     -0.01,
+     0,
+     0,
+     0
+    ],
+    "hfov_deg": 89.3,
+    "position_m": [
+     1.116,
+     -0.945,
+     1.488
+    ],
+    "rotation_deg": {
+     "yaw": -71.0,
+     "pitch": -6.4,
+     "roll": -0.8
+    },
+    "source": "scaled from the Model 3 rig by body dimensions; NOT measured",
+    "uncertainty": {
+     "position_m": 0.1,
+     "yaw_deg": 2.4000000000000004,
+     "pitch_deg": 1.6,
+     "roll_deg": 1.6,
+     "hfov_deg": 1.6
+    }
+   },
+   "left_repeater": {
+    "resolution": [
+     1448,
+     938
+    ],
+    "projection": "fisheye_equidistant_poly",
+    "f_px": 934,
+    "cx": 724.0,
+    "cy": 469.0,
+    "k": [
+     0.08,
+     0,
+     0,
+     0
+    ],
+    "hfov_deg": 85.1,
+    "position_m": [
+     2.663,
+     0.939,
+     0.862
+    ],
+    "rotation_deg": {
+     "yaw": 149.2,
+     "pitch": -3.0,
+     "roll": 0.0
+    },
+    "source": "scaled from the solved Model 3 repeater by body dimensions",
+    "uncertainty": {
+     "position_m": 0.06,
+     "yaw_deg": 1.5,
+     "pitch_deg": 1.5,
+     "roll_deg": 1.0,
+     "hfov_deg": 3.0
+    }
+   },
+   "right_repeater": {
+    "resolution": [
+     1448,
+     938
+    ],
+    "projection": "fisheye_equidistant_poly",
+    "f_px": 934,
+    "cx": 724.0,
+    "cy": 469.0,
+    "k": [
+     0.08,
+     0,
+     0,
+     0
+    ],
+    "hfov_deg": 85.1,
+    "position_m": [
+     2.663,
+     -0.939,
+     0.862
+    ],
+    "rotation_deg": {
+     "yaw": -149.2,
+     "pitch": -3.0,
+     "roll": -0.0
+    },
+    "source": "scaled from the solved Model 3 repeater by body dimensions",
+    "uncertainty": {
+     "position_m": 0.06,
+     "yaw_deg": 1.5,
+     "pitch_deg": 1.5,
+     "roll_deg": 1.0,
+     "hfov_deg": 3.0
+    }
+   },
+   "back": {
+    "resolution": [
+     1448,
+     938
+    ],
+    "projection": "fisheye_equidistant_poly",
+    "f_px": 576,
+    "cx": 724.0,
+    "cy": 469.0,
+    "k": [
+     -0.095,
+     0,
+     0,
+     0
+    ],
+    "hfov_deg": 150.0,
+    "position_m": [
+     -0.955,
+     0.0,
+     1.05
+    ],
+    "rotation_deg": {
+     "yaw": 180.0,
+     "pitch": -27.0,
+     "roll": 0.0
+    },
+    "source": "scaled from the Model 3 rig by body dimensions; NOT measured",
+    "uncertainty": {
+     "position_m": 0.1,
+     "yaw_deg": 3.2,
+     "pitch_deg": 6.4,
+     "roll_deg": 2.4000000000000004,
+     "hfov_deg": 24.0
+    }
+   }
+  }
+ }
+}

@@ -1,0 +1,123 @@
+PUBLICATION AUDIT — 2026-10-02
+
+Verdict: current-tree cleanup completed; do not publish the existing Git
+history until the vehicle identifiers and Bluetooth captures are purged.
+No confirmed private account/cloud credential was found in reachable history.
+
+Scope and evidence
+- All locally reachable refs: 146 commits, 1,110 unique file blobs. Gitleaks
+  8.24.3 scanned 143 non-merge commits (~6.63 MB of changes).
+- Publishable worktree snapshot: 2,375 tracked/untracked files before final cleanup (~53.38 MB
+  scanned), including current uncommitted research and simulator sources.
+- Gitleaks history: 5 findings, manually classified below. Worktree: 2,825
+  findings, predominantly SHA-256 file hashes, cache keys and animation data.
+- Supplemental history/content searches covered vehicle identifiers, private
+  key headers, provider secret formats, personal email text, location fields,
+  profanity and machine-local paths. No profanity found in reachable history
+  or current publishable text. One dataset title uses “Idiot” as a source title.
+- The local Gemini .env value and operator token were compared without printing
+  them: neither matched Git patches or publishable worktree files.
+- Ignored private media, third-party trees and virtual environments are not
+  release content and were not exhaustively audited. Remote refs not fetched,
+  hosting caches, Git LFS storage, deleted/unreachable objects, binary metadata
+  and provider-side permissions are outside this audit.
+
+Fixed in this checkout (not committed; three requested index removals staged)
+- Redacted the real VIN in docs/sentry-clip-download-design.md and
+  experiments/tesla-ble-pair/README.md; replaced the car's derived BLE beacon
+  name with its documented formula. Examples now use TESLA_VIN.
+- Removed hardware/wedge-1785688526.btsnoop and hardware/wedge-attempts.log
+  from the working tree. Originals remain locally under the ignored
+  .secrets/publication-backup/hardware/ directory. The captures contain a
+  device identifier and communication metadata; no obvious password/token
+  string was found, but they should not be published.
+- Removed the Android File Server SecurityToken from the untracked
+  sim/unreal/Config/DefaultEngine.ini and explicitly disabled that unused
+  development server. Original saved in .secrets/publication-backup/unreal/.
+- Extended .gitignore for environment variants, private key/container files,
+  service-account filename patterns, tokens, packet captures, logs, SQLite
+  state, Python environments/caches, Finder resource forks, assistant local
+  state, scratch directories, field imports, derived images, checkpoints and
+  simulator output. Kept public-key PEMs and .env.example files eligible.
+- Corrected PUSH_SETUP.md and Gradle comments: google-services.json is real
+  Firebase client configuration, not a placeholder. Marked TODO.md historical
+  because deployment/feature-status statements contradict current operations.
+- Per the follow-up request, ignored dataset collections and JSON label files,
+  local bench/experiments runs (including scripts with embedded datasets),
+  generated research JSON/JSONL/CSV, weights/features, archives, disk images,
+  binary model assets, CAD exports and concept renders. Removed the tracked
+  bench/dataset.json and two hardware/case/*.stl exports from Git's index;
+  all three local files, including the modified dataset, remain intact.
+  Updated benchmark/assembly instructions to explain local regeneration.
+- Preserved the user's pre-existing code and ignore-rule changes.
+
+Blockers and decisions before publication
+1. HISTORY PRIVACY: the VIN/beacon remains in earlier versions of the two
+   documents, introduced in e74c410. The Bluetooth captures were introduced
+   in 76123ff. A normal cleanup commit does not erase these earlier blobs.
+   Publish from a clean initial history, or rewrite all refs to redact the
+   VIN/beacon and remove the two capture paths, then rescan the final refs.
+   bench/dataset.json and the STL exports also remain in existing history;
+   remove those paths when rewriting if the public history must exclude data
+   and generated exports as well.
+   History was not rewritten or force-pushed by this audit.
+2. LIVE INFRASTRUCTURE: AGENTS.md, CLAUDE.md, deployment/image scripts and
+   assorted docs expose the actual VPS endpoint, SSH usernames/aliases,
+   private/Tailscale host addresses and local paths. BuildFlavor.kt selects
+   real pairing and embeds the live server/Supabase project configuration;
+   forks can contact your backend. These are not authentication secrets, but
+   decide whether to keep them public or parameterize deployment/build config.
+   They were not blindly replaced because routing and field deployments use
+   them. Untracked research inventories also disclose workstation paths,
+   recordings/dates and machine metadata; review those before bulk staging.
+3. LICENSE/ONBOARDING: no root README or project LICENSE was found. Select
+   the intended license and add a public entry point describing setup and
+   experimental/hardware limitations. Tracked CAD assets and any third-party
+   footage/model assets need provenance reviewed before redistribution.
+   This was a publication/privacy audit, not a legal or full security review.
+
+Scanner classifications (values intentionally omitted)
+- sentyx-app/composeApp/google-services.json: real Firebase client API key;
+  not a service-account credential. Restriction status was not checked.
+  https://firebase.google.com/docs/projects/api-keys
+- BuildFlavor.kt: sb_publishable key, intended for public client use. No
+  sb_secret/service-role key found. Supabase policy settings were not checked.
+  https://supabase.com/docs/guides/getting-started/api-keys
+- experiments/tesla-signaling/main.go and tesla-clip/signaling.go: static
+  Tesla app key, documented in source as observed from the Android app.
+  No account token is embedded. Its publication remains a deliberate
+  interoperability/research choice, not a verified private user credential.
+- Unreal development file-server token: removed and service disabled.
+- Research “sentry-access-token” hits are SHA-256 footage checksums. Other
+  generic-key hits are cache IDs, asset checksums or animation keyframes.
+- “admin” in hardware/lte-dongle.md is the documented stock modem password,
+  not an independently discovered personal password. Test tokens are fixtures.
+
+Verification
+- git diff --check passed after cleanup.
+- Representative private artifacts matched their intended ignore rules.
+- Public examples, source files and verification keys remain eligible.
+- Final snapshot: 2376 files; no original VIN/beacon matches and no
+  Unreal token finding. Remaining 2824 scanner findings were classified above.
+- No runtime code changed; application tests were not needed for these edits.
+- Neither credential rotation nor history rewriting was performed. No confirmed
+  private account credential requires rotation based on this evidence; treat
+  any previously deployed Unreal file-server token as exposed if reused.
+
+Follow-up verification: datasets and size
+- All current eligible files are below 1 MiB; the largest is the research
+  journal at 489,039 bytes. Dataset/large-artifact ignore checks passed.
+- .gitignore matches paths, not byte counts: the 1 MiB threshold was checked
+  against today's tree, and is not an automatic future size limit.
+- Final release-candidate scanner results are recorded below.
+- Ignore changes do not remove existing data from historical commits.
+- Release snapshot before the full Unreal exclusion: 806 eligible files;
+  4 findings, limited to
+  Firebase/Supabase client keys and two documented Tesla app-key occurrences.
+  The one-off research scripts with embedded datasets are now ignored too.
+
+Additional requested exclusion
+- The entire /sim/unreal/ tree is now ignored, including Unreal project files,
+  assets, generation scripts and training datasets. All local files remain.
+  No Unreal paths were previously tracked, so no index removal was required.
+- After the full Unreal exclusion: 705 eligible files; none >= 1 MiB.

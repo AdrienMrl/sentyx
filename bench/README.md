@@ -12,12 +12,13 @@ starts missing real contact, and how loud does it get in exchange.**
 
 | path | committed? | what |
 | --- | --- | --- |
-| `bench/dataset.json` | yes | the labels and provenance — the actual artifact |
+| `bench/dataset.json` | no (gitignored) | local labels and provenance |
 | `bench/clips/<case>/` | no (gitignored) | the footage, re-fetchable from the server |
 | `bench/results/<run>.json` | no (gitignored) | stored runs, re-scorable offline |
 
-Labels are small and reviewable in a diff; the video is not, so it stays out of
-git and is pulled back with `fetch` on any machine that needs it.
+Datasets, labels, footage, and generated runs stay outside Git. Build your local
+`bench/dataset.json` with `add` or `fetch`; those commands create it when absent.
+A fresh clone does not include the private research dataset.
 
 ## Workflow
 
@@ -62,9 +63,60 @@ on disk — they are still worth watching while labeling).
 scripts/run-bench.sh label
 ```
 
+The explorer includes synthetic videos discovered under `sim/unreal/out`.
+Synthetic clips remain browsable before validation; their intended contact
+values are distinguished from human-reviewed labels. Obsolete quick and
+appearance-comparison renders are under **Legacy appearance tests**.
+Use the collection and label filters, or search by batch, scene, event, or tags.
+Change that location with `label -synthetic /path/to/renders` (an empty string disables it).
+Synthetic generated labels and geometry/appearance reports appear below the player;
+human annotations are saved atomically to `browser-review.json` beside each render.
+These reviews do not change generator reports or add examples to the training benchmark.
+The player supports slow motion, 0.1-second seeking, and event-window annotation;
+notes and tags can be edited for both real and synthetic footage.
+
 It lists the cases, plays each one's clips (tabs switch camera when a case has
 several), and asks the two questions: did anything touch the car, and how bad
 was it. Saving writes straight back to `bench/dataset.json`.
+
+**Unplayable downloads.** A file named `.mp4` is not always an MP4: Reddit
+serves some posts over HLS, so yt-dlp writes MPEG-TS under an mp4 name, and
+that plays in no browser and reads in no analyzer. The footage is real, so it
+is converted rather than discarded:
+
+```
+scripts/run-bench.sh convert                     # walks bench/clips
+scripts/run-bench.sh convert -dir bench/incoming # or anywhere else
+```
+
+It probes every `.mp4` with ffprobe and only touches the ones that are not
+actually playable. A wrong container around a fine H.264 stream is rewrapped
+with `-c copy`, which is exact; only a codec nothing decodes is re-encoded.
+**What came down is kept** — the original is renamed to the extension it should
+have had (`clip.ts` beside the converted `clip.mp4`), so a conversion can be
+redone from the bytes that were actually downloaded. Clip lists never change,
+because the playable file keeps the name the dataset already points at.
+
+**Trim** cuts a clip down to the part worth analyzing. Reposted footage is
+often a montage — the same event from three cameras in a row, then somebody's
+phone pointed at the screen — and analyzing all of it scores the edit rather
+than the event. Play to the first frame worth keeping and press *Start here*,
+play to the last and press *End here*, *Play range* to check, then *Trim*. The
+cut is written beside the source as `<clip>-trim.mp4` and becomes what the case
+analyzes; the source stays on disk and on the camera tabs, so a bad cut costs
+one more trim. It needs `ffmpeg` on PATH (`-ffmpeg` points elsewhere) and
+re-encodes rather than stream-copying, because a copy can only cut on a
+keyframe — up to a couple of seconds off, which is enough to leave in the tail
+you were removing. Audio is dropped: sentry footage has none.
+
+**Reject clip** throws a case out instead of labeling it, for footage that is
+not worth an answer — a phone video of someone's screen, an event that happens
+off camera, a compilation. It drops the case from the dataset and moves its
+video to `bench/clips-removed/<case-id>/` rather than deleting it, since a
+rejection is a judgement and can be wrong. The button arms on the first click
+and acts on the second. Junk left in the set is worse than a smaller set: an
+unlabeled case is indistinguishable from one nobody has looked at yet, so it
+gets re-opened for the rest of the dataset's life.
 
 Or edit `bench/dataset.json` by hand — the label is a small object:
 

@@ -1,0 +1,15 @@
+{
+  "id": "20260912T032031Z-52474925",
+  "time": "2026-09-12T03:20:31.183615Z",
+  "model": "gpt-6-astra",
+  "context": "Reach \u003c5% false positive and \u003c50% false negative on contact detection with a frozen V-JEPA 2.1 encoder plus a small trained head, on a high-quality mixed synthetic+real dataset.",
+  "images": [
+    "/tmp/audit_deep/rd-hmaafr-thank-you-for-neatly-putting-away-your-shopp.png"
+  ],
+  "prompt": "Judge the attached 48-frame contact sheet only, blind to scores or dataset labels. Do not delegate or read other files. Frames run left-to-right, top-to-bottom, 6 columns x 8 rows. Does anything touch the camera car, even momentarily or partially? Prior sparse pass was ambiguous. Be precise about what is visible versus possible hidden contact. Reply exactly in six lines: VERDICT: contact | no_contact | indeterminate; CLOSEST_MOMENT: frame numbers 1-48 or none; ACTOR: involved actor; VISIBILITY: occluded, off-camera or between frames limitations; CONFIDENCE: low | medium | high; EVIDENCE: one or two sentences naming visible evidence. Choose one verdict and one confidence value.",
+  "response": "VERDICT: indeterminate\nCLOSEST_MOMENT: frames 22-26\nACTOR: shopping cart pushed by a person\nVISIBILITY: The cart’s rightmost extent is partly outside the view during its approach; contact below the image edge or between frames cannot be excluded.\nCONFIDENCE: medium\nEVIDENCE: The cart approaches closely, turns, and stops in front of the camera, with visible pavement between its nearest visible wheels and the lower foreground. No definite cart-to-car contact or impact displacement is visible, but the full clearance is not shown.",
+  "duration_sec": 18.14954775,
+  "exit_code": 0,
+  "session_id": "01a093a1-4315-7731-9b7a-c906b4340fd2",
+  "rollout_path": "/Users/adri/.codex/sessions/2026/09/11/rollout-2026-09-11T21-20-14-01a093a1-4315-7731-9b7a-c906b4340fd2.jsonl"
+}
